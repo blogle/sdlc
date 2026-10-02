@@ -1,0 +1,58 @@
+pull_request_rules:
+  - name: declare integration policy
+    conditions:
+      - base = main
+      - label ~= ^integration:(auto|review)$
+    actions:
+      comment:
+        message: "Integration policy recognized. Shared SDLC authorization is head-bound; see the protocol docs."
+
+merge_protections_settings:
+  auto_merge_conditions:
+    - and:
+        - base = main
+        - or:
+            - label = integration:auto
+            - and:
+                - label = integration:review
+                - check-success = sdlc-integration-authorized
+
+merge_protections:
+  - name: fail closed on integration policy and require admission
+    if:
+      - base = main
+    success_conditions:
+      - check-success = "sdlc / pr-fast"
+      - or:
+          - label = integration:auto
+          - and:
+              - label = integration:review
+              - check-success = sdlc-integration-authorized
+
+queue_rules:
+  - name: validated candidates
+    queue_conditions:
+      - base = main
+      - check-success = "sdlc / pr-fast"
+      - or:
+          - label = integration:auto
+          - and:
+              - label = integration:review
+              - check-success = sdlc-integration-authorized
+    merge_conditions:
+      - check-success = "sdlc / candidate"
+      - or:
+          - label = integration:auto
+          - and:
+              - label = integration:review
+              - check-success = sdlc-integration-authorized
+    batch_size: 5
+    batch_max_wait_time: 2 minutes
+    merge_method: squash
+    update_method: merge
+
+merge_queue:
+  max_parallel_checks: 5
+  mode: serial
+  queue_controls_comment: false
+  status_comments: outcomes

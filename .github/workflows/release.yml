@@ -1,0 +1,30 @@
+name: SDLC publication
+on:
+  workflow_call:
+    inputs:
+      sdlc_ref:
+        type: string
+        default: v1
+        required: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: cachix/cachix-action@v15
+        with:
+          name: hestia
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          skipPush: false
+      - name: Finalize release notes
+        run: nix run github:blogle/sdlc/${{ inputs.sdlc_ref }}#sdlc -- changelog preview
+      - name: Publication hook
+        run: nix run github:blogle/sdlc/${{ inputs.sdlc_ref }}#sdlc -- run release

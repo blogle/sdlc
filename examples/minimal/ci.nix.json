@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "integration": "integration:review",
+  "stages": {
+    "pr-fast": { "targets": [ ".#checks.x86_64-linux.fast" ] },
+    "candidate": { "targets": [ ".#checks.x86_64-linux.candidate" ] },
+    "release": { "targets": [], "commands": [["./scripts/publish-validated-artifacts"]] }
+  }
+}

@@ -1,0 +1,8 @@
+name: CI
+on: [pull_request, merge_group]
+jobs:
+  pr-fast:
+    uses: blogle/sdlc/.github/workflows/pr-fast.yml@v1
+  candidate:
+    if: github.event_name == 'merge_group'
+    uses: blogle/sdlc/.github/workflows/candidate.yml@v1

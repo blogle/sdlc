@@ -1,0 +1,30 @@
+name: SDLC PR fast
+on:
+  workflow_call:
+    inputs:
+      sdlc_ref:
+        description: Shared SDLC ref, normally v1
+        type: string
+        default: v1
+        required: false
+jobs:
+  pr-fast:
+    name: sdlc / pr-fast
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: cachix/cachix-action@v15
+        with:
+          name: hestia
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          skipPush: true
+      - name: Run declared fast stage
+        run: nix run github:blogle/sdlc/${{ inputs.sdlc_ref }}#sdlc -- run pr-fast
