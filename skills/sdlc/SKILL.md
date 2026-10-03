@@ -1,3 +1,8 @@
+---
+name: sdlc
+description: Follow the shared SDLC CI, Mergify integration, and release protocol in consuming repositories.
+---
+
 # Shared SDLC for consuming repositories
 
 Use this skill whenever changing CI, build/test contracts, Mergify policy, changelog fragments, or release workflows in a repository that consumes `blogle/sdlc`.
@@ -18,6 +23,8 @@ The project owns **what** can be built, tested, and published: Nix packages/chec
 Read `ci.nix.json` and the v1 protocol docs before changing stage wiring. Preserve `schemaVersion: 1`; map the project's actual Nix targets, and use optional argv-array `commands` only for narrow operations Nix targets cannot express (usually publication). Do not silently skip, rename, or replace shared stages. If the target contract genuinely changes, update its versioned documentation and fixtures.
 
 Use `sdlc run pr-fast` or `sdlc run candidate` to invoke the selected targets; use `sdlc changelog check|preview|finalize` for release-fragment operations. Prefer repo-local `just` recipes where provided; they should remain the easy interface and delegate to these shared commands rather than duplicate them.
+
+Install the maintained shared skills with the repo's `just skills` recipe. It uses Vercel's official `skills` CLI, targeting OpenCode and resolving the compatible `blogle/sdlc` `v1` source plus Mergify's canonical CLI repository. Refresh installed sources using the CLI's native `skills update -p -y`; do not copy, sync, or write custom skill-install logic.
 
 Nix and cache expectations are centralized. Prefer `nix develop`; consume the shared Hestia Cachix configuration/cache through the shared workflow. Do not invent project-specific cache names, credentials, upload behavior, or Nix setup unless a documented platform gap requires a reviewed shared-protocol change.
 

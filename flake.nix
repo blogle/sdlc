@@ -16,25 +16,14 @@
           runtimeInputs = [ nixpkgs.legacyPackages.${system}.python3 ];
           text = ''exec python3 ${./src/sdlc.py} "$@"'';
         };
-        installSkills = nixpkgs.legacyPackages.${system}.writeShellApplication {
-          name = "install-sdlc-skills";
-          runtimeInputs = [ nixpkgs.legacyPackages.${system}.git nixpkgs.legacyPackages.${system}.nodejs nixpkgs.legacyPackages.${system}.nix nixpkgs.legacyPackages.${system}.python3 ];
-          text = ''
-            root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-            nix run github:blogle/mergify-nix#installSkills --
-            python3 ${./src/install_skills.py} ${./skills} "$root/.agents/skills"
-            echo "Installed shared SDLC skills in $root/.agents/skills"
-          '';
-        };
         mergify-cli = mergify-nix.packages.${system}.mergify-cli;
       });
       apps = eachSystem (system: {
         default = { type = "app"; program = "${self.packages.${system}.sdlc}/bin/sdlc"; };
-        installSkills = { type = "app"; program = "${self.packages.${system}.installSkills}/bin/install-sdlc-skills"; };
       });
       devShells = eachSystem (system: {
         default = nixpkgs.legacyPackages.${system}.mkShell {
-          packages = with nixpkgs.legacyPackages.${system}; [ self.packages.${system}.sdlc just python3 actionlint ];
+          packages = with nixpkgs.legacyPackages.${system}; [ self.packages.${system}.sdlc just python3 actionlint skills ];
         };
       });
       checks = eachSystem (system: {

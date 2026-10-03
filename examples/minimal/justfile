@@ -1,8 +1,8 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-# One-time checkout setup installs both shared SDLC and Mergify agent skills.
+# One-time checkout setup uses the official Vercel skills CLI for both sources.
 setup:
-    nix run github:blogle/sdlc/v1#installSkills
+    nix develop -c just skills
 
-check:
-    nix develop -c just check
+skills:
+    nix develop -c just skills
