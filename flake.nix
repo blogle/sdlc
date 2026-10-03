@@ -18,11 +18,11 @@
         };
         installSkills = nixpkgs.legacyPackages.${system}.writeShellApplication {
           name = "install-sdlc-skills";
-          runtimeInputs = [ nixpkgs.legacyPackages.${system}.git nixpkgs.legacyPackages.${system}.nodejs ];
+          runtimeInputs = [ nixpkgs.legacyPackages.${system}.git nixpkgs.legacyPackages.${system}.nodejs nixpkgs.legacyPackages.${system}.nix nixpkgs.legacyPackages.${system}.python3 ];
           text = ''
             root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-            mkdir -p "$root/.agents/skills"
-            cp -R ${./skills}/. "$root/.agents/skills/"
+            nix run github:blogle/mergify-nix#installSkills --
+            python3 ${./src/install_skills.py} ${./skills} "$root/.agents/skills"
             echo "Installed shared SDLC skills in $root/.agents/skills"
           '';
         };

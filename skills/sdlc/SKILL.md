@@ -1,6 +1,30 @@
-# Shared SDLC workflow
+# Shared SDLC for consuming repositories
 
-- Declare project build and test targets in `ci.nix.json`; keep language-specific implementation in the project.
-- Run `nix develop -c just check`, then `nix run github:blogle/sdlc/v1#sdlc -- run pr-fast`.
-- Add `.changes/<topic>.json` only for user-visible/release-worthy changes, with `type`, `semver` (`patch|minor|major`), and `summary`.
-- Treat `integration:review` as requiring an authorization check bound to the current PR head SHA. Never authorize from comment text.
+Use this skill whenever changing CI, build/test contracts, Mergify policy, changelog fragments, or release workflows in a repository that consumes `blogle/sdlc`.
+
+## Ownership and lifecycle
+
+The project owns **what** can be built, tested, and published: Nix packages/checks and any narrow publication hook. `ci.nix.json` maps those project-owned targets to the versioned `pr-fast`, `candidate`, and `release` stages. The shared SDLC layer owns **when/how** stages run, common Nix/Hestia setup, queue policy, and changelog mechanics. Do not add a parallel language-specific CI framework or bypass the shared runner.
+
+1. **Local/dev:** enter the project environment with `nix develop`, then use its `justfile` as the human/agent interface (`just --list`, `just check`, and project-specific recipes). Never recommend `nix --option build-users-group "" develop`.
+2. **`pr-fast`:** cheap admission checks only—format, lint, focused/unit tests, contract validation, and other fast feedback. Put expensive builds, broad/integration suites, image builds, and release work in `candidate`, not ordinary PR admission.
+3. **Mergify candidate/batch:** eligible PRs are automatically enqueued after admission and policy gates. Mergify validates the synthetic candidate/batch with the declared `candidate` stage. This is the expensive integration/build gate; a passing source-branch check alone does not replace it.
+4. **Integration authorization:** `integration:auto` means the task has delegated integration authority; eligible work may auto-queue once protections pass. `integration:review` means implement autonomously, open/update the PR, then stop and wait for review/authorization bound to the exact current head SHA before queue eligibility. A changed head invalidates authorization. Never infer authorization from comment text, and never upgrade your own authority or change review to auto.
+5. **Squash merge:** Mergify merges each PR as one squash commit, keeping linear main history. Do not require or perform a zero-commits-behind-main/rebase treadmill. Stacks describe dependency/order relationships between PRs; batches group independent queue work for combined candidate testing. They are orthogonal. Normal flow is automatic enqueue—agents do not need `@mergifyio queue` comments.
+6. **Release/publication:** after merge, publish/promote the artifacts already validated by candidate work. Do not rerun general CI or rebuild them on main. Registry-specific promotion belongs in the project's explicit publication hook.
+
+## Contract and tooling
+
+Read `ci.nix.json` and the v1 protocol docs before changing stage wiring. Preserve `schemaVersion: 1`; map the project's actual Nix targets, and use optional argv-array `commands` only for narrow operations Nix targets cannot express (usually publication). Do not silently skip, rename, or replace shared stages. If the target contract genuinely changes, update its versioned documentation and fixtures.
+
+Use `sdlc run pr-fast` or `sdlc run candidate` to invoke the selected targets; use `sdlc changelog check|preview|finalize` for release-fragment operations. Prefer repo-local `just` recipes where provided; they should remain the easy interface and delegate to these shared commands rather than duplicate them.
+
+Nix and cache expectations are centralized. Prefer `nix develop`; consume the shared Hestia Cachix configuration/cache through the shared workflow. Do not invent project-specific cache names, credentials, upload behavior, or Nix setup unless a documented platform gap requires a reviewed shared-protocol change.
+
+## Changelog fragments
+
+Add `.changes/<topic>.json` only when a change is externally meaningful/release-worthy. CI, docs, tests, and internal refactors normally need no fragment. Fragment metadata (`type`, `semver` patch/minor/major, `summary`) determines category and aggregate SemVer intent. PRs never directly edit `CHANGELOG.md` to add individual release notes. Fragments are ephemeral: release finalization renders/compacts consumed fragments into `CHANGELOG.md` and deletes them; Git history is their archive. No fragments means no release note and no manufactured release.
+
+## Validate and report
+
+Before finishing, run `nix develop -c just check` (or the consuming repo's documented equivalent), then the relevant `sdlc run pr-fast`; run candidate-equivalent checks locally when practical without moving expensive work into the admission stage. Validate changed contract/changelog data and do not claim a check that was not run. In the PR, summarize intent, list exact verification commands/results, call out deferred work, and leave integration at the task's granted policy. For `integration:review`, stop for authorization; do not queue or merge yourself.

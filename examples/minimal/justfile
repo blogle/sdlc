@@ -1,0 +1,8 @@
+set shell := ["bash", "-euo", "pipefail", "-c"]
+
+# One-time checkout setup installs both shared SDLC and Mergify agent skills.
+setup:
+    nix run github:blogle/sdlc/v1#installSkills
+
+check:
+    nix develop -c just check
