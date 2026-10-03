@@ -1,0 +1,119 @@
+{
+  "nodes": {
+    "mergify-cli": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1790892210,
+        "narHash": "sha256-fABNLDon0DMgXXxgEiLivKCbBb1QStRbgfKw5F/E4pE=",
+        "owner": "Mergifyio",
+        "repo": "mergify-cli",
+        "rev": "b24e8f2aa67dfceff9401b39450fb7bb91f5573e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "Mergifyio",
+        "repo": "mergify-cli",
+        "type": "github"
+      }
+    },
+    "mergify-nix": {
+      "inputs": {
+        "mergify-cli": "mergify-cli",
+        "nixpkgs": "nixpkgs_2",
+        "rust-overlay": "rust-overlay"
+      },
+      "locked": {
+        "lastModified": 1790892723,
+        "narHash": "sha256-CWkesgHBDNTS8z2sgapF/yJPAefDUNrCP0ba+f6moNY=",
+        "owner": "blogle",
+        "repo": "mergify-nix",
+        "rev": "89a679f80be2a1faddd6778b6a5098280e7a5ac8",
+        "type": "github"
+      },
+      "original": {
+        "owner": "blogle",
+        "repo": "mergify-nix",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1790822859,
+        "narHash": "sha256-69xHQhAeMAD2wDXO7T2pcOZIF9Sga2W+JkmY2a11Ops=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "c59305bab2065cfecc4944690d9eedbb56f3a9fa",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "nixpkgs_2": {
+      "locked": {
+        "lastModified": 1790652569,
+        "narHash": "sha256-641r7xrlSOHYoktL9/aArPIYNgZJ9eM5URzSEOtPJDY=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "b6c8664de9b6cc07fe5666a29f91884ba81197c4",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixpkgs-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "nixpkgs": "nixpkgs",
+        "sdlc": "sdlc"
+      }
+    },
+    "rust-overlay": {
+      "inputs": {
+        "nixpkgs": [
+          "sdlc",
+          "mergify-nix",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1790882220,
+        "narHash": "sha256-n+rcrZkqos6/HY2iSJsVsJw3Q4mB9XEquYpus97iOi4=",
+        "owner": "oxalica",
+        "repo": "rust-overlay",
+        "rev": "dcee1adabb61484343af863501d2e3d91ef51f72",
+        "type": "github"
+      },
+      "original": {
+        "owner": "oxalica",
+        "repo": "rust-overlay",
+        "type": "github"
+      }
+    },
+    "sdlc": {
+      "inputs": {
+        "mergify-nix": "mergify-nix",
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "path": "../..",
+        "type": "path"
+      },
+      "original": {
+        "path": "../..",
+        "type": "path"
+      },
+      "parent": []
+    }
+  },
+  "root": "root",
+  "version": 7
+}

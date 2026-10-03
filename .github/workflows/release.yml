@@ -1,30 +1,67 @@
-name: SDLC publication
+name: SDLC release and publication
 on:
   workflow_call:
     inputs:
-      sdlc_ref:
+      publish_version:
+        description: Existing release version to republish after a publication failure
         type: string
-        default: v1
         required: false
+        default: ""
+    secrets:
+      SDLC_RELEASE_APP_ID:
+        required: true
+      SDLC_RELEASE_APP_PRIVATE_KEY:
+        required: true
 jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      id-token: write
     steps:
+      - uses: actions/create-github-app-token@v1
+        id: release-app
+        with:
+          app-id: ${{ secrets.SDLC_RELEASE_APP_ID }}
+          private-key: ${{ secrets.SDLC_RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
-      - uses: cachix/install-nix-action@v31
+          token: ${{ steps.release-app.outputs.token }}
+      - uses: DeterminateSystems/nix-installer-action@v23
         with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: cachix/cachix-action@v15
-        with:
-          name: hestia
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          skipPush: false
-      - name: Finalize release notes
-        run: nix run github:blogle/sdlc/${{ inputs.sdlc_ref }}#sdlc -- changelog preview
-      - name: Publication hook
-        run: nix run github:blogle/sdlc/${{ inputs.sdlc_ref }}#sdlc -- run release
+          extra-conf: |
+            substituters = https://cache.nixos.org/ https://nix-community.cachix.org
+            trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=
+      - uses: Mic92/hestia@v3
+      - name: Plan release from consumer fragments
+        id: plan
+        env:
+          PUBLISH_VERSION: ${{ inputs.publish_version }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$PUBLISH_VERSION" ]]; then
+            git rev-parse --verify "refs/tags/v${PUBLISH_VERSION}" >/dev/null
+            printf 'release=true\nversion=%s\n' "$PUBLISH_VERSION" >> "$GITHUB_OUTPUT"
+          else
+            nix run .#sdlc -- changelog plan --github-output "$GITHUB_OUTPUT"
+          fi
+      - name: Finalize changelog and tag
+        if: steps.plan.outputs.release == 'true' && inputs.publish_version == ''
+        env:
+          RELEASE_VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          nix run .#sdlc -- changelog finalize --version "$RELEASE_VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md .changes
+          git commit -m "docs: finalize release v${RELEASE_VERSION}"
+          git tag -a "v${RELEASE_VERSION}" -m "Release v${RELEASE_VERSION}"
+          git push --atomic origin HEAD:main "refs/tags/v${RELEASE_VERSION}"
+      - name: Publish previously validated artifacts
+        if: steps.plan.outputs.release == 'true'
+        env:
+          SDLC_RELEASE_VERSION: ${{ steps.plan.outputs.version }}
+        run: nix run .#ci-release

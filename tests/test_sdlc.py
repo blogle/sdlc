@@ -9,19 +9,6 @@ sdlc = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(sdlc)
 
 
-class ContractTests(unittest.TestCase):
-    def test_contract_and_stage_plan(self):
-        contract = sdlc.load_contract(Path(__file__).parents[1] / "examples/minimal/ci.nix.json")
-        self.assertEqual(sdlc.plan(contract, "candidate"), [("nix", ["build", ".#checks.x86_64-linux.candidate"])])
-
-    def test_unknown_schema_fails_closed(self):
-        with tempfile.TemporaryDirectory() as temp:
-            path = Path(temp) / "ci.json"
-            path.write_text(json.dumps({"schemaVersion": 2, "stages": {}}))
-            with self.assertRaises(ValueError):
-                sdlc.load_contract(path)
-
-
 class ChangelogTests(unittest.TestCase):
     def test_zero_fragments_and_finalize_compacts(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -32,11 +19,15 @@ class ChangelogTests(unittest.TestCase):
                 sdlc.changelog("finalize")
                 frag = Path(temp) / ".changes/feature.json"
                 frag.write_text(json.dumps({"type": "feature", "semver": "minor", "summary": "Added a capability"}))
-                sdlc.changelog("finalize")
-                self.assertIn("Unreleased (minor)", (Path(temp) / "CHANGELOG.md").read_text())
+                sdlc.changelog("finalize", version="0.1.0", date="2026-10-03")
+                self.assertIn("## [0.1.0] - 2026-10-03", (Path(temp) / "CHANGELOG.md").read_text())
                 self.assertFalse(frag.exists())
             finally:
                 sdlc.ROOT = root
+
+    def test_aggregate_bump_is_max_semver(self):
+        entries = [(Path("patch.json"), {"type": "fix", "semver": "patch", "summary": "x"}), (Path("major.json"), {"type": "breaking", "semver": "major", "summary": "y"})]
+        self.assertEqual(sdlc.bump_intent(entries), "major")
 
 
 if __name__ == "__main__":

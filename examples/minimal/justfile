@@ -1,8 +1,24 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-# One-time checkout setup uses the official Vercel skills CLI for both sources.
+# Consumer-owned ergonomic aliases; every recipe calls binaries from its pinned flake.
 setup:
     nix develop -c just skills
 
 skills:
-    nix develop -c just skills
+    skills add https://github.com/blogle/sdlc/tree/v1/skills/sdlc --skill sdlc --agent opencode --yes
+    skills add https://github.com/Mergifyio/mergify-cli --skill '*' --agent opencode --yes
+
+skills-update:
+    skills update -p -y
+
+ci-fast:
+    nix run .#ci-pr-fast
+
+ci-candidate:
+    nix run .#ci-candidate
+
+check:
+    nix run .#ci-pr-fast
+
+release-plan:
+    sdlc changelog plan

@@ -1,9 +1,0 @@
-{
-  "schemaVersion": 1,
-  "integration": "integration:review",
-  "stages": {
-    "pr-fast": { "targets": [ ".#checks.x86_64-linux.test" ] },
-    "candidate": { "targets": [ ".#checks.x86_64-linux.test" ] },
-    "release": { "targets": [], "commands": [] }
-  }
-}

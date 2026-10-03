@@ -1,1 +1,64 @@
-extends: sdlc
+# Mergify extends resolves a repository name inside the same organization and
+# does not accept owner/repo. blogle is a GitHub User, so this fixture uses the
+# known-valid local policy instead of assuming a personal-account include works.
+merge_protections_settings:
+  auto_merge_conditions:
+    - and:
+        - base = main
+        - or:
+            - and:
+                - label = integration:auto
+                - label != integration:review
+            - and:
+                - label = integration:review
+                - label != integration:auto
+                - check-success = sdlc-integration-authorized
+
+merge_protections:
+  - name: require admission and an explicit integration policy
+    if:
+      - base = main
+    success_conditions:
+      - check-success = "sdlc / pr-fast"
+      - or:
+          - and:
+              - label = integration:auto
+              - label != integration:review
+          - and:
+              - label = integration:review
+              - label != integration:auto
+              - check-success = sdlc-integration-authorized
+
+queue_rules:
+  - name: validated candidates
+    queue_conditions:
+      - base = main
+      - check-success = "sdlc / pr-fast"
+      - or:
+          - and:
+              - label = integration:auto
+              - label != integration:review
+          - and:
+              - label = integration:review
+              - label != integration:auto
+              - check-success = sdlc-integration-authorized
+    merge_conditions:
+      - check-success = "sdlc / candidate"
+      - or:
+          - and:
+              - label = integration:auto
+              - label != integration:review
+          - and:
+              - label = integration:review
+              - label != integration:auto
+              - check-success = sdlc-integration-authorized
+    batch_size: 5
+    batch_max_wait_time: 2 minutes
+    merge_method: squash
+    update_method: merge
+
+merge_queue:
+  max_parallel_checks: 5
+  mode: serial
+  queue_controls_comment: false
+  status_comments: outcomes
