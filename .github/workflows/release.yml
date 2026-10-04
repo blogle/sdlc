@@ -42,10 +42,16 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -n "$PUBLISH_VERSION" ]]; then
+            [[ "$PUBLISH_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
             git rev-parse --verify "refs/tags/v${PUBLISH_VERSION}" >/dev/null
             printf 'release=true\nversion=%s\n' "$PUBLISH_VERSION" >> "$GITHUB_OUTPUT"
           else
-            nix run .#sdlc -- changelog plan --github-output "$GITHUB_OUTPUT"
+            plan="$(nix run .#sdlc -- changelog plan --json)"
+            release="$(jq -r '.release' <<< "$plan")"
+            printf 'release=%s\n' "$release" >> "$GITHUB_OUTPUT"
+            if [[ "$release" == true ]]; then
+              printf 'version=%s\n' "$(jq -r '.version' <<< "$plan")" >> "$GITHUB_OUTPUT"
+            fi
           fi
       - name: Finalize changelog and tag
         if: steps.plan.outputs.release == 'true' && inputs.publish_version == ''
@@ -64,4 +70,5 @@ jobs:
         if: steps.plan.outputs.release == 'true'
         env:
           SDLC_RELEASE_VERSION: ${{ steps.plan.outputs.version }}
-        run: nix run .#ci-release
+          GH_TOKEN: ${{ steps.release-app.outputs.token }}
+        run: nix develop -c just release-publish "${SDLC_RELEASE_VERSION}"

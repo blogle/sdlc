@@ -10,11 +10,11 @@ check:
     nix run nixpkgs#yq-go -- eval '.' .mergify.yml >/dev/null
     nix run nixpkgs#yq-go -- eval '.' examples/minimal/.mergify.yml >/dev/null
     nix flake check --no-build
-    nix run .#ci-pr-fast
-    nix run .#ci-candidate
+    nix build --no-link .#checks.x86_64-linux.ci-pr-fast
+    nix build --no-link .#checks.x86_64-linux.ci-candidate
     nix flake check --no-build ./examples/minimal
-    nix run ./examples/minimal#ci-pr-fast
-    nix run ./examples/minimal#ci-candidate
+    nix build --no-link ./examples/minimal#checks.x86_64-linux.ci-pr-fast
+    nix build --no-link ./examples/minimal#checks.x86_64-linux.ci-candidate
 
 validate-mergify:
     nix run .#mergify-cli -- config validate --config-file .mergify.yml
@@ -28,10 +28,10 @@ test:
     python3 -m unittest discover -s tests -v
 
 pr-fast:
-    nix run .#ci-pr-fast
+    nix build --no-link .#checks.x86_64-linux.ci-pr-fast
 
 candidate:
-    nix run .#ci-candidate
+    nix build --no-link .#checks.x86_64-linux.ci-candidate
 
 changelog *args:
     sdlc changelog {{args}}

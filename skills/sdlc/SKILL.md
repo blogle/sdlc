@@ -9,7 +9,7 @@ Use this skill whenever changing CI, build/test contracts, Mergify policy, chang
 
 ## Ownership and lifecycle
 
-The project owns **what** can be built, tested, and published: Nix packages/checks and any narrow publication hook. Consumer-local `ci.nix` maps those project-owned derivations to the versioned `pr-fast`, `candidate`, and `release` stages. The pinned SDLC flake library owns contract validation and stable local app generation; shared workflows own GitHub orchestration, Nix/Hestia setup, queue policy, and changelog mechanics. No part of a consumer build assumes the SDLC repository checkout is present.
+The project owns **what** can be built, tested, and published: Nix packages/checks and a narrow publication hook. Consumer-local `ci.nix` maps project derivations to `pr-fast` and `candidate`; release publication is a shared workflow calling the consumer's own just recipe. The pinned SDLC flake library validates the two check aliases; shared workflows own GitHub orchestration, Nix/Hestia setup, queue policy, and changelog compaction. No part of a consumer build assumes the SDLC repository checkout is present.
 
 1. **Local/dev:** enter the project environment with `nix develop`, then use its `justfile` as the human/agent interface (`just --list`, `just check`, and project-specific recipes). Never recommend `nix --option build-users-group "" develop`.
 2. **`pr-fast`:** cheap admission checks only—format, lint, focused/unit tests, contract validation, and other fast feedback. Put expensive builds, broad/integration suites, image builds, and release work in `candidate`, not ordinary PR admission.
@@ -20,9 +20,9 @@ The project owns **what** can be built, tested, and published: Nix packages/chec
 
 ## Contract and tooling
 
-Read consumer-local `ci.nix` and the v1 protocol docs before changing stage wiring. Preserve `schemaVersion = 1`; map the project's actual derivations, and use optional argv-array `commands` only for narrow operations Nix targets cannot express (usually publication). Do not silently skip, rename, or replace shared stages. Release targets must remain empty; release commands promote candidate-validated artifacts only. If the target contract genuinely changes, update its versioned documentation and fixtures.
+Read consumer-local `ci.nix` and the v1 protocol docs before changing stage wiring. Preserve `schemaVersion = 1`; map the project's actual fast and candidate derivations. Do not silently skip or replace a shared check alias. Release publication is a consumer-owned `just release-publish <version>` recipe and must promote candidate-validated artifacts only. If the target contract genuinely changes, update its versioned documentation and fixtures.
 
-Use the consumer's generated `nix run .#ci-pr-fast` / `nix run .#ci-candidate` entrypoints for stages. Use `sdlc changelog check|plan|preview|finalize` for consumer-local release-fragment operations. Prefer consumer-local `just` recipes where provided; they should be ergonomic aliases over the pinned flake apps and CLI, not calls into the shared repository's justfile.
+Use the consumer's Nix-native `nix build --no-link .#checks.x86_64-linux.ci-pr-fast` / `nix build --no-link .#checks.x86_64-linux.ci-candidate` checks. Use `sdlc changelog check|plan|finalize` for consumer-local release-fragment operations. Prefer consumer-local `just` recipes where provided; they should be ergonomic aliases over the pinned flake checks and CLI, not calls into the shared repository's justfile.
 
 Install the maintained shared skills with the consumer's `just skills` recipe. It uses Vercel's official `skills` CLI from the pinned Nix dev shell, targeting OpenCode and resolving the compatible `blogle/sdlc` `v1` source plus Mergify's canonical CLI repository. Refresh installed sources using the CLI's native `skills update -p -y`; do not copy, sync, or write custom skill-install logic.
 
@@ -34,4 +34,4 @@ Add `.changes/<topic>.json` only when a change is externally meaningful/release-
 
 ## Validate and report
 
-Before finishing, run `nix develop -c just check` (or the consuming repo's documented equivalent), then `just ci-fast` / `nix run .#ci-pr-fast`; run candidate-equivalent checks locally when practical without moving expensive work into admission. Validate changed contract/changelog data and do not claim a check that was not run. In the PR, summarize intent, list exact verification commands/results, call out deferred work, and leave integration at the task's granted policy. For `integration:review`, stop for authorization; do not queue or merge yourself.
+Before finishing, run `nix develop -c just check` (or the consuming repo's documented equivalent), then `just ci-fast` / `nix build --no-link .#checks.x86_64-linux.ci-pr-fast`; run candidate-equivalent checks locally when practical without moving expensive work into admission. Validate changed contract/changelog data and do not claim a check that was not run. In the PR, summarize intent, list exact verification commands/results, call out deferred work, and leave integration at the task's granted policy. For `integration:review`, stop for authorization; do not queue or merge yourself.

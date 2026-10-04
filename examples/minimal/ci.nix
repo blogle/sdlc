@@ -1,10 +1,8 @@
-{ self, system, pkgs }:
+{ self, system }:
 {
   schemaVersion = 1;
   stages = {
-    pr-fast.targets = [ self.checks.${system}.fast ];
-    candidate.targets = [ self.checks.${system}.candidate ];
-    # Production repos put a publication-only argv hook here, with no targets.
-    release = { targets = [ ]; commands = [ ]; };
+    pr-fast = self.checks.${system}.fast;
+    candidate = self.checks.${system}.candidate;
   };
 }

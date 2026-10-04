@@ -19,26 +19,15 @@
             runtimeInputs = [ pkgs.python3 ];
             text = ''exec python3 ${./src/sdlc.py} "$@"'';
           };
-          ci = sdlcLib.mkConsumer {
-            inherit pkgs;
-            contract = import ./ci.nix { inherit self system; };
-          };
         in {
           default = sdlcCli;
           sdlc = sdlcCli;
           skills = pkgs.skills;
           mergify-cli = mergify-nix.packages.${system}.mergify-cli;
-        } // ci.packages);
-      apps = eachSystem (system:
-        let
-          pkgs = nixpkgs.legacyPackages.${system};
-          ci = sdlcLib.mkConsumer {
-            inherit pkgs;
-            contract = import ./ci.nix { inherit self system; };
-          };
-        in {
+        });
+      apps = eachSystem (system: {
           default = { type = "app"; program = "${self.packages.${system}.sdlc}/bin/sdlc"; };
-        } // ci.apps);
+        });
       devShells = eachSystem (system:
         let pkgs = nixpkgs.legacyPackages.${system};
         in {
@@ -51,7 +40,10 @@
         });
       checks = eachSystem (system:
         let pkgs = nixpkgs.legacyPackages.${system};
-        in {
+          ci = sdlcLib.mkConsumer {
+            contract = import ./ci.nix { inherit self system; };
+          };
+        in ci.checks // {
           test = pkgs.runCommand "sdlc-tests" { nativeBuildInputs = [ pkgs.python3 ]; } ''
             cd ${./.}
             python3 -m unittest discover -s tests -v

@@ -12,13 +12,18 @@ skills-update:
     skills update -p -y
 
 ci-fast:
-    nix run .#ci-pr-fast
+    nix build --no-link .#checks.x86_64-linux.ci-pr-fast
 
 ci-candidate:
-    nix run .#ci-candidate
+    nix build --no-link .#checks.x86_64-linux.ci-candidate
 
 check:
-    nix run .#ci-pr-fast
+    nix build --no-link .#checks.x86_64-linux.ci-pr-fast
 
 release-plan:
     sdlc changelog plan
+
+# Consumer-owned promotion hook; replace with a command that publishes
+# candidate-validated artifacts without rebuilding them.
+release-publish version:
+    gh release view "v{{version}}" >/dev/null 2>&1 || gh release create "v{{version}}" --title "v{{version}}" --generate-notes

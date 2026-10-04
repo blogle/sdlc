@@ -49,34 +49,20 @@ def next_version(bump):
     return f"{major}.{minor}.{patch + 1}"
 
 
-def write_outputs(path, entries, version):
-    if path is None:
-        return
-    with Path(path).open("a") as stream:
-        stream.write(f"release={'true' if entries else 'false'}\n")
-        if entries:
-            stream.write(f"version={version}\n")
-            stream.write(f"bump={bump_intent(entries)}\n")
-
-
 def render(entries):
     return "\n".join(f"- **{item['type']}**: {item['summary']}" for _, item in entries)
 
 
-def changelog(action, github_output=None, version=None, date=None):
+def changelog(action, version=None, date=None, json_output=False):
     entries = fragments()
     bump = bump_intent(entries)
     planned_version = next_version(bump) if bump else None
-    write_outputs(github_output, entries, planned_version)
     if action == "check":
         print(f"validated {len(entries)} changelog fragment(s)")
     elif action == "plan":
-        if not entries:
-            print("no changelog fragments; no release")
-        else:
-            print(f"release {planned_version} ({bump})\n\n{render(entries)}")
-    elif action == "preview":
-        if not entries:
+        if json_output:
+            print(json.dumps({"release": bool(entries), "bump": bump, "version": planned_version}, sort_keys=True))
+        elif not entries:
             print("no changelog fragments; no release")
         else:
             print(f"release {planned_version} ({bump})\n\n{render(entries)}")
@@ -105,13 +91,13 @@ def main():
     parser = argparse.ArgumentParser(prog="sdlc")
     commands = parser.add_subparsers(dest="command", required=True)
     changes = commands.add_parser("changelog")
-    changes.add_argument("action", choices=["check", "plan", "preview", "finalize"])
-    changes.add_argument("--github-output")
+    changes.add_argument("action", choices=["check", "plan", "finalize"])
     changes.add_argument("--version")
     changes.add_argument("--date")
+    changes.add_argument("--json", action="store_true")
     args = parser.parse_args()
     try:
-        changelog(args.action, args.github_output, args.version, args.date)
+        changelog(args.action, args.version, args.date, args.json)
     except (ValueError, subprocess.CalledProcessError) as exc:
         print(f"sdlc: {exc}", file=sys.stderr)
         return 1

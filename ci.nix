@@ -2,8 +2,7 @@
 {
   schemaVersion = 1;
   stages = {
-    pr-fast.targets = [ self.checks.${system}.test ];
-    candidate.targets = [ self.checks.${system}.test ];
-    release = { targets = [ ]; commands = [ ]; };
+    pr-fast = self.checks.${system}.test;
+    candidate = self.checks.${system}.test;
   };
 }

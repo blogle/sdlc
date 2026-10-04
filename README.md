@@ -14,9 +14,9 @@ inputs = {
 };
 ```
 
-Run `nix flake lock` and commit the resulting consumer `flake.lock`; it fixes the precise compatible implementation and dependency revisions. Upgrade deliberately with `nix flake lock --update-input sdlc`. The reusable workflow major (`@v1`) must match the input's protocol major. Workflow jobs checkout the caller and run its local generated apps, which use that locked input—there is no separate remote runner fetch.
+Run `nix flake lock` and commit the resulting consumer `flake.lock`; it fixes the precise compatible implementation and dependency revisions. Upgrade deliberately with `nix flake lock --update-input sdlc`. The reusable workflow major (`@v1`) must match the input's protocol major. Workflow jobs checkout the caller and build its local Nix checks, which are direct aliases created from the locked input—there is no separate remote runner fetch.
 
-Expose targets from the consumer's own flake and use the SDLC helper to generate stable apps:
+Expose targets from the consumer's own flake and use the SDLC helper to alias the two standard stages into native Nix check outputs:
 
 ```nix
 outputs = { self, nixpkgs, sdlc, ... }:
@@ -24,20 +24,20 @@ outputs = { self, nixpkgs, sdlc, ... }:
     systems = [ "x86_64-linux" ];
     forAllSystems = nixpkgs.lib.genAttrs systems;
   in {
-    apps = forAllSystems (system:
+    checks = forAllSystems (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-        contract = import ./ci.nix { inherit self system pkgs; };
-        ci = sdlc.lib.mkConsumer { inherit pkgs contract; };
-      in ci.apps // {
-        sdlc = { type = "app"; program = "${sdlc.packages.${system}.sdlc}/bin/sdlc"; };
+        contract = import ./ci.nix { inherit self system; };
+        ci = sdlc.lib.mkConsumer { inherit contract; };
+      in ci.checks // {
+        fast = pkgs.runCommand "consumer-fast" { } ''run-fast-checks; touch $out'';
+        candidate = pkgs.runCommand "consumer-candidate" { } ''run-candidate-checks; touch $out'';
       });
     packages = forAllSystems (system:
-      let
-        pkgs = nixpkgs.legacyPackages.${system};
-        contract = import ./ci.nix { inherit self system pkgs; };
-        ci = sdlc.lib.mkConsumer { inherit pkgs contract; };
-      in ci.packages // { sdlc = sdlc.packages.${system}.sdlc; });
+      { sdlc = sdlc.packages.${system}.sdlc; });
+    apps = forAllSystems (system: {
+      sdlc = { type = "app"; program = "${sdlc.packages.${system}.sdlc}/bin/sdlc"; };
+    });
     devShells = forAllSystems (system:
       let pkgs = nixpkgs.legacyPackages.${system};
       in {
@@ -54,22 +54,17 @@ outputs = { self, nixpkgs, sdlc, ... }:
 `ci.nix` is consumer-owned Nix data, not a second DSL:
 
 ```nix
-{ self, system, pkgs }:
+{ self, system }:
 {
   schemaVersion = 1;
   stages = {
-    pr-fast.targets = [ self.checks.${system}.fast ];
-    candidate.targets = [ self.checks.${system}.candidate ];
-    # Publication hook only. Candidate artifacts are promoted, never rebuilt.
-    release = {
-      targets = [ ];
-      commands = [ [ "./ops/promote-validated-artifacts" ] ];
-    };
+    pr-fast = self.checks.${system}.fast;
+    candidate = self.checks.${system}.candidate;
   };
 }
 ```
 
-The library validates this small v1 attrset and generates `ci-pr-fast`, `ci-candidate`, and `ci-release` local flake apps. CI invokes `nix run .#ci-pr-fast` / `nix run .#ci-candidate`. Targets are Nix derivations. Commands are optional argv arrays, executed in the consumer's working tree; use them as narrow escape hatches. Release targets must be empty so publication cannot accidentally rebuild. `sdlc.lib.devTools` adds the shared CLI and official `skills` CLI; Mergify CLI is independently exposed as a flake package and can be added explicitly if needed.
+The tiny v1 helper validates stage names and aliases the same consumer derivations under stable check names. It creates no shell wrappers, Nix sub-runner, or task DSL. CI invokes `nix build --no-link .#checks.x86_64-linux.ci-pr-fast` / `nix build --no-link .#checks.x86_64-linux.ci-candidate`; projects with multiple checks aggregate them in their own flake using Nix. Release is not a Nix build stage: the shared publication workflow finalizes changelogs and delegates publication to the consumer's own `just release-publish <version>` recipe. `sdlc.lib.devTools` adds the shared changelog CLI and official `skills` CLI; Mergify CLI is independently exposed as a flake package.
 
 See [`examples/minimal`](examples/minimal) for a runnable consumer fixture. Its `path:../..` input exists only so this repository can integration-test the library without depending on a released tag; actual consumers use `github:blogle/sdlc/v1` as shown above.
 
@@ -79,10 +74,10 @@ The consumer owns its `justfile`. For example:
 
 ```make
 ci-fast:
-    nix run .#ci-pr-fast
+    nix build --no-link .#checks.x86_64-linux.ci-pr-fast
 
 ci-candidate:
-    nix run .#ci-candidate
+    nix build --no-link .#checks.x86_64-linux.ci-candidate
 
 skills:
     skills add https://github.com/blogle/sdlc/tree/v1/skills/sdlc --skill sdlc --agent opencode --yes
@@ -103,7 +98,7 @@ jobs:
     uses: blogle/sdlc/.github/workflows/candidate.yml@v1
 ```
 
-The shared jobs check out the caller, install Nix, configure the proven Hestia action, then run the caller's generated `.#ci-*` app. Nix/Hestia/cache setup is centralized; derivations and targets remain consumer-owned. Hestia uses GitHub Actions cache scoped by GitHub, requires no cache name, Cachix account, or cache secret, and can evict entries (which simply causes rebuilds). The workflow also configures the Nix Community substituter used in blogle's existing CI pattern.
+The shared jobs check out the caller, install Nix, configure the proven Hestia action, then build the caller's Nix-native stage check. Nix/Hestia/cache setup is centralized; derivations and targets remain consumer-owned. Hestia uses GitHub Actions cache scoped by GitHub, requires no cache name, Cachix account, or cache secret, and can evict entries (which simply causes rebuilds). The workflow also configures the Nix Community substituter used in blogle's existing CI pattern.
 
 Do not run general CI on merged `main`. The consumer invokes the reusable release workflow only on a main push:
 
@@ -125,7 +120,7 @@ jobs:
     secrets: inherit
 ```
 
-The release workflow plans from pending fragments, no-ops if none exist, compacts fragments into `CHANGELOG.md`, commits that finalization and tags the computed version, then invokes `nix run .#ci-release`. That app is constrained to publication commands only. Configure its hook to promote artifacts already validated by candidate work; it must not rerun CI or rebuild. If publication fails after finalization/tagging, rerun the consumer's release workflow manually with the existing `publish_version` (without the leading `v`); it verifies the tag and retries publication without consuming/finalizing fragments again. Install a GitHub App with contents-write permission, configure it as a branch-ruleset bypass actor for the finalizer commit/tag, and store `SDLC_RELEASE_APP_ID` and `SDLC_RELEASE_APP_PRIVATE_KEY` as repository or organization Actions secrets. The release workflow requires those secrets; they are not needed for PR admission/candidate or Hestia. The example release caller uses `secrets: inherit` so those named secrets reach the reusable workflow.
+The release workflow plans from pending fragments, no-ops if none exist, compacts fragments into `CHANGELOG.md`, commits that finalization and tags the computed version, then invokes the consumer-owned `just release-publish <version>` recipe inside `nix develop`. The minimal example creates a GitHub Release for the tag using GitHub-generated notes; repositories with external artifacts can extend that local recipe to promote candidate-validated artifact identities. It must not rerun CI or rebuild. If publication fails after finalization/tagging, rerun the consumer's release workflow manually with the existing `publish_version` (without the leading `v`); it verifies the tag and retries publication without consuming/finalizing fragments again. Install a GitHub App with contents-write permission, configure it as a branch-ruleset bypass actor for the finalizer commit/tag, and store `SDLC_RELEASE_APP_ID` and `SDLC_RELEASE_APP_PRIVATE_KEY` as repository or organization Actions secrets. The release workflow requires those secrets; they are not needed for PR admission/candidate or Hestia. The example release caller uses `secrets: inherit` so those named secrets reach the reusable workflow.
 
 ## Mergify sharing and integration
 
@@ -149,7 +144,7 @@ The canonical SDLC skill lives at `skills/sdlc/SKILL.md` in this repository and 
 
 ## Changelogs and local agent loop
 
-Add `.changes/<topic>.json` only for externally meaningful release-worthy changes, with `type`, `semver` (`patch|minor|major`), and `summary`. CI/docs/tests/internal refactors normally need no fragment. A PR never edits `CHANGELOG.md` to add notes. `sdlc changelog check|plan|preview|finalize` operates on the consumer working tree; plan aggregates maximum SemVer intent and finds the next version from tags, finalize renders a dated version section and deletes consumed fragments. No fragments means no release. Git history archives fragment contents.
+Add `.changes/<topic>.json` only for externally meaningful release-worthy changes, with `type`, `semver` (`patch|minor|major`), and `summary`. CI/docs/tests/internal refactors normally need no fragment. A PR never edits `CHANGELOG.md` to add notes. `sdlc changelog check|plan|finalize` operates on the consumer working tree; plan aggregates maximum SemVer intent and finds the next version from tags (`--json` is consumed by GitHub Actions), finalize renders a dated version section and deletes consumed fragments. No fragments means no release. Git history archives fragment contents.
 
 Example fragment:
 
@@ -157,4 +152,4 @@ Example fragment:
 {"type":"feature","semver":"minor","summary":"Add project-facing capability"}
 ```
 
-Agent loop in a consumer: `nix develop`; inspect the consumer `ci.nix` and `just --list`; implement targets locally; run `just check` and `just ci-fast` (or `nix run .#ci-pr-fast`); add a fragment only if warranted; open a PR with exact command/result evidence and the assigned integration policy. `nix develop` is strongly preferred; never recommend `nix --option build-users-group "" develop`. The shared repo's own `justfile` and tests develop this library only—they are not part of the downstream interface.
+Agent loop in a consumer: `nix develop`; inspect the consumer `ci.nix` and `just --list`; implement targets locally; run `just check` and `just ci-fast` (or `nix build --no-link .#checks.x86_64-linux.ci-pr-fast`); add a fragment only if warranted; open a PR with exact command/result evidence and the assigned integration policy. `nix develop` is strongly preferred; never recommend `nix --option build-users-group "" develop`. The shared repo's own `justfile` and tests develop this library only—they are not part of the downstream interface.

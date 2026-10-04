@@ -12,29 +12,21 @@
       systems = [ "x86_64-linux" ];
     in {
       checks = nixpkgs.lib.genAttrs systems (system:
-        let pkgs = nixpkgs.legacyPackages.${system};
-        in {
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+          ci = sdlc.lib.mkConsumer {
+            contract = import ./ci.nix { inherit self system; };
+          };
+        in ci.checks // {
           fast = pkgs.runCommand "consumer-fast" { } ''echo fast admission; touch $out'';
           candidate = pkgs.runCommand "consumer-candidate" { } ''echo synthetic candidate validation; touch $out'';
         });
       apps = nixpkgs.lib.genAttrs systems (system:
-        let
-          pkgs = nixpkgs.legacyPackages.${system};
-          ci = sdlc.lib.mkConsumer {
-            inherit pkgs;
-            contract = import ./ci.nix { inherit self system pkgs; };
-          };
-        in ci.apps // {
+        {
           sdlc = { type = "app"; program = "${sdlc.packages.${system}.sdlc}/bin/sdlc"; };
         });
       packages = nixpkgs.lib.genAttrs systems (system:
-        let
-          pkgs = nixpkgs.legacyPackages.${system};
-          ci = sdlc.lib.mkConsumer {
-            inherit pkgs;
-            contract = import ./ci.nix { inherit self system pkgs; };
-          };
-        in ci.packages // {
+        {
           sdlc = sdlc.packages.${system}.sdlc;
         });
       devShells = nixpkgs.lib.genAttrs systems (system:
@@ -44,7 +36,7 @@
             packages = sdlc.lib.devTools {
               inherit pkgs;
               sdlcCli = sdlc.packages.${system}.sdlc;
-            } ++ [ pkgs.just ];
+          } ++ [ pkgs.just pkgs.gh ];
           };
         });
     };
