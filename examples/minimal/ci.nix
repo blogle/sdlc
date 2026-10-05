@@ -2,7 +2,13 @@
 {
   schemaVersion = 1;
   stages = {
-    pr-fast = self.checks.${system}.fast;
-    candidate = self.checks.${system}.candidate;
+    pr-fast = {
+      format = self.checks.${system}.fast;
+      contract = self.checks.${system}.fast-contract;
+    };
+    candidate = {
+      integration = self.checks.${system}.candidate;
+      artifact = self.checks.${system}.candidate-artifact;
+    };
   };
 }

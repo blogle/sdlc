@@ -13,12 +13,21 @@ RANK = {"patch": 1, "minor": 2, "major": 3}
 VERSION_RE = re.compile(r"^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 
 
-def fragments():
+def fragments(selected=None):
     directory = ROOT / ".changes"
-    if not directory.exists():
+    if selected is None and not directory.exists():
         return []
     result = []
-    for path in sorted(directory.glob("*.json")):
+    if selected is None:
+        paths = sorted(directory.glob("*.json"))
+    else:
+        paths = []
+        for name in selected:
+            relative = Path(name)
+            if relative.is_absolute() or len(relative.parts) != 2 or relative.parts[0] != ".changes" or relative.suffix != ".json":
+                raise ValueError(f"invalid fragment path {name!r}; expected .changes/<name>.json")
+            paths.append(ROOT / relative)
+    for path in sorted(paths):
         try:
             item = json.loads(path.read_text())
         except (OSError, json.JSONDecodeError) as exc:
@@ -37,7 +46,7 @@ def bump_intent(entries):
 
 def next_version(bump):
     try:
-        tags = subprocess.run(["git", "tag", "--list", "v[0-9]*"], check=True, capture_output=True, text=True).stdout.splitlines()
+        tags = subprocess.run(["git", "tag", "--list", "v[0-9]*"], cwd=ROOT, check=True, capture_output=True, text=True).stdout.splitlines()
     except (FileNotFoundError, subprocess.CalledProcessError):
         tags = []
     versions = [tuple(map(int, VERSION_RE.match(tag).groups())) for tag in tags if VERSION_RE.match(tag)]
@@ -53,8 +62,8 @@ def render(entries):
     return "\n".join(f"- **{item['type']}**: {item['summary']}" for _, item in entries)
 
 
-def changelog(action, version=None, date=None, json_output=False):
-    entries = fragments()
+def changelog(action, version=None, date=None, json_output=False, selected=None):
+    entries = fragments(selected)
     bump = bump_intent(entries)
     planned_version = next_version(bump) if bump else None
     if action == "check":
@@ -95,9 +104,10 @@ def main():
     changes.add_argument("--version")
     changes.add_argument("--date")
     changes.add_argument("--json", action="store_true")
+    changes.add_argument("--fragment", nargs="*", help="limit plan/finalize to fragments changed by one merged commit")
     args = parser.parse_args()
     try:
-        changelog(args.action, args.version, args.date, args.json)
+        changelog(args.action, args.version, args.date, args.json, args.fragment)
     except (ValueError, subprocess.CalledProcessError) as exc:
         print(f"sdlc: {exc}", file=sys.stderr)
         return 1

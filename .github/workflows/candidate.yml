@@ -1,24 +1,11 @@
 name: SDLC candidate
 on:
   workflow_call:
+permissions:
+  contents: read
+  actions: read
 jobs:
-  candidate:
-    name: sdlc / candidate
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      actions: read
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: DeterminateSystems/nix-installer-action@v23
-        with:
-          extra-conf: |
-            substituters = https://cache.nixos.org/ https://nix-community.cachix.org
-            trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=
-      - uses: Mic92/hestia@v3
-      - name: Build consumer's pinned candidate check
-        run: nix build --no-link .#checks.x86_64-linux.ci-candidate
+  stage:
+    uses: blogle/sdlc/.github/workflows/stage.yml@v1.0.0
+    with:
+      stage: candidate

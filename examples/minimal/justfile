@@ -12,13 +12,13 @@ skills-update:
     skills update -p -y
 
 ci-fast:
-    nix build --no-link .#checks.x86_64-linux.ci-pr-fast
+    nix build --no-link .#checks.x86_64-linux.fast .#checks.x86_64-linux.fast-contract
 
 ci-candidate:
-    nix build --no-link .#checks.x86_64-linux.ci-candidate
+    nix build --no-link .#checks.x86_64-linux.candidate .#checks.x86_64-linux.candidate-artifact
 
 check:
-    nix build --no-link .#checks.x86_64-linux.ci-pr-fast
+    just ci-fast
 
 release-plan:
     sdlc changelog plan

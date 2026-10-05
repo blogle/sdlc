@@ -1,0 +1,30 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "blogle SDLC defaults for pinned Nix inputs, reusable workflows, and GitHub Actions.",
+  "extends": [
+    "config:recommended",
+    "helpers:pinGitHubActionDigests"
+  ],
+  "nix": {
+    "enabled": true
+  },
+  "packageRules": [
+    {
+      "description": "Coordinate the SDLC Nix input release with its reusable workflow tags",
+      "matchManagers": ["nix"],
+      "matchDepNames": ["sdlc"],
+      "versioning": "semver-coerced",
+      "groupName": "SDLC release",
+      "automerge": false
+    },
+    {
+      "description": "Keep SDLC reusable workflow refs in the same grouped release PR",
+      "matchManagers": ["github-actions"],
+      "matchDepTypes": ["workflow"],
+      "matchPackageNames": ["blogle/sdlc"],
+      "groupName": "SDLC release",
+      "pinDigests": false,
+      "automerge": false
+    }
+  ]
+}

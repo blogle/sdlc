@@ -2,7 +2,7 @@
 {
   schemaVersion = 1;
   stages = {
-    pr-fast = self.checks.${system}.test;
-    candidate = self.checks.${system}.test;
+    pr-fast = { tests = self.checks.${system}.test; };
+    candidate = { tests = self.checks.${system}.test; };
   };
 }

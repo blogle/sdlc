@@ -12,7 +12,7 @@ permissions:
   contents: write
 jobs:
   publish:
-    uses: blogle/sdlc/.github/workflows/release.yml@v1
+    uses: blogle/sdlc/.github/workflows/release.yml@v1.0.0
     with:
       publish_version: ${{ inputs.publish_version || '' }}
     secrets: inherit

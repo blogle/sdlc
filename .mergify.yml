@@ -9,7 +9,7 @@ merge_protections_settings:
             - and:
                 - label = integration:review
                 - label != integration:auto
-                - check-success = sdlc-integration-authorized
+                - "#approved-reviews-by >= 1"
 
 merge_protections:
   - name: fail closed on integration policy and require admission
@@ -24,7 +24,7 @@ merge_protections:
           - and:
               - label = integration:review
               - label != integration:auto
-              - check-success = sdlc-integration-authorized
+              - "#approved-reviews-by >= 1"
 
 queue_rules:
   - name: validated candidates
@@ -38,7 +38,7 @@ queue_rules:
           - and:
               - label = integration:review
               - label != integration:auto
-              - check-success = sdlc-integration-authorized
+              - "#approved-reviews-by >= 1"
     merge_conditions:
       - check-success = "sdlc / candidate"
       - or:
@@ -48,7 +48,7 @@ queue_rules:
           - and:
               - label = integration:review
               - label != integration:auto
-              - check-success = sdlc-integration-authorized
+              - "#approved-reviews-by >= 1"
     batch_size: 5
     batch_max_wait_time: 2 minutes
     merge_method: squash
