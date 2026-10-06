@@ -1,0 +1,61 @@
+merge_protections_settings:
+  auto_merge_conditions:
+    - and:
+        - base = main
+        - or:
+            - and:
+                - label = integration:auto
+                - label != integration:review
+            - and:
+                - label = integration:review
+                - label != integration:auto
+                - "#approved-reviews-by >= 1"
+
+merge_protections:
+  - name: fail closed on integration policy and require admission
+    if:
+      - base = main
+    success_conditions:
+      - check-success = "sdlc / pr-fast"
+      - or:
+          - and:
+              - label = integration:auto
+              - label != integration:review
+          - and:
+              - label = integration:review
+              - label != integration:auto
+              - "#approved-reviews-by >= 1"
+
+queue_rules:
+  - name: validated candidates
+    queue_conditions:
+      - base = main
+      - check-success = "sdlc / pr-fast"
+      - or:
+          - and:
+              - label = integration:auto
+              - label != integration:review
+          - and:
+              - label = integration:review
+              - label != integration:auto
+              - "#approved-reviews-by >= 1"
+    merge_conditions:
+      - check-success = "sdlc / candidate"
+      - or:
+          - and:
+              - label = integration:auto
+              - label != integration:review
+          - and:
+              - label = integration:review
+              - label != integration:auto
+              - "#approved-reviews-by >= 1"
+    batch_size: 5
+    batch_max_wait_time: 2 minutes
+    merge_method: squash
+    update_method: merge
+
+merge_queue:
+  max_parallel_checks: 5
+  mode: serial
+  queue_controls_comment: false
+  status_comments: outcomes

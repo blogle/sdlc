@@ -1,0 +1,11 @@
+name: SDLC candidate
+on:
+  workflow_call:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  stage:
+    uses: blogle/sdlc/.github/workflows/stage.yml@v1.0.0
+    with:
+      stage: candidate

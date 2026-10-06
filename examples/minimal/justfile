@@ -1,0 +1,29 @@
+set shell := ["bash", "-euo", "pipefail", "-c"]
+
+# Consumer-owned ergonomic aliases; every recipe calls binaries from its pinned flake.
+setup:
+    nix develop -c just skills
+
+skills:
+    skills add https://github.com/blogle/sdlc/tree/v1/skills/sdlc --skill sdlc --agent opencode --yes
+    skills add https://github.com/Mergifyio/mergify-cli --skill '*' --agent opencode --yes
+
+skills-update:
+    skills update -p -y
+
+ci-fast:
+    nix build --no-link .#checks.x86_64-linux.fast .#checks.x86_64-linux.fast-contract
+
+ci-candidate:
+    nix build --no-link .#checks.x86_64-linux.candidate .#checks.x86_64-linux.candidate-artifact
+
+check:
+    just ci-fast
+
+release-plan:
+    sdlc changelog plan
+
+# Consumer-owned promotion hook; replace with a command that publishes
+# candidate-validated artifacts without rebuilding them.
+release-publish version:
+    gh release view "v{{version}}" >/dev/null 2>&1 || gh release create "v{{version}}" --title "v{{version}}" --generate-notes

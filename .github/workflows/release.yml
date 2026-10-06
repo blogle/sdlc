@@ -1,0 +1,145 @@
+name: SDLC release and publication
+on:
+  workflow_call:
+    inputs:
+      publish_version:
+        description: Existing release version to republish after a publication failure
+        type: string
+        required: false
+        default: ""
+    secrets:
+      SDLC_RELEASE_APP_ID:
+        required: true
+      SDLC_RELEASE_APP_PRIVATE_KEY:
+        required: true
+
+# GitHub serializes releases without canceling a running release. Its native
+# queue holds up to 100 pending runs; a manual empty publish_version dispatch
+# recovers any fragments left pending if that bound is exceeded.
+concurrency:
+  group: sdlc-release-${{ github.repository }}
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/create-github-app-token@v1
+        id: release-app
+        with:
+          app-id: ${{ secrets.SDLC_RELEASE_APP_ID }}
+          private-key: ${{ secrets.SDLC_RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          token: ${{ steps.release-app.outputs.token }}
+      - uses: DeterminateSystems/nix-installer-action@v23
+        with:
+          extra-conf: |
+            substituters = https://cache.nixos.org/ https://nix-community.cachix.org
+            trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=
+      - uses: Mic92/hestia@v3
+      - name: Finalize one release per merged PR and publish
+        env:
+          GH_TOKEN: ${{ steps.release-app.outputs.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_BEFORE: ${{ github.event.before }}
+          EVENT_AFTER: ${{ github.sha }}
+          PUBLISH_VERSION: ${{ inputs.publish_version }}
+        run: |
+          set -euo pipefail
+
+          fail() { printf 'release stopped: %s\n' "$*" >&2; exit 1; }
+
+          tag_for_source() {
+            local source="$1" tag subject
+            while IFS=$'\t' read -r tag subject; do
+              if [[ "$subject" == *"source=$source"* ]]; then
+                printf '%s' "$tag"
+                return 0
+              fi
+            done < <(git for-each-ref --format='%(refname:short)%09%(contents:subject)' refs/tags/v)
+            return 1
+          }
+
+          publish_version() {
+            nix develop -c just release-publish "$1"
+          }
+
+          if [[ -n "$PUBLISH_VERSION" ]]; then
+            [[ "$PUBLISH_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || fail "publish_version must be a semantic version without a leading v"
+            git fetch origin --tags
+            git rev-parse --verify "refs/tags/v${PUBLISH_VERSION}" >/dev/null || fail "tag v${PUBLISH_VERSION} does not exist"
+            publish_version "$PUBLISH_VERSION"
+            exit 0
+          fi
+
+          git fetch --prune origin main --tags
+          declare -A fragments_by_commit=()
+          commits=()
+
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            [[ "$EVENT_BEFORE" =~ ^[0-9a-f]{40}$ && "$EVENT_AFTER" =~ ^[0-9a-f]{40}$ ]] || fail "main push event is missing exact before/after SHAs"
+            git merge-base --is-ancestor "$EVENT_BEFORE" "$EVENT_AFTER" || fail "main was force-updated; refusing a stale release range"
+            git merge-base --is-ancestor "$EVENT_AFTER" origin/main || fail "push head is no longer on main"
+            mapfile -t commits < <(git rev-list --reverse --first-parent "${EVENT_BEFORE}..${EVENT_AFTER}")
+            for commit in "${commits[@]}"; do
+              mapfile -t changed < <(git diff-tree --no-commit-id --name-only --diff-filter=ACM -r --no-renames "$commit^" "$commit" -- .changes | sort)
+              if ((${#changed[@]})); then
+                fragments_by_commit["$commit"]="$(printf '%s\n' "${changed[@]}")"
+              fi
+            done
+          elif [[ "$EVENT_NAME" == "workflow_dispatch" && "$GITHUB_REF" == "refs/heads/main" ]]; then
+            # Recover pending fragments per first-parent commit if Actions'
+            # bounded native concurrency queue ever overflowed.
+            while IFS= read -r fragment; do
+              [[ "$fragment" == *.json ]] || continue
+              commit="$(git log -1 --format=%H origin/main -- "$fragment")"
+              [[ -n "$commit" ]] || continue
+              fragments_by_commit["$commit"]+="${fragment}"$'\n'
+            done < <(git ls-tree -r --name-only origin/main -- .changes)
+            mapfile -t commits < <(git log --reverse --first-parent --format=%H origin/main -- .changes)
+          else
+            fail "release workflow accepts main pushes or main workflow_dispatch"
+          fi
+
+          for source_commit in "${commits[@]}"; do
+            [[ -n "${fragments_by_commit[$source_commit]:-}" ]] || continue
+            mapfile -t fragments < <(printf '%s' "${fragments_by_commit[$source_commit]}" | sort -u)
+
+            git fetch --prune origin main --tags
+            git reset --hard origin/main
+            git merge-base --is-ancestor "$source_commit" origin/main || fail "source commit $source_commit is stale or no longer on main"
+            if existing_tag="$(tag_for_source "$source_commit")"; then
+              publish_version "${existing_tag#v}"
+              continue
+            fi
+
+            git merge-base --is-ancestor "$source_commit" origin/main || fail "main no longer contains source commit $source_commit"
+            for fragment in "${fragments[@]}"; do
+              [[ -f "$fragment" ]] || fail "fragment $fragment was removed before release finalization"
+              source_blob="$(git rev-parse "${source_commit}:${fragment}")"
+              main_blob="$(git rev-parse "origin/main:${fragment}")" || fail "fragment $fragment is absent from current main"
+              [[ "$source_blob" == "$main_blob" ]] || fail "fragment $fragment changed after source commit $source_commit; refusing stale finalization"
+            done
+
+            plan="$(nix run .#sdlc -- changelog plan --json --fragment "${fragments[@]}")"
+            [[ "$(jq -r '.release' <<< "$plan")" == true ]] || fail "release fragments unexpectedly produced no release"
+            version="$(jq -r '.version' <<< "$plan")"
+            nix run .#sdlc -- changelog finalize --version "$version" --fragment "${fragments[@]}"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add CHANGELOG.md "${fragments[@]}"
+            git commit -m "docs: finalize release v${version} for ${source_commit}"
+            git tag -a "v${version}" -m "Release v${version} source=${source_commit}"
+
+            # Atomic push means a stale main or tag conflict updates neither
+            # ref. The fragments stay on main for the re-run/manual recovery.
+            git push --atomic origin HEAD:main "refs/tags/v${version}" || fail "main/tag moved during finalization; no refs changed, re-run release to replan"
+            publish_version "$version"
+          done

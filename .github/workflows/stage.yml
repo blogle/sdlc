@@ -1,0 +1,80 @@
+name: SDLC Nix stage (internal)
+on:
+  workflow_call:
+    inputs:
+      stage:
+        type: string
+        required: true
+permissions:
+  contents: read
+  actions: read
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.hestia.outputs.matrix }}
+      any-jobs: ${{ steps.hestia.outputs.any-jobs }}
+      manifest-version: ${{ steps.hestia.outputs.manifest-version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: DeterminateSystems/nix-installer-action@v23
+        with:
+          extra-conf: |
+            substituters = https://cache.nixos.org/ https://nix-community.cachix.org
+            trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=
+      - uses: Mic92/hestia@v3
+      - name: Validate consumer changelog fragments
+        if: inputs.stage == 'pr-fast'
+        run: nix run .#sdlc -- changelog check
+      - uses: Mic92/hestia/matrix@v3
+        id: hestia
+        with:
+          flake: .#hydraJobs.x86_64-linux.ci-${{ inputs.stage }}
+          nix-eval-jobs: "nix run .#nix-eval-jobs --"
+
+  build:
+    needs: evaluate
+    if: needs.evaluate.outputs.any-jobs == 'true'
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.evaluate.outputs.matrix) }}
+    steps:
+      - uses: DeterminateSystems/nix-installer-action@v23
+        with:
+          extra-conf: |
+            substituters = https://cache.nixos.org/ https://nix-community.cachix.org
+            trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=
+      - uses: Mic92/hestia@v3
+        with:
+          wait-manifest-version: ${{ needs.evaluate.outputs.manifest-version }}
+      - name: Prefetch derivation closures from Hestia
+        run: |
+          "$HESTIA_BIN" prefetch ${{ matrix.installables }}
+      - name: Build exact Nix derivations
+        run: nix build -L ${{ matrix.installables }}
+
+  gate:
+    name: sdlc / ${{ inputs.stage }}
+    if: always()
+    needs: [evaluate, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Aggregate native Hestia matrix result
+        env:
+          EVALUATE_RESULT: ${{ needs.evaluate.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          ANY_JOBS: ${{ needs.evaluate.outputs.any-jobs }}
+        run: |
+          set -euo pipefail
+          test "$EVALUATE_RESULT" = success
+          if [[ "$ANY_JOBS" == true ]]; then
+            test "$BUILD_RESULT" = success
+          else
+            test "$BUILD_RESULT" = skipped
+          fi
