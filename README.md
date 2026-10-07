@@ -99,9 +99,26 @@ jobs:
   candidate:
     if: github.event_name == 'merge_group' || startsWith(github.event.pull_request.head.ref, 'mergify/merge-queue/')
     uses: blogle/sdlc/.github/workflows/candidate.yml@v1.0.0
+  # Stable required-check contexts must be emitted by ordinary caller jobs.
+  sdlc-pr-fast:
+    name: sdlc / pr-fast
+    needs: pr-fast
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ needs.pr-fast.result }}" = success
+  sdlc-candidate:
+    name: sdlc / candidate
+    needs: candidate
+    if: always() && (github.event_name == 'merge_group' || startsWith(github.event.pull_request.head.ref, 'mergify/merge-queue/'))
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ needs.candidate.result }}" = success
 ```
 
-These workflows checkout the caller and invoke **Hestia's native matrix action** on that consumer's `hydraJobs` stage attrset. Hestia evaluates with the consumer's lockfile-pinned `nix-eval-jobs`, honors native `meta.hestia.group`/`meta.hestia.os`, fans out derivation builds, and owns the GitHub Actions cache. SDLC adds no matrix schema or scheduler. Hestia cache entries are repository-scoped and evictable; a miss only costs performance. It is not a durable artifact store, not a candidate provenance mechanism, and does not promise Nix outputs will be reusable by another repo or developer machine. No cache name or cache secret is used. External Nix binary caches are an optional future optimization and are not a v1 protocol interface.
+Nested reusable-workflow check names include caller/callee prefixes and are not stable required-check contexts. The two ordinary local jobs above always run and succeed only when the corresponding reusable job succeeds. Keep the candidate gate condition identical to the reusable candidate job so it runs for merge groups and Mergify synthetic PRs only. Canonical Mergify continues to require `sdlc / pr-fast` and `sdlc / candidate`.
+
+The reusable workflows checkout the caller and invoke **Hestia's native matrix action** on that consumer's `hydraJobs` stage attrset. Hestia evaluates with the consumer's lockfile-pinned `nix-eval-jobs`, honors native `meta.hestia.group`/`meta.hestia.os`, fans out derivation builds, and owns the GitHub Actions cache. SDLC adds no matrix schema or scheduler. Hestia cache entries are repository-scoped and evictable; a miss only costs performance. It is not a durable artifact store, not a candidate provenance mechanism, and does not promise Nix outputs will be reusable by another repo or developer machine. No cache name or cache secret is used. External Nix binary caches are an optional future optimization and are not a v1 protocol interface.
 
 Future cache research is explicitly outside v1: native Nix S3 caches against custom S3-compatible endpoints (including comparing free-tier providers), niks3's server/DB/GC tradeoffs, and experimental OCI/GHCR-backed caches. No backend abstraction or cost/free-tier promise is part of this protocol.
 
@@ -112,6 +129,12 @@ Future cache research is explicitly outside v1: native Nix S3 caches against cus
 The canonical `.mergify.yml` uses automatic enqueue, candidate checks at merge, batching, squash, and fail-closed integration policy. Organization-owned consumers in the same actual Mergify organization can use `extends: sdlc`. Mergify's documented `extends` syntax accepts a repository name resolved in that organization; it does not accept `owner/repo` or arbitrary URLs. `blogle` is a personal GitHub User, so the fixture uses the full local policy instead of assuming personal-account extension works. Cross-owner consumers must host the preset in a shared organization or retain local policy.
 
 Create exactly one of `integration:auto` or `integration:review` on each PR. Auto delegates integration authority to the worker. Review workers stop after implementation and wait for native GitHub approval before queue eligibility. For a head-bound approval, configure GitHub to dismiss stale approvals and require approval of the most recent reviewable push; Mergify's `#approved-reviews-by >= 1` condition gates the review mode. Missing/unknown/conflicting labels fail closed; comments are not authorization. Install the Mergify GitHub App, enable Merge Queue and Merge Protections, allow squash only, require `sdlc / pr-fast`, and create both labels. Do not require candidate status on source PRs.
+
+## Repository policy as IaC
+
+`tofu/modules/github-repository-policy` is the reusable `integrations/github` provider module for one repository's canonical default-branch ruleset and the two integration labels. It requires `sdlc / pr-fast` plus configured extra checks, but not candidate on source PRs. It does not manage `github_repository`, avoiding imports and unrelated repository-setting changes. GitHub exposes merge-method availability as a repository setting rather than a branch-ruleset rule; keep squash-only merge availability configured on the repository itself while managing branch protections and labels through this module.
+
+The intended fleet layout is a single central root stack (for example, in `dotfiles/personal-infra`) with one map of repositories to `{ default_branch, extra_required_status_checks }` and one centralized state. That root consumes this module at a concrete SDLC release tag using an OpenTofu Git subdirectory source, e.g. `git::https://github.com/blogle/sdlc.git//tofu/modules/github-repository-policy?ref=v1.0.0`. Nexus can dispatch the root stack's GitHub Actions `workflow_dispatch` to plan/apply; it already exposes workflow dispatch. The current Nexus GitHub connector supports ruleset read/create but not update/delete, so the IaC apply path is preferred for ongoing reconciliation. SDLC defines no backend or state protocol; a root stack may use an S3-compatible backend such as R2.
 
 ## Release and artifacts
 

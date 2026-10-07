@@ -72,5 +72,17 @@ class ChangelogTests(unittest.TestCase):
                 sdlc.ROOT = root
 
 
+class ConsumerWorkflowTests(unittest.TestCase):
+    def test_stable_required_checks_are_local_always_gates(self):
+        workflow = (Path(__file__).parents[1] / "examples/minimal/.github/workflows/ci.yml").read_text()
+        self.assertIn("name: sdlc / pr-fast", workflow)
+        self.assertIn("needs: pr-fast", workflow)
+        self.assertIn("if: always()", workflow)
+        self.assertIn('test \"${{ needs.pr-fast.result }}\" = success', workflow)
+        self.assertIn("name: sdlc / candidate", workflow)
+        self.assertIn("needs: candidate", workflow)
+        self.assertIn("if: always() && (github.event_name == 'merge_group' || startsWith(github.event.pull_request.head.ref, 'mergify/merge-queue/'))", workflow)
+        self.assertIn('test \"${{ needs.candidate.result }}\" = success', workflow)
+
 if __name__ == "__main__":
     unittest.main()

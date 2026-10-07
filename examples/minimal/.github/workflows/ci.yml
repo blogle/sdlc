@@ -6,3 +6,17 @@ jobs:
   candidate:
     if: github.event_name == 'merge_group' || startsWith(github.event.pull_request.head.ref, 'mergify/merge-queue/')
     uses: blogle/sdlc/.github/workflows/candidate.yml@v1.0.0
+  sdlc-pr-fast:
+    name: sdlc / pr-fast
+    needs: pr-fast
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ needs.pr-fast.result }}" = success
+  sdlc-candidate:
+    name: sdlc / candidate
+    needs: candidate
+    if: always() && (github.event_name == 'merge_group' || startsWith(github.event.pull_request.head.ref, 'mergify/merge-queue/'))
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ needs.candidate.result }}" = success

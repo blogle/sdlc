@@ -13,6 +13,9 @@ check:
     nix run nixpkgs#yq-go -- eval '.' .mergify.yml >/dev/null
     nix run nixpkgs#yq-go -- eval '.' examples/minimal/.mergify.yml >/dev/null
     nix run nixpkgs#yq-go -- eval -e '.concurrency.queue == "max" and .concurrency."cancel-in-progress" == false' .github/workflows/release.yml >/dev/null
+    tofu -chdir=tofu/examples/validate fmt -check -recursive
+    tofu -chdir=tofu/examples/validate init -backend=false
+    tofu -chdir=tofu/examples/validate validate
     nix run .#sdlc -- changelog check
     nix flake check --no-build
     nix build --no-link .#checks.x86_64-linux.test
