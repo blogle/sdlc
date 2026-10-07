@@ -29,7 +29,9 @@ For OCI/package-producing consumers, candidate CI publishes an immutable artifac
 
 ## Review authority
 
-`integration:auto` authorizes automatic enqueue. `integration:review` uses native GitHub approval: configure stale-approval dismissal and require approval of the most recent reviewable push. Mergify's `#approved-reviews-by >= 1` check gates queue eligibility and merge. Conflicting/missing modes fail closed. Agents never self-upgrade modes; comment text is not an authorization transport.
+GitHub rulesets are the authoritative protection layer: PR-only changes, squash-only merge, stale-approval dismissal, non-strict required-check freshness, stable `sdlc / pr-fast`, deletion prevention, and non-fast-forward prevention. Candidate is not a source-PR requirement. Mergify owns queue admission, candidate batching/validation, and merge execution; supported GitHub protections are automatically included in queue behavior. SDLC requires Mergify Merge Queue/workflow-rule processing, not the Mergify Merge Protections product or status check.
+
+The canonical policy uses a `validated candidates` queue rule with source eligibility limited to base `main` plus successful `sdlc / pr-fast`; its merge condition requires `sdlc / candidate`. Explicit `pull_request_rules` use Mergify's supported `queue` action: the auto rule requires the auto label and absence of the review label, while the review rule requires the review label, absence of auto, and `#approved-reviews-by >= 1` on the source PR. Do not copy review-approval conditions into queue `merge_conditions`, which run in the synthetic queue/candidate context. GitHub stale-approval dismissal invalidates authorization after a head update. Missing/conflicting labels fail closed; comments are not an authorization transport.
 
 ## Renovate
 

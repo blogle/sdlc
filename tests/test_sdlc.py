@@ -132,5 +132,25 @@ class RepositoryPolicyTests(unittest.TestCase):
         self.assertIn("$GITHUB_ACTION_PATH/reconcile-repository-policy.sh", action)
         self.assertIn("$GITHUB_WORKSPACE/.github/repository-policy.json", action)
 
+    def test_mergify_policies_use_source_rules_for_admission_and_candidate_for_merge(self):
+        root = Path(__file__).parents[1]
+        for path in (root / ".mergify.yml", root / "examples/minimal/.mergify.yml"):
+            policy = path.read_text()
+            self.assertNotIn("merge_protections", policy)
+            self.assertNotIn("auto_merge_conditions", policy)
+            self.assertNotIn("autoqueue", policy)
+            self.assertEqual(policy.count("queue:\n        name: validated candidates"), 2)
+
+            queue_rules, pull_rules = policy.split("pull_request_rules:", 1)
+            self.assertIn('check-success = "sdlc / pr-fast"', queue_rules)
+            self.assertIn('check-success = "sdlc / candidate"', queue_rules)
+            self.assertNotIn("#approved-reviews-by", queue_rules)
+            self.assertNotIn("integration:", queue_rules)
+            self.assertIn('label = integration:auto', pull_rules)
+            self.assertIn('label != integration:review', pull_rules)
+            self.assertIn('label = integration:review', pull_rules)
+            self.assertIn('label != integration:auto', pull_rules)
+            self.assertEqual(pull_rules.count("#approved-reviews-by >= 1"), 1)
+
 if __name__ == "__main__":
     unittest.main()
