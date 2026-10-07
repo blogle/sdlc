@@ -1,0 +1,15 @@
+name: Repository policy
+on:
+  pull_request:
+    paths:
+      - .github/policy/**
+  push:
+    paths:
+      - .github/policy/**
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  policy:
+    uses: blogle/sdlc/.github/workflows/repository-policy.yml@v1.0.0
+    secrets: inherit

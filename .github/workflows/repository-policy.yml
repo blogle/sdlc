@@ -1,0 +1,90 @@
+name: SDLC repository policy
+on:
+  workflow_call:
+permissions:
+  contents: read
+concurrency:
+  group: github-policy-${{ github.repository }}
+  cancel-in-progress: false
+jobs:
+  plan:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: opentofu/setup-opentofu@v1
+      - name: Create read-only repository policy token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.SDLC_POLICY_APP_ID }}
+          private-key: ${{ secrets.SDLC_POLICY_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-administration: read
+      - name: Initialize remote state
+        working-directory: .github/policy
+        env:
+          TOFU_BACKEND_CONFIG: ${{ secrets.TOFU_BACKEND_CONFIG }}
+        run: |
+          set -euo pipefail
+          args=(-input=false -backend-config="key=github-policy/${GITHUB_REPOSITORY}.tfstate")
+          if [[ -n "$TOFU_BACKEND_CONFIG" ]]; then
+            config="$RUNNER_TEMP/tofu-backend.hcl"
+            printf '%s\n' "$TOFU_BACKEND_CONFIG" > "$config"
+            args+=(-backend-config="$config")
+          fi
+          tofu init "${args[@]}"
+      - name: Plan policy changes (read-only)
+        working-directory: .github/policy
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          TF_VAR_owner: ${{ github.repository_owner }}
+          TF_VAR_repository: ${{ github.event.repository.name }}
+          TF_VAR_default_branch: ${{ github.event.repository.default_branch }}
+        run: tofu plan -input=false -lock-timeout=5m
+
+  apply:
+    if: >-
+      (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) ||
+      (github.event_name == 'workflow_dispatch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: opentofu/setup-opentofu@v1
+      - name: Create repository-scoped GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.SDLC_POLICY_APP_ID }}
+          private-key: ${{ secrets.SDLC_POLICY_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-administration: write
+      - name: Initialize remote state
+        working-directory: .github/policy
+        env:
+          TOFU_BACKEND_CONFIG: ${{ secrets.TOFU_BACKEND_CONFIG }}
+        run: |
+          set -euo pipefail
+          args=(-input=false -backend-config="key=github-policy/${GITHUB_REPOSITORY}.tfstate")
+          if [[ -n "$TOFU_BACKEND_CONFIG" ]]; then
+            config="$RUNNER_TEMP/tofu-backend.hcl"
+            printf '%s\n' "$TOFU_BACKEND_CONFIG" > "$config"
+            args+=(-backend-config="$config")
+          fi
+          tofu init "${args[@]}"
+      - name: Apply reviewed default-branch policy
+        working-directory: .github/policy
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          TF_VAR_owner: ${{ github.repository_owner }}
+          TF_VAR_repository: ${{ github.event.repository.name }}
+          TF_VAR_default_branch: ${{ github.event.repository.default_branch }}
+        run: tofu apply -input=false -auto-approve -lock-timeout=5m
