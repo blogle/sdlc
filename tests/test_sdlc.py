@@ -88,6 +88,13 @@ class ConsumerWorkflowTests(unittest.TestCase):
         self.assertIn("if: always() && (github.event_name == 'merge_group' || startsWith(github.event.pull_request.head.ref, 'mergify/merge-queue/'))", workflow)
         self.assertIn('test \"${{ needs.candidate.result }}\" = success', workflow)
 
+    def test_nested_stage_workflows_follow_outer_exact_revision(self):
+        root = Path(__file__).parents[1]
+        for name in ("pr-fast.yml", "candidate.yml"):
+            wrapper = (root / ".github/workflows" / name).read_text()
+            self.assertIn("uses: $/.github/workflows/stage.yml", wrapper)
+            self.assertNotRegex(wrapper, re.compile(r"blogle/sdlc/.+stage\.yml@"))
+
 
 class RepositoryPolicyTests(unittest.TestCase):
     def test_renderer_builds_complete_canonical_ruleset(self):
@@ -125,6 +132,11 @@ class RepositoryPolicyTests(unittest.TestCase):
         self.assertIn("github.event.pull_request.head.repo.full_name", workflow)
         self.assertNotRegex(workflow, re.compile(r"repository:\s*blogle/sdlc"))
         self.assertNotRegex(workflow, re.compile(r"ref:\s*v\d"))
+        self.assertIn("id: policy-credentials", workflow)
+        self.assertIn("SDLC_POLICY_APP_ID: ${{ secrets.SDLC_POLICY_APP_ID }}", workflow)
+        self.assertIn("SDLC_POLICY_APP_PRIVATE_KEY: ${{ secrets.SDLC_POLICY_APP_PRIVATE_KEY }}", workflow)
+        self.assertEqual(workflow.count("if: steps.policy-credentials.outputs.configured == 'true'"), 2)
+        self.assertIn("::warning::Live policy reconciliation is not configured", workflow)
 
     def test_policy_composite_uses_its_own_action_path(self):
         action = (Path(__file__).parents[1] / "actions/repository-policy/action.yml").read_text()
@@ -132,25 +144,25 @@ class RepositoryPolicyTests(unittest.TestCase):
         self.assertIn("$GITHUB_ACTION_PATH/reconcile-repository-policy.sh", action)
         self.assertIn("$GITHUB_WORKSPACE/.github/repository-policy.json", action)
 
-    def test_mergify_policies_use_source_rules_for_admission_and_candidate_for_merge(self):
+    def test_mergify_policies_use_native_queue_conditions_for_admission(self):
         root = Path(__file__).parents[1]
         for path in (root / ".mergify.yml", root / "examples/minimal/.mergify.yml"):
             policy = path.read_text()
+            self.assertNotIn("pull_request_rules", policy)
             self.assertNotIn("merge_protections", policy)
             self.assertNotIn("auto_merge_conditions", policy)
             self.assertNotIn("autoqueue", policy)
-            self.assertEqual(policy.count("queue:\n        name: validated candidates"), 2)
-
-            queue_rules, pull_rules = policy.split("pull_request_rules:", 1)
-            self.assertIn('check-success = "sdlc / pr-fast"', queue_rules)
-            self.assertIn('check-success = "sdlc / candidate"', queue_rules)
-            self.assertNotIn("#approved-reviews-by", queue_rules)
-            self.assertNotIn("integration:", queue_rules)
-            self.assertIn('label = integration:auto', pull_rules)
-            self.assertIn('label != integration:review', pull_rules)
-            self.assertIn('label = integration:review', pull_rules)
-            self.assertIn('label != integration:auto', pull_rules)
-            self.assertEqual(pull_rules.count("#approved-reviews-by >= 1"), 1)
+            self.assertIn('check-success = "sdlc / pr-fast"', policy)
+            self.assertIn('check-success = "sdlc / candidate"', policy)
+            self.assertIn('label = integration:auto', policy)
+            self.assertIn('label != integration:review', policy)
+            self.assertIn('label = integration:review', policy)
+            self.assertIn('label != integration:auto', policy)
+            self.assertIn('"#approved-reviews-by >= 1"', policy)
+            self.assertIn("commands_restrictions:\n  queue:\n    conditions:", policy)
+            self.assertIn("sender-permission >= write", policy)
+            self.assertIn("sender = anvil-daemon[bot]", policy)
+            self.assertEqual(policy.count('check-success = "sdlc / candidate"'), 1)
 
 if __name__ == "__main__":
     unittest.main()
