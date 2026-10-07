@@ -6,6 +6,14 @@ queue_rules:
     queue_conditions:
       - base = main
       - check-success = "sdlc / pr-fast"
+      - or:
+          - and:
+              - label = integration:auto
+              - label != integration:review
+          - and:
+              - label = integration:review
+              - label != integration:auto
+              - "#approved-reviews-by >= 1"
     merge_conditions:
       - check-success = "sdlc / candidate"
     batch_size: 5
@@ -13,27 +21,12 @@ queue_rules:
     merge_method: squash
     update_method: merge
 
-pull_request_rules:
-  - name: enqueue auto-authorized pull requests
+commands_restrictions:
+  queue:
     conditions:
-      - base = main
-      - check-success = "sdlc / pr-fast"
-      - label = integration:auto
-      - label != integration:review
-    actions:
-      queue:
-        name: validated candidates
-
-  - name: enqueue review-authorized pull requests
-    conditions:
-      - base = main
-      - check-success = "sdlc / pr-fast"
-      - label = integration:review
-      - label != integration:auto
-      - "#approved-reviews-by >= 1"
-    actions:
-      queue:
-        name: validated candidates
+      - or:
+          - sender-permission >= write
+          - sender = anvil-daemon[bot]
 
 merge_queue:
   max_parallel_checks: 5

@@ -33,7 +33,20 @@ jobs:
           repository: ${{ github.repository }}
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Detect policy reconciliation credentials
+        id: policy-credentials
+        env:
+          SDLC_POLICY_APP_ID: ${{ secrets.SDLC_POLICY_APP_ID }}
+          SDLC_POLICY_APP_PRIVATE_KEY: ${{ secrets.SDLC_POLICY_APP_PRIVATE_KEY }}
+        run: |
+          if [ -n "$SDLC_POLICY_APP_ID" ] && [ -n "$SDLC_POLICY_APP_PRIVATE_KEY" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Live policy reconciliation is not configured; skipping policy mutation because SDLC_POLICY_APP_ID and SDLC_POLICY_APP_PRIVATE_KEY are required."
+          fi
       - name: Create repository-scoped administration token
+        if: steps.policy-credentials.outputs.configured == 'true'
         id: app-token
         uses: actions/create-github-app-token@v1
         with:
@@ -44,6 +57,7 @@ jobs:
           permission-administration: write
           permission-issues: write
       - name: Reconcile desired policy
+        if: steps.policy-credentials.outputs.configured == 'true'
         uses: $/actions/repository-policy
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}

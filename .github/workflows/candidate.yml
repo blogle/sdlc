@@ -6,6 +6,6 @@ permissions:
   actions: read
 jobs:
   stage:
-    uses: blogle/sdlc/.github/workflows/stage.yml@v1.0.0
+    uses: $/.github/workflows/stage.yml
     with:
       stage: candidate
