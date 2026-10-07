@@ -9,6 +9,9 @@ from contextlib import redirect_stdout
 SPEC = importlib.util.spec_from_file_location("sdlc", Path(__file__).parents[1] / "src/sdlc.py")
 sdlc = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(sdlc)
+POLICY_SPEC = importlib.util.spec_from_file_location("repository_policy", Path(__file__).parents[1] / "src/repository_policy.py")
+repository_policy = importlib.util.module_from_spec(POLICY_SPEC)
+POLICY_SPEC.loader.exec_module(repository_policy)
 
 
 class ChangelogTests(unittest.TestCase):
@@ -83,6 +86,40 @@ class ConsumerWorkflowTests(unittest.TestCase):
         self.assertIn("needs: candidate", workflow)
         self.assertIn("if: always() && (github.event_name == 'merge_group' || startsWith(github.event.pull_request.head.ref, 'mergify/merge-queue/'))", workflow)
         self.assertIn('test \"${{ needs.candidate.result }}\" = success', workflow)
+
+
+class RepositoryPolicyTests(unittest.TestCase):
+    def test_renderer_builds_complete_canonical_ruleset(self):
+        ruleset = repository_policy.render_policy({"extra_required_status_checks": ["security / scan"]}, "main")
+        self.assertEqual(ruleset["name"], "SDLC default branch")
+        self.assertEqual(ruleset["conditions"]["ref_name"]["include"], ["refs/heads/main"])
+        rules = {rule["type"]: rule for rule in ruleset["rules"]}
+        self.assertIn("deletion", rules)
+        self.assertIn("non_fast_forward", rules)
+        self.assertEqual(rules["pull_request"]["parameters"]["allowed_merge_methods"], ["squash"])
+        self.assertFalse(rules["required_status_checks"]["parameters"]["strict_required_status_checks_policy"])
+        self.assertEqual(
+            [check["context"] for check in rules["required_status_checks"]["parameters"]["required_status_checks"]],
+            ["sdlc / pr-fast", "security / scan"],
+        )
+
+    def test_renderer_rejects_duplicate_or_canonical_extra_checks(self):
+        with self.assertRaises(ValueError):
+            repository_policy.render_policy({"extra_required_status_checks": ["dup", "dup"]}, "main")
+        with self.assertRaises(ValueError):
+            repository_policy.render_policy({"extra_required_status_checks": ["sdlc / pr-fast"]}, "main")
+
+    def test_minimal_consumer_declares_only_extra_checks(self):
+        declaration = json.loads((Path(__file__).parents[1] / "examples/minimal/.github/repository-policy.json").read_text())
+        self.assertEqual(declaration, {"extra_required_status_checks": []})
+
+    def test_policy_workflow_never_reconciles_pull_requests(self):
+        workflow = (Path(__file__).parents[1] / ".github/workflows/reconcile-policy.yml").read_text()
+        self.assertIn("if: github.event_name == 'pull_request'", workflow)
+        self.assertIn("if: >-", workflow)
+        self.assertIn("github.event_name == 'workflow_dispatch'", workflow)
+        self.assertIn("permission-administration: write", workflow)
+        self.assertIn("bash sdlc/scripts/reconcile-repository-policy.sh", workflow)
 
 if __name__ == "__main__":
     unittest.main()

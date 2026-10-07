@@ -42,7 +42,7 @@
             packages = sdlcLib.devTools {
               inherit pkgs;
               sdlcCli = self.packages.${system}.sdlc;
-            } ++ [ pkgs.just pkgs.python3 pkgs.actionlint pkgs.renovate pkgs.opentofu ];
+            } ++ [ pkgs.just pkgs.python3 pkgs.actionlint pkgs.renovate ];
           };
         });
       checks = eachSystem (system:

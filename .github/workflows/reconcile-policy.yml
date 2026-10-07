@@ -1,0 +1,70 @@
+name: SDLC repository policy reconciliation
+on:
+  workflow_call:
+permissions:
+  contents: read
+concurrency:
+  group: github-policy-${{ github.repository }}
+  cancel-in-progress: false
+jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: consumer
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: blogle/sdlc
+          ref: v1.0.0
+          path: sdlc
+          persist-credentials: false
+      - name: Render and validate desired repository policy
+        working-directory: consumer
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: python3 ../sdlc/src/repository_policy.py --config .github/repository-policy.json --default-branch "$DEFAULT_BRANCH" --output "$RUNNER_TEMP/desired-ruleset.json"
+      - name: Check rendered JSON
+        run: jq -e '.name == "SDLC default branch" and .target == "branch" and .enforcement == "active"' "$RUNNER_TEMP/desired-ruleset.json" >/dev/null
+
+  reconcile:
+    if: >-
+      (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) ||
+      (github.event_name == 'workflow_dispatch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: consumer
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: blogle/sdlc
+          ref: v1.0.0
+          path: sdlc
+          persist-credentials: false
+      - name: Create repository-scoped administration token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.SDLC_POLICY_APP_ID }}
+          private-key: ${{ secrets.SDLC_POLICY_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-administration: write
+          permission-issues: write
+      - name: Render desired policy
+        working-directory: consumer
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: python3 ../sdlc/src/repository_policy.py --config .github/repository-policy.json --default-branch "$DEFAULT_BRANCH" --output "$RUNNER_TEMP/desired-ruleset.json"
+      - name: Reconcile ruleset and integration labels
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
+          DESIRED_RULESET: ${{ runner.temp }}/desired-ruleset.json
+        run: bash sdlc/scripts/reconcile-repository-policy.sh

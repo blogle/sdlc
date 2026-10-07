@@ -6,17 +6,16 @@ default:
 check:
     python3 -m unittest discover -s tests -v
     python3 -m py_compile src/sdlc.py
+    python3 -m py_compile src/repository_policy.py
+    bash -n scripts/reconcile-repository-policy.sh
     python3 -m json.tool examples/minimal/renovate.json >/dev/null
     python3 -m json.tool examples/clean-room/renovate.json >/dev/null
+    python3 -m json.tool examples/minimal/.github/repository-policy.json >/dev/null
     actionlint -ignore 'unexpected key "queue" for "concurrency" section' .github/workflows/*.yml examples/minimal/.github/workflows/*.yml
     renovate-config-validator --strict --no-global default.json
     nix run nixpkgs#yq-go -- eval '.' .mergify.yml >/dev/null
     nix run nixpkgs#yq-go -- eval '.' examples/minimal/.mergify.yml >/dev/null
     nix run nixpkgs#yq-go -- eval -e '.concurrency.queue == "max" and .concurrency."cancel-in-progress" == false' .github/workflows/release.yml >/dev/null
-    tofu -chdir=tofu/examples/validate fmt -check -recursive
-    tofu -chdir=examples/minimal/.github/policy fmt -check
-    tofu -chdir=tofu/examples/validate init -backend=false
-    tofu -chdir=tofu/examples/validate validate
     nix run .#sdlc -- changelog check
     nix flake check --no-build
     nix build --no-link .#checks.x86_64-linux.test
