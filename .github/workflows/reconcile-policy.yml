@@ -1,0 +1,52 @@
+name: SDLC repository policy reconciliation
+on:
+  workflow_call:
+permissions:
+  contents: read
+concurrency:
+  group: github-policy-${{ github.repository }}
+  cancel-in-progress: false
+jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Validate and render desired policy
+        uses: $/actions/repository-policy
+        with:
+          mode: validate
+          default-branch: ${{ github.event.repository.default_branch }}
+
+  reconcile:
+    if: >-
+      (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) ||
+      (github.event_name == 'workflow_dispatch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Create repository-scoped administration token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.SDLC_POLICY_APP_ID }}
+          private-key: ${{ secrets.SDLC_POLICY_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-administration: write
+          permission-issues: write
+      - name: Reconcile desired policy
+        uses: $/actions/repository-policy
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        with:
+          mode: reconcile
+          default-branch: ${{ github.event.repository.default_branch }}

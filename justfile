@@ -6,9 +6,12 @@ default:
 check:
     python3 -m unittest discover -s tests -v
     python3 -m py_compile src/sdlc.py
+    python3 -m py_compile actions/repository-policy/repository_policy.py
+    bash -n actions/repository-policy/reconcile-repository-policy.sh
     python3 -m json.tool examples/minimal/renovate.json >/dev/null
     python3 -m json.tool examples/clean-room/renovate.json >/dev/null
-    actionlint -ignore 'unexpected key "queue" for "concurrency" section' .github/workflows/*.yml examples/minimal/.github/workflows/*.yml
+    python3 -m json.tool examples/minimal/.github/repository-policy.json >/dev/null
+    actionlint -ignore 'unexpected key "queue" for "concurrency" section' -ignore 'specifying action "\$/actions/repository-policy" in invalid format because ref is missing' .github/workflows/*.yml examples/minimal/.github/workflows/*.yml
     renovate-config-validator --strict --no-global default.json
     nix run nixpkgs#yq-go -- eval '.' .mergify.yml >/dev/null
     nix run nixpkgs#yq-go -- eval '.' examples/minimal/.mergify.yml >/dev/null

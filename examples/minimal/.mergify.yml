@@ -1,61 +1,39 @@
 # Mergify extends resolves a repository name inside the same organization and
 # does not accept owner/repo. blogle is a GitHub User, so this fixture uses the
 # known-valid local policy instead of assuming a personal-account include works.
-merge_protections_settings:
-  auto_merge_conditions:
-    - and:
-        - base = main
-        - or:
-            - and:
-                - label = integration:auto
-                - label != integration:review
-            - and:
-                - label = integration:review
-                - label != integration:auto
-                - "#approved-reviews-by >= 1"
-
-merge_protections:
-  - name: require admission and an explicit integration policy
-    if:
-      - base = main
-    success_conditions:
-      - check-success = "sdlc / pr-fast"
-      - or:
-          - and:
-              - label = integration:auto
-              - label != integration:review
-          - and:
-              - label = integration:review
-              - label != integration:auto
-              - "#approved-reviews-by >= 1"
-
 queue_rules:
   - name: validated candidates
     queue_conditions:
       - base = main
       - check-success = "sdlc / pr-fast"
-      - or:
-          - and:
-              - label = integration:auto
-              - label != integration:review
-          - and:
-              - label = integration:review
-              - label != integration:auto
-              - "#approved-reviews-by >= 1"
     merge_conditions:
       - check-success = "sdlc / candidate"
-      - or:
-          - and:
-              - label = integration:auto
-              - label != integration:review
-          - and:
-              - label = integration:review
-              - label != integration:auto
-              - "#approved-reviews-by >= 1"
     batch_size: 5
     batch_max_wait_time: 2 minutes
     merge_method: squash
     update_method: merge
+
+pull_request_rules:
+  - name: enqueue auto-authorized pull requests
+    conditions:
+      - base = main
+      - check-success = "sdlc / pr-fast"
+      - label = integration:auto
+      - label != integration:review
+    actions:
+      queue:
+        name: validated candidates
+
+  - name: enqueue review-authorized pull requests
+    conditions:
+      - base = main
+      - check-success = "sdlc / pr-fast"
+      - label = integration:review
+      - label != integration:auto
+      - "#approved-reviews-by >= 1"
+    actions:
+      queue:
+        name: validated candidates
 
 merge_queue:
   max_parallel_checks: 5
