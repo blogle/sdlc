@@ -1,0 +1,34 @@
+name: Reconcile SDLC repository policy
+description: Render or reconcile the canonical SDLC GitHub repository ruleset and labels
+inputs:
+  mode:
+    description: validate renders without writes; reconcile applies the desired policy
+    required: true
+  default-branch:
+    description: Repository default branch inferred by the calling workflow
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Render canonical desired ruleset
+      shell: bash
+      env:
+        MODE: ${{ inputs.mode }}
+        DEFAULT_BRANCH: ${{ inputs.default-branch }}
+      run: |
+        case "$MODE" in validate|reconcile) ;; *) echo "Invalid policy mode: $MODE" >&2; exit 2 ;; esac
+        python3 "$GITHUB_ACTION_PATH/repository_policy.py" \
+          --config "$GITHUB_WORKSPACE/.github/repository-policy.json" \
+          --default-branch "$DEFAULT_BRANCH" \
+          --output "$RUNNER_TEMP/desired-ruleset.json"
+    - name: Validate rendered policy
+      if: inputs.mode == 'validate'
+      shell: bash
+      run: jq -e '.name == "SDLC default branch" and .target == "branch" and .enforcement == "active"' "$RUNNER_TEMP/desired-ruleset.json" >/dev/null
+    - name: Reconcile ruleset and integration labels
+      if: inputs.mode == 'reconcile'
+      shell: bash
+      env:
+        REPOSITORY: ${{ github.repository }}
+        DESIRED_RULESET: ${{ runner.temp }}/desired-ruleset.json
+      run: bash "$GITHUB_ACTION_PATH/reconcile-repository-policy.sh"

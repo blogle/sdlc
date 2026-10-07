@@ -13,22 +13,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
           ref: ${{ github.event.pull_request.head.sha }}
-          path: consumer
           persist-credentials: false
-      - uses: actions/checkout@v4
+      - name: Validate and render desired policy
+        uses: $/actions/repository-policy
         with:
-          repository: blogle/sdlc
-          ref: v1.0.0
-          path: sdlc
-          persist-credentials: false
-      - name: Render and validate desired repository policy
-        working-directory: consumer
-        env:
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: python3 ../sdlc/src/repository_policy.py --config .github/repository-policy.json --default-branch "$DEFAULT_BRANCH" --output "$RUNNER_TEMP/desired-ruleset.json"
-      - name: Check rendered JSON
-        run: jq -e '.name == "SDLC default branch" and .target == "branch" and .enforcement == "active"' "$RUNNER_TEMP/desired-ruleset.json" >/dev/null
+          mode: validate
+          default-branch: ${{ github.event.repository.default_branch }}
 
   reconcile:
     if: >-
@@ -38,14 +30,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          repository: ${{ github.repository }}
           ref: ${{ github.sha }}
-          path: consumer
-          persist-credentials: false
-      - uses: actions/checkout@v4
-        with:
-          repository: blogle/sdlc
-          ref: v1.0.0
-          path: sdlc
           persist-credentials: false
       - name: Create repository-scoped administration token
         id: app-token
@@ -57,14 +43,10 @@ jobs:
           repositories: ${{ github.event.repository.name }}
           permission-administration: write
           permission-issues: write
-      - name: Render desired policy
-        working-directory: consumer
-        env:
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: python3 ../sdlc/src/repository_policy.py --config .github/repository-policy.json --default-branch "$DEFAULT_BRANCH" --output "$RUNNER_TEMP/desired-ruleset.json"
-      - name: Reconcile ruleset and integration labels
+      - name: Reconcile desired policy
+        uses: $/actions/repository-policy
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          REPOSITORY: ${{ github.repository }}
-          DESIRED_RULESET: ${{ runner.temp }}/desired-ruleset.json
-        run: bash sdlc/scripts/reconcile-repository-policy.sh
+        with:
+          mode: reconcile
+          default-branch: ${{ github.event.repository.default_branch }}

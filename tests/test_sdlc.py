@@ -2,6 +2,7 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import re
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -9,7 +10,7 @@ from contextlib import redirect_stdout
 SPEC = importlib.util.spec_from_file_location("sdlc", Path(__file__).parents[1] / "src/sdlc.py")
 sdlc = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(sdlc)
-POLICY_SPEC = importlib.util.spec_from_file_location("repository_policy", Path(__file__).parents[1] / "src/repository_policy.py")
+POLICY_SPEC = importlib.util.spec_from_file_location("repository_policy", Path(__file__).parents[1] / "actions/repository-policy/repository_policy.py")
 repository_policy = importlib.util.module_from_spec(POLICY_SPEC)
 POLICY_SPEC.loader.exec_module(repository_policy)
 
@@ -119,7 +120,17 @@ class RepositoryPolicyTests(unittest.TestCase):
         self.assertIn("if: >-", workflow)
         self.assertIn("github.event_name == 'workflow_dispatch'", workflow)
         self.assertIn("permission-administration: write", workflow)
-        self.assertIn("bash sdlc/scripts/reconcile-repository-policy.sh", workflow)
+        self.assertEqual(workflow.count("uses: $/actions/repository-policy"), 2)
+        self.assertIn("actions/checkout@v4", workflow)
+        self.assertIn("github.event.pull_request.head.repo.full_name", workflow)
+        self.assertNotRegex(workflow, re.compile(r"repository:\s*blogle/sdlc"))
+        self.assertNotRegex(workflow, re.compile(r"ref:\s*v\d"))
+
+    def test_policy_composite_uses_its_own_action_path(self):
+        action = (Path(__file__).parents[1] / "actions/repository-policy/action.yml").read_text()
+        self.assertIn("$GITHUB_ACTION_PATH/repository_policy.py", action)
+        self.assertIn("$GITHUB_ACTION_PATH/reconcile-repository-policy.sh", action)
+        self.assertIn("$GITHUB_WORKSPACE/.github/repository-policy.json", action)
 
 if __name__ == "__main__":
     unittest.main()
