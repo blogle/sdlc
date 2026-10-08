@@ -21,6 +21,8 @@ The project owns **what** can be built, tested, and published: Nix packages/chec
 
 ## Contract and tooling
 
+Same-owner consumers use `extends: sdlc` in `.mergify.yml` (supported for personal GitHub owners as well as organizations). The import is live from SDLC's default branch, not pinned to the consumer's runtime SDLC release. The `sdlc` source repo must have Mergify installed and remain visible to consumers; treat edits to its `.mergify.yml` as fleet-wide policy changes. For cross-owner repos, do not assume the bare name imports from blogle.
+
 Read consumer-local `ci.nix` and the v1 protocol docs before changing stage wiring. Preserve `schemaVersion = 1`; map the project's actual fast and candidate derivations. Do not silently skip or replace a shared Hestia job group. Release publication is a consumer-owned `just release-publish <version>` recipe and must promote candidate-validated artifacts only. If the target contract genuinely changes, update its versioned documentation and fixtures.
 
 Use the consumer's Nix-native checks directly through its justfile. Hestia evaluates the declared `hydraJobs` groups using nix-eval-jobs and fans out their derivations, preserving native `meta.hestia.group` and `meta.hestia.os`; do not aggregate independent checks into one opaque shell target. Use `sdlc changelog check|plan|finalize` for consumer-local release-fragment operations. Consumer just recipes are the local interface; never call the shared repository's justfile.
