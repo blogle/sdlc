@@ -146,7 +146,10 @@ class RepositoryPolicyTests(unittest.TestCase):
 
     def test_mergify_policies_use_native_queue_conditions_for_admission(self):
         root = Path(__file__).parents[1]
-        for path in (root / ".mergify.yml", root / "examples/minimal/.mergify.yml"):
+        fixture = (root / "examples/minimal/.mergify.yml").read_text()
+        self.assertIn("extends: sdlc", fixture)
+        self.assertNotIn("queue_rules:", fixture)
+        for path in (root / ".mergify.yml",):
             policy = path.read_text()
             self.assertIn("pull_request_rules:", policy)
             self.assertIn("- name: automatically queue validated candidates", policy)
