@@ -1,3 +1,20 @@
+pull_request_rules:
+  - name: automatically queue validated candidates
+    conditions:
+      - base = main
+      - check-success = "sdlc / pr-fast"
+      - or:
+          - and:
+              - label = integration:auto
+              - label != integration:review
+          - and:
+              - label = integration:review
+              - label != integration:auto
+              - "#approved-reviews-by >= 1"
+    actions:
+      queue:
+        name: validated candidates
+
 queue_rules:
   - name: validated candidates
     queue_conditions:
@@ -28,5 +45,5 @@ commands_restrictions:
 merge_queue:
   max_parallel_checks: 5
   mode: serial
-  queue_controls_comment: false
-  status_comments: outcomes
+  queue_controls_comment: true
+  status_comments: all
