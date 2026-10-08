@@ -148,21 +148,32 @@ class RepositoryPolicyTests(unittest.TestCase):
         root = Path(__file__).parents[1]
         for path in (root / ".mergify.yml", root / "examples/minimal/.mergify.yml"):
             policy = path.read_text()
-            self.assertNotIn("pull_request_rules", policy)
+            self.assertIn("pull_request_rules:", policy)
+            self.assertIn("- name: automatically queue validated candidates", policy)
+            self.assertIn("actions:\n      queue:\n        name: validated candidates", policy)
             self.assertNotIn("merge_protections", policy)
             self.assertNotIn("auto_merge_conditions", policy)
             self.assertNotIn("autoqueue", policy)
-            self.assertIn('check-success = "sdlc / pr-fast"', policy)
+            auto_conditions = re.search(r"(?ms)^    conditions:\n(.*?)(?=^    actions:)", policy).group(1)
+            queue_conditions = re.search(r"(?ms)^    queue_conditions:\n(.*?)(?=^    merge_conditions:)", policy).group(1)
+            self.assertEqual(auto_conditions, queue_conditions)
             self.assertIn('check-success = "sdlc / candidate"', policy)
-            self.assertIn('label = integration:auto', policy)
-            self.assertIn('label != integration:review', policy)
-            self.assertIn('label = integration:review', policy)
-            self.assertIn('label != integration:auto', policy)
-            self.assertIn('"#approved-reviews-by >= 1"', policy)
+            for condition in (
+                "base ~= ^(main|master)$",
+                "label = integration:auto",
+                "label != integration:review",
+                "label = integration:review",
+                "label != integration:auto",
+                '"#approved-reviews-by >= 1"',
+            ):
+                self.assertEqual(policy.count(condition), 2)
+            self.assertEqual(policy.count("name: validated candidates"), 2)
             self.assertIn("commands_restrictions:\n  queue:\n    conditions:", policy)
             self.assertIn("sender-permission >= write", policy)
             self.assertIn("sender = anvil-daemon[bot]", policy)
             self.assertEqual(policy.count('check-success = "sdlc / candidate"'), 1)
+            self.assertIn("queue_controls_comment: true", policy)
+            self.assertIn("status_comments: all", policy)
 
 if __name__ == "__main__":
     unittest.main()
