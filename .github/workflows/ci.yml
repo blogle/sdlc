@@ -9,6 +9,16 @@ concurrency:
   group: sdlc-ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
+  policy:
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/policy-check.yml
+  policy-context:
+    name: sdlc / policy
+    needs: policy
+    if: always() && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ needs.policy.result }}" = success
   pr-fast:
     name: sdlc / pr-fast
     runs-on: ubuntu-latest

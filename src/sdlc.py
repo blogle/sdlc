@@ -7,6 +7,11 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import os
+
+POLICY_DIR = Path(os.environ.get("SDLC_POLICY_MODULE_PATH", Path(__file__).resolve().parents[1] / "actions/repository-policy"))
+sys.path.insert(0, str(POLICY_DIR))
+import repository_policy
 
 ROOT = Path.cwd()
 RANK = {"patch": 1, "minor": 2, "major": 3}
@@ -96,6 +101,58 @@ def changelog(action, version=None, date=None, json_output=False, selected=None)
         raise ValueError(f"unknown changelog action {action}")
 
 
+def policy_context(repo=None):
+    def git(*args):
+        return subprocess.run(["git", *args], cwd=ROOT, check=True, capture_output=True, text=True).stdout.strip()
+    full_name = repo or os.environ.get("GITHUB_REPOSITORY")
+    if not full_name:
+        remote = git("config", "--get", "remote.origin.url")
+        match = re.search(r"github\.com[:/]([^/]+/[^/.]+)(?:\.git)?$", remote)
+        if not match:
+            raise ValueError("cannot infer GitHub repository; pass --repo OWNER/NAME")
+        full_name = match.group(1)
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", full_name):
+        raise ValueError("--repo must be OWNER/NAME")
+    default_branch = subprocess.run(["gh", "api", f"repos/{full_name}", "--jq", ".default_branch"], check=True, capture_output=True, text=True).stdout.strip()
+    return full_name, default_branch
+
+
+def policy_config():
+    path = ROOT / ".github/repository-policy.json"
+    try:
+        return json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{path}: {exc}") from exc
+
+
+def policy_command(action, repo=None):
+    full_name, branch = policy_context(repo)
+    desired = repository_policy.render_policy(policy_config(), branch)
+    response = subprocess.run(["gh", "api", f"repos/{full_name}/rulesets?per_page=100"], check=True, capture_output=True, text=True)
+    all_rulesets = json.loads(response.stdout)
+    matches = [item for item in all_rulesets if item.get("name") == repository_policy.RULESET_NAME]
+    if len(matches) > 1:
+        raise ValueError(f"found {len(matches)} canonical rulesets named {repository_policy.RULESET_NAME!r}; resolve duplicates manually")
+    current = matches[0] if matches else None
+    if action == "plan":
+        print(json.dumps({"repository": full_name, "default_branch": branch, "action": "create" if current is None else ("update" if repository_policy.normalize_ruleset(current) != repository_policy.normalize_ruleset(desired) else "no-op"), "desired": desired, "current": current, "unmanaged_rulesets": [item for item in all_rulesets if item.get("name") != repository_policy.RULESET_NAME]}, indent=2, sort_keys=True))
+        return
+    if action == "check":
+        repository_policy.check_live(current, desired, full_name)
+        print(f"policy matches live ruleset for {full_name}")
+        return
+    if action == "apply":
+        if current is None:
+            subprocess.run(["gh", "api", "--method", "POST", f"repos/{full_name}/rulesets", "--input", "-"], input=json.dumps(desired), text=True, check=True, capture_output=True)
+        elif repository_policy.normalize_ruleset(current) != repository_policy.normalize_ruleset(desired):
+            subprocess.run(["gh", "api", "--method", "PUT", f"repos/{full_name}/rulesets/{current['id']}", "--input", "-"], input=json.dumps(desired), text=True, check=True, capture_output=True)
+        verify = json.loads(subprocess.run(["gh", "api", f"repos/{full_name}/rulesets?per_page=100"], check=True, capture_output=True, text=True).stdout)
+        verified = [item for item in verify if item.get("name") == repository_policy.RULESET_NAME]
+        if len(verified) != 1 or repository_policy.normalize_ruleset(verified[0]) != repository_policy.normalize_ruleset(desired):
+            raise ValueError("read-after-write verification failed; rerun `nix develop -c sdlc policy plan`")
+        print(f"policy applied and verified for {full_name}")
+
+
 def main():
     parser = argparse.ArgumentParser(prog="sdlc")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -105,9 +162,15 @@ def main():
     changes.add_argument("--date")
     changes.add_argument("--json", action="store_true")
     changes.add_argument("--fragment", nargs="*", help="limit plan/finalize to fragments changed by one merged commit")
+    policy = commands.add_parser("policy")
+    policy.add_argument("action", choices=["plan", "apply", "check"])
+    policy.add_argument("--repo", help="GitHub OWNER/NAME (defaults to this checkout's origin)")
     args = parser.parse_args()
     try:
-        changelog(args.action, args.version, args.date, args.json, args.fragment)
+        if args.command == "changelog":
+            changelog(args.action, args.version, args.date, args.json, args.fragment)
+        else:
+            policy_command(args.action, args.repo)
     except (ValueError, subprocess.CalledProcessError) as exc:
         print(f"sdlc: {exc}", file=sys.stderr)
         return 1

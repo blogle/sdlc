@@ -3,10 +3,45 @@
 import argparse
 import json
 from pathlib import Path
+import sys
 
 
 RULESET_NAME = "SDLC default branch"
 PR_FAST_CONTEXT = "sdlc / pr-fast"
+POLICY_CONTEXT = "sdlc / policy"
+
+
+def normalize_ruleset(ruleset):
+    """Compare only the canonical ruleset's policy-bearing API fields."""
+    if ruleset is None:
+        return None
+    rules = []
+    for rule in ruleset.get("rules", []):
+        projected = {key: value for key, value in rule.items() if key in ("type", "parameters")}
+        if projected.get("type") == "required_status_checks":
+            params = dict(projected.get("parameters", {}))
+            params["required_status_checks"] = sorted(
+                ({"context": item["context"]} for item in params.get("required_status_checks", [])), key=lambda item: item["context"]
+            )
+            projected["parameters"] = params
+        rules.append(projected)
+    rules.sort(key=lambda item: item["type"])
+    result = {key: rules if key == "rules" else ruleset.get(key) for key in ("name", "target", "enforcement", "conditions", "rules", "bypass_actors")}
+    return result
+
+
+def check_live(current, desired, repository):
+    fix = f"nix develop -c sdlc policy apply --repo {repository}"
+    if current is None:
+        raise ValueError(f"canonical ruleset is missing; repair with `{fix}`")
+    visible = normalize_ruleset(current)
+    expected = normalize_ruleset(desired)
+    if "bypass_actors" not in current:
+        visible.pop("bypass_actors", None)
+        expected.pop("bypass_actors", None)
+        print("::warning::GitHub redacted bypass_actors; all visible policy fields matched, but bypass configuration was not verified.", file=sys.stderr)
+    if visible != expected:
+        raise ValueError(f"live canonical ruleset drift detected; inspect with `nix develop -c sdlc policy plan --repo {repository}` and repair with `{fix}`")
 
 
 def render_policy(config, default_branch):
@@ -27,14 +62,15 @@ def render_policy(config, default_branch):
     if PR_FAST_CONTEXT in extra:
         raise ValueError(f"{PR_FAST_CONTEXT!r} is canonical; do not repeat it as an extra check")
 
-    contexts = [PR_FAST_CONTEXT, *sorted(extra)]
+    contexts = [PR_FAST_CONTEXT, POLICY_CONTEXT, *sorted(extra)]
     return {
         "name": RULESET_NAME,
         "target": "branch",
         "enforcement": "active",
+        "bypass_actors": [],
         "conditions": {
             "ref_name": {
-                "include": [f"refs/heads/{branch}"],
+                "include": ["~DEFAULT_BRANCH" if branch == default_branch else f"refs/heads/{branch}"],
                 "exclude": [],
             }
         },

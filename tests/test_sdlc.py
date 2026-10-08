@@ -5,7 +5,8 @@ from pathlib import Path
 import re
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
+from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location("sdlc", Path(__file__).parents[1] / "src/sdlc.py")
 sdlc = importlib.util.module_from_spec(SPEC)
@@ -13,6 +14,9 @@ SPEC.loader.exec_module(sdlc)
 POLICY_SPEC = importlib.util.spec_from_file_location("repository_policy", Path(__file__).parents[1] / "actions/repository-policy/repository_policy.py")
 repository_policy = importlib.util.module_from_spec(POLICY_SPEC)
 POLICY_SPEC.loader.exec_module(repository_policy)
+CHECK_SPEC = importlib.util.spec_from_file_location("policy_check", Path(__file__).parents[1] / "actions/repository-policy/policy_check.py")
+policy_check = importlib.util.module_from_spec(CHECK_SPEC)
+CHECK_SPEC.loader.exec_module(policy_check)
 
 
 class ChangelogTests(unittest.TestCase):
@@ -100,7 +104,7 @@ class RepositoryPolicyTests(unittest.TestCase):
     def test_renderer_builds_complete_canonical_ruleset(self):
         ruleset = repository_policy.render_policy({"extra_required_status_checks": ["security / scan"]}, "main")
         self.assertEqual(ruleset["name"], "SDLC default branch")
-        self.assertEqual(ruleset["conditions"]["ref_name"]["include"], ["refs/heads/main"])
+        self.assertEqual(ruleset["conditions"]["ref_name"]["include"], ["~DEFAULT_BRANCH"])
         rules = {rule["type"]: rule for rule in ruleset["rules"]}
         self.assertIn("deletion", rules)
         self.assertIn("non_fast_forward", rules)
@@ -108,8 +112,27 @@ class RepositoryPolicyTests(unittest.TestCase):
         self.assertFalse(rules["required_status_checks"]["parameters"]["strict_required_status_checks_policy"])
         self.assertEqual(
             [check["context"] for check in rules["required_status_checks"]["parameters"]["required_status_checks"]],
-            ["sdlc / pr-fast", "security / scan"],
+            ["sdlc / pr-fast", "sdlc / policy", "security / scan"],
         )
+
+    def test_default_branch_alias_handles_main_and_master(self):
+        for branch in ("main", "master"):
+            rendered = repository_policy.render_policy({}, branch)
+            self.assertEqual(rendered["conditions"]["ref_name"]["include"], ["~DEFAULT_BRANCH"])
+
+    def test_check_fails_closed_for_missing_skew_and_hidden_bypass(self):
+        desired = repository_policy.render_policy({}, "main")
+        with self.assertRaisesRegex(ValueError, "policy apply --repo owner/repo"):
+            repository_policy.check_live(None, desired, "owner/repo")
+        skew = dict(desired, enforcement="disabled")
+        with self.assertRaisesRegex(ValueError, "drift detected"):
+            repository_policy.check_live(skew, desired, "owner/repo")
+        hidden = dict(desired)
+        hidden.pop("bypass_actors")
+        warning = io.StringIO()
+        with redirect_stderr(warning):
+            repository_policy.check_live(hidden, desired, "owner/repo")
+        self.assertIn("bypass configuration was not verified", warning.getvalue())
 
     def test_renderer_rejects_duplicate_or_canonical_extra_checks(self):
         with self.assertRaises(ValueError):
@@ -121,28 +144,53 @@ class RepositoryPolicyTests(unittest.TestCase):
         declaration = json.loads((Path(__file__).parents[1] / "examples/minimal/.github/repository-policy.json").read_text())
         self.assertEqual(declaration, {"extra_required_status_checks": []})
 
-    def test_policy_workflow_never_reconciles_pull_requests(self):
-        workflow = (Path(__file__).parents[1] / ".github/workflows/reconcile-policy.yml").read_text()
-        self.assertIn("if: github.event_name == 'pull_request'", workflow)
-        self.assertIn("if: >-", workflow)
-        self.assertIn("github.event_name == 'workflow_dispatch'", workflow)
-        self.assertIn("permission-administration: write", workflow)
-        self.assertEqual(workflow.count("uses: $/actions/repository-policy"), 2)
-        self.assertIn("actions/checkout@v4", workflow)
-        self.assertIn("github.event.pull_request.head.repo.full_name", workflow)
-        self.assertNotRegex(workflow, re.compile(r"repository:\s*blogle/sdlc"))
-        self.assertNotRegex(workflow, re.compile(r"ref:\s*v\d"))
-        self.assertIn("id: policy-credentials", workflow)
-        self.assertIn("SDLC_POLICY_APP_ID: ${{ secrets.SDLC_POLICY_APP_ID }}", workflow)
-        self.assertIn("SDLC_POLICY_APP_PRIVATE_KEY: ${{ secrets.SDLC_POLICY_APP_PRIVATE_KEY }}", workflow)
-        self.assertEqual(workflow.count("if: steps.policy-credentials.outputs.configured == 'true'"), 2)
-        self.assertIn("::warning::Live policy reconciliation is not configured", workflow)
+    def test_policy_workflow_is_read_only_and_stable_check_is_not_skipped(self):
+        root = Path(__file__).parents[1]
+        workflow = (root / ".github/workflows/policy-check.yml").read_text()
+        self.assertIn("contents: read", workflow)
+        self.assertNotIn("administration: write", workflow)
+        self.assertFalse((root / ".github/workflows/reconcile-policy.yml").exists())
+        caller = (root / "examples/minimal/.github/workflows/ci.yml").read_text()
+        self.assertIn("name: sdlc / policy", caller)
+        self.assertIn("if: always()", caller)
+        self.assertIn("test \"${{ needs.policy.result }}\" = success", caller)
+        self.assertNotIn("SDLC_POLICY_APP", caller)
 
-    def test_policy_composite_uses_its_own_action_path(self):
-        action = (Path(__file__).parents[1] / "actions/repository-policy/action.yml").read_text()
-        self.assertIn("$GITHUB_ACTION_PATH/repository_policy.py", action)
-        self.assertIn("$GITHUB_ACTION_PATH/reconcile-repository-policy.sh", action)
-        self.assertIn("$GITHUB_WORKSPACE/.github/repository-policy.json", action)
+    def test_pr_check_validates_proposal_but_uses_base_declaration(self):
+        actual = policy_check.desired_for_check({"extra_required_status_checks": ["new"]}, {}, "main")
+        self.assertNotIn("new", [item["context"] for rule in actual["rules"] if rule["type"] == "required_status_checks" for item in rule["parameters"]["required_status_checks"]])
+        with self.assertRaisesRegex(ValueError, "must not contain duplicates"):
+            policy_check.desired_for_check({"extra_required_status_checks": ["dup", "dup"]}, {}, "main")
+
+    def test_local_policy_apply_is_idempotent_and_verifies_read_after_write(self):
+        desired = repository_policy.render_policy({}, "main")
+        desired_with_id = dict(desired, id=23)
+        empty = type("Result", (), {"stdout": "[]"})()
+        applied = type("Result", (), {"stdout": ""})()
+        verified = type("Result", (), {"stdout": json.dumps([desired_with_id])})()
+        with patch.object(sdlc, "policy_context", return_value=("owner/repo", "main")), \
+             patch.object(sdlc, "policy_config", return_value={}), \
+             patch.object(sdlc.subprocess, "run", side_effect=[empty, applied, verified]) as run, \
+             redirect_stdout(io.StringIO()):
+            sdlc.policy_command("apply", "owner/repo")
+        self.assertTrue(any("POST" in call.args[0] for call in run.call_args_list))
+        self.assertTrue(any("rulesets?per_page=100" in call.args[0][-1] for call in run.call_args_list))
+
+    def test_local_policy_check_is_read_only_and_duplicate_apply_refuses_to_guess(self):
+        desired = repository_policy.render_policy({}, "main")
+        with patch.object(sdlc, "policy_context", return_value=("owner/repo", "main")), \
+             patch.object(sdlc, "policy_config", return_value={}), \
+             patch.object(sdlc.subprocess, "run", return_value=type("Result", (), {"stdout": json.dumps([desired])})()) as run, \
+             redirect_stdout(io.StringIO()):
+            sdlc.policy_command("check", "owner/repo")
+        self.assertEqual(len(run.call_args_list), 1)
+        self.assertNotIn("--method", run.call_args.args[0])
+        duplicate = [dict(desired, id=1), dict(desired, id=2)]
+        with patch.object(sdlc, "policy_context", return_value=("owner/repo", "main")), \
+             patch.object(sdlc, "policy_config", return_value={}), \
+             patch.object(sdlc.subprocess, "run", return_value=type("Result", (), {"stdout": json.dumps(duplicate)})()), \
+             self.assertRaisesRegex(ValueError, "resolve duplicates manually"):
+            sdlc.policy_command("apply", "owner/repo")
 
     def test_mergify_policies_use_native_queue_conditions_for_admission(self):
         root = Path(__file__).parents[1]
