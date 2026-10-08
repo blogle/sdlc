@@ -159,7 +159,7 @@ class RepositoryPolicyTests(unittest.TestCase):
             self.assertEqual(auto_conditions, queue_conditions)
             self.assertIn('check-success = "sdlc / candidate"', policy)
             for condition in (
-                "base = main",
+                "base ~= ^(main|master)$",
                 "label = integration:auto",
                 "label != integration:review",
                 "label = integration:review",
