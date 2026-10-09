@@ -63,6 +63,8 @@ jobs:
               [[ "$predecessor_source" =~ ^[0-9a-f]{40}$ ]] || fail 'committed release manifest has no valid source SHA'
               tag_sha="$(git rev-list -n1 "refs/tags/v$predecessor_version" 2>/dev/null || true)"
               [[ -n "$tag_sha" ]] || fail "release v$predecessor_version has no committed tag; publication predecessor is unreconciled"
+              [[ "$(git rev-parse "$tag_sha^")" == "$predecessor_source" ]] || fail "release v$predecessor_version tag does not identify the manifest's merged commit"
+              [[ "$(git show "$tag_sha:.sdlc/release.json" | sha256sum | cut -d' ' -f1)" == "$(sha256sum <<<"$predecessor" | cut -d' ' -f1)" ]] || fail "release v$predecessor_version tag manifest differs from main"
               git merge-base --is-ancestor "$tag_sha" "$baseline" || fail "release v$predecessor_version tag is not on main"
               gh release view "v$predecessor_version" --repo "$repo" >/dev/null 2>&1 || fail "release v$predecessor_version has no completed publication ledger"
             fi
