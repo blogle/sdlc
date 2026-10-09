@@ -1,0 +1,14 @@
+name: Check SDLC repository policy
+description: Validate caller policy and compare the live canonical ruleset using this SDLC revision
+runs:
+  using: composite
+  steps:
+    - name: Validate proposal and compare live policy to base declaration
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        EVENT_NAME: ${{ github.event_name }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      run: python3 "$GITHUB_ACTION_PATH/policy_check.py"

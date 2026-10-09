@@ -3,9 +3,9 @@ import io
 import json
 from pathlib import Path
 import re
+import subprocess
 import tempfile
 import unittest
-from pathlib import Path
 from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
 
@@ -18,6 +18,9 @@ POLICY_SPEC.loader.exec_module(repository_policy)
 CHECK_SPEC = importlib.util.spec_from_file_location("policy_check", Path(__file__).parents[1] / "actions/repository-policy/policy_check.py")
 policy_check = importlib.util.module_from_spec(CHECK_SPEC)
 CHECK_SPEC.loader.exec_module(policy_check)
+API_SPEC = importlib.util.spec_from_file_location("ruleset_api", Path(__file__).parents[1] / "actions/repository-policy/ruleset_api.py")
+ruleset_api = importlib.util.module_from_spec(API_SPEC)
+API_SPEC.loader.exec_module(ruleset_api)
 
 
 class ChangelogTests(unittest.TestCase):
@@ -143,6 +146,16 @@ class RepositoryPolicyTests(unittest.TestCase):
             repository_policy.check_live(hidden, desired, "owner/repo")
         self.assertIn("bypass configuration was not verified", warning.getvalue())
 
+    def test_check_uses_desired_fields_and_ignores_unowned_api_defaults(self):
+        desired = repository_policy.render_policy({}, "main")
+        api_detail = json.loads(json.dumps(desired))
+        pr_rule = next(rule for rule in api_detail["rules"] if rule["type"] == "pull_request")
+        pr_rule["parameters"]["required_reviewers"] = []
+        pr_rule["parameters"]["require_extra_approval_for_unattributed_changes"] = True
+        checks = next(rule for rule in api_detail["rules"] if rule["type"] == "required_status_checks")
+        checks["parameters"]["required_status_checks"][0]["integration_id"] = 123
+        repository_policy.check_live(api_detail, desired, "owner/repo")
+
     def test_renderer_rejects_duplicate_or_canonical_extra_checks(self):
         with self.assertRaises(ValueError):
             repository_policy.render_policy({"extra_required_status_checks": ["dup", "dup"]}, "main")
@@ -158,12 +171,39 @@ class RepositoryPolicyTests(unittest.TestCase):
         workflow = (root / ".github/workflows/policy-check.yml").read_text()
         self.assertIn("contents: read", workflow)
         self.assertNotIn("administration: write", workflow)
+        self.assertIn("uses: $/actions/repository-policy", workflow)
+        self.assertNotIn("actions/repository-policy/policy_check.py", workflow)
+        action = (root / "actions/repository-policy/action.yml").read_text()
+        self.assertIn("$GITHUB_ACTION_PATH/policy_check.py", action)
         self.assertFalse((root / ".github/workflows/reconcile-policy.yml").exists())
         caller = (root / "examples/minimal/.github/workflows/ci.yml").read_text()
         self.assertIn("name: sdlc / policy", caller)
         self.assertIn("if: always()", caller)
         self.assertIn("test \"${{ needs.policy.result }}\" = success", caller)
         self.assertNotIn("SDLC_POLICY_APP", caller)
+
+    def test_external_consumer_check_needs_no_sdlc_scripts_in_caller_checkout(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / ".github/workflows").mkdir(parents=True)
+            (root / ".github/repository-policy.json").write_text('{"require_policy_check": false}')
+            (root / ".github/workflows/ci.yml").write_text(
+                "uses: blogle/sdlc/.github/workflows/policy-check.yml@v1.2.3\nname: sdlc / policy\n"
+            )
+            self.assertFalse((root / "actions/repository-policy").exists())
+            env = {
+                "GITHUB_REPOSITORY": "owner/consumer",
+                "DEFAULT_BRANCH": "main",
+                "EVENT_NAME": "pull_request",
+                "BASE_SHA": "base-sha",
+            }
+            with patch.dict(policy_check.os.environ, env, clear=False), \
+                 patch.object(policy_check.Path, "cwd", return_value=root), \
+                 patch.object(policy_check.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "", "missing base config")), \
+                 patch.object(policy_check, "read_live_rulesets", return_value=[]), \
+                 redirect_stdout(io.StringIO()) as output:
+                policy_check.main()
+            self.assertIn("FIRST-ONBOARDING", output.getvalue())
 
     def test_pr_check_validates_proposal_but_uses_base_declaration(self):
         desired = repository_policy.render_policy({}, "main")
@@ -206,47 +246,122 @@ class RepositoryPolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "drift detected"):
             policy_check.evaluate_policy_check({}, {}, live, True, "owner/repo", "main", True)
 
-    def test_read_only_ruleset_api_uses_gh_then_public_anonymous_fallback(self):
-        gh_result = type("Result", (), {"returncode": 0, "stdout": "[]"})()
-        with patch.object(policy_check.subprocess, "run", return_value=gh_result) as run, redirect_stdout(io.StringIO()):
+    def test_list_summary_is_followed_by_full_detail_fetch(self):
+        desired = repository_policy.render_policy({}, "main")
+        summary = {"id": 42, "name": "SDLC default branch", "source": "owner/repo", "enforcement": "active"}
+        detail = dict(desired, id=42, source="owner/repo")
+        responses = [
+            subprocess.CompletedProcess([], 0, json.dumps([[summary]]), ""),
+            subprocess.CompletedProcess([], 0, json.dumps(detail), ""),
+        ]
+        with patch.object(ruleset_api.subprocess, "run", side_effect=responses) as run:
+            found, anonymous = ruleset_api.read_rulesets("owner/repo")
+        self.assertFalse(anonymous)
+        self.assertEqual(found, [detail])
+        self.assertIn("--paginate", run.call_args_list[0].args[0])
+        self.assertIn("repos/owner/repo/rulesets/42", run.call_args_list[1].args[0])
+
+    def test_paginated_list_keeps_legacy_rulesets_and_fetches_canonical_detail(self):
+        legacy = {"id": 1, "name": "legacy", "source": "owner/repo"}
+        summary = {"id": 42, "name": "SDLC default branch", "source": "owner/repo"}
+        detail = dict(repository_policy.render_policy({}, "main"), id=42, source="owner/repo")
+        with patch.object(ruleset_api.subprocess, "run", side_effect=[
+            subprocess.CompletedProcess([], 0, json.dumps([[legacy], [summary]]), ""),
+            subprocess.CompletedProcess([], 0, json.dumps(detail), ""),
+        ]):
+            records, _ = ruleset_api.read_rulesets("owner/repo", include_parents=True)
+        self.assertEqual(records, [legacy, detail])
+
+    def test_read_only_ruleset_api_paginates_and_falls_back_anonymously_without_hiding_errors(self):
+        gh_result = subprocess.CompletedProcess([], 0, "[[]]", "")
+        with patch.object(ruleset_api.subprocess, "run", return_value=gh_result) as run, redirect_stdout(io.StringIO()):
             self.assertEqual(policy_check.read_live_rulesets("owner/repo"), [])
-        self.assertIn("gh", run.call_args.args[0])
-        denied = type("Result", (), {"returncode": 1, "stdout": "", "stderr": "HTTP 403"})()
-        response = io.StringIO("[]")
-        with patch.object(policy_check.subprocess, "run", return_value=denied), \
-             patch.object(policy_check.urllib.request, "urlopen", return_value=response), \
+        self.assertIn("--paginate", run.call_args.args[0])
+        denied = subprocess.CalledProcessError(1, ["gh", "api"], "", "HTTP 403")
+        with patch.object(sdlc.ruleset_api.subprocess, "run", side_effect=denied), \
+             patch.object(sdlc.ruleset_api, "_anonymous_pages", return_value=[]), \
              redirect_stdout(io.StringIO()):
             self.assertEqual(policy_check.read_live_rulesets("owner/repo"), [])
+        with patch.object(sdlc.ruleset_api.subprocess, "run", side_effect=denied), \
+             patch.object(sdlc.ruleset_api, "_anonymous_pages", side_effect=OSError("network denied")), \
+             self.assertRaisesRegex(OSError, "network denied"):
+            policy_check.read_live_rulesets("owner/repo")
 
     def test_local_policy_apply_is_idempotent_and_verifies_read_after_write(self):
         desired = repository_policy.render_policy({}, "main")
-        desired_with_id = dict(desired, id=23)
-        empty = type("Result", (), {"stdout": "[]"})()
-        applied = type("Result", (), {"stdout": ""})()
-        verified = type("Result", (), {"stdout": json.dumps([desired_with_id])})()
+        detail = dict(desired, id=23, source="owner/repo")
+        legacy = {"id": 90, "name": "legacy rules", "source": "owner/repo"}
+        applied = subprocess.CompletedProcess([], 0, "", "")
         with patch.object(sdlc, "policy_context", return_value=("owner/repo", "main")), \
              patch.object(sdlc, "policy_config", return_value={}), \
-             patch.object(sdlc.subprocess, "run", side_effect=[empty, applied, verified]) as run, \
+             patch.object(sdlc.ruleset_api, "read_rulesets", side_effect=[([legacy], False), ([legacy, detail], False)]), \
+             patch.object(sdlc.subprocess, "run", return_value=applied) as run, \
              redirect_stdout(io.StringIO()):
             sdlc.policy_command("apply", "owner/repo")
         self.assertTrue(any("POST" in call.args[0] for call in run.call_args_list))
-        self.assertTrue(any("rulesets?per_page=100" in call.args[0][-1] for call in run.call_args_list))
+        self.assertFalse(any("PUT" in call.args[0] or "DELETE" in call.args[0] for call in run.call_args_list))
+
+    def test_local_policy_apply_updates_only_after_full_detail_comparison(self):
+        desired = repository_policy.render_policy({}, "main")
+        current = dict(desired, id=23, source="owner/repo", enforcement="disabled")
+        verified = dict(desired, id=23, source="owner/repo")
+        with patch.object(sdlc, "policy_context", return_value=("owner/repo", "main")), \
+             patch.object(sdlc, "policy_config", return_value={}), \
+             patch.object(sdlc.ruleset_api, "read_rulesets", side_effect=[([current], False), ([verified], False)]), \
+             patch.object(sdlc.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")) as run, \
+             redirect_stdout(io.StringIO()):
+            sdlc.policy_command("apply", "owner/repo")
+        self.assertTrue(any("PUT" in call.args[0] for call in run.call_args_list))
+
+    def test_local_policy_apply_is_noop_for_full_matching_details(self):
+        desired = repository_policy.render_policy({}, "main")
+        detail = dict(desired, id=23, source="owner/repo")
+        pr_rule = next(rule for rule in detail["rules"] if rule["type"] == "pull_request")
+        pr_rule["parameters"]["required_reviewers"] = []
+        pr_rule["parameters"]["require_extra_approval_for_unattributed_changes"] = True
+        with patch.object(sdlc, "policy_context", return_value=("owner/repo", "main")), \
+             patch.object(sdlc, "policy_config", return_value={}), \
+             patch.object(sdlc.ruleset_api, "read_rulesets", return_value=([detail], False)), \
+             patch.object(sdlc.subprocess, "run") as run, \
+             redirect_stdout(io.StringIO()):
+            sdlc.policy_command("apply", "owner/repo")
+        run.assert_not_called()
 
     def test_local_policy_check_is_read_only_and_duplicate_apply_refuses_to_guess(self):
         desired = repository_policy.render_policy({}, "main")
         with patch.object(sdlc, "policy_context", return_value=("owner/repo", "main")), \
              patch.object(sdlc, "policy_config", return_value={}), \
-             patch.object(sdlc.subprocess, "run", return_value=type("Result", (), {"stdout": json.dumps([desired])})()) as run, \
+             patch.object(sdlc.ruleset_api, "read_rulesets", return_value=([dict(desired, id=1, source="owner/repo")], False)) as read, \
+             patch.object(sdlc.subprocess, "run") as run, \
              redirect_stdout(io.StringIO()):
             sdlc.policy_command("check", "owner/repo")
-        self.assertEqual(len(run.call_args_list), 1)
-        self.assertNotIn("--method", run.call_args.args[0])
-        duplicate = [dict(desired, id=1), dict(desired, id=2)]
+        read.assert_called_once()
+        run.assert_not_called()
+        duplicate = [dict(desired, id=1, source="owner/repo"), dict(desired, id=2, source="owner/repo")]
         with patch.object(sdlc, "policy_context", return_value=("owner/repo", "main")), \
              patch.object(sdlc, "policy_config", return_value={}), \
-             patch.object(sdlc.subprocess, "run", return_value=type("Result", (), {"stdout": json.dumps(duplicate)})()), \
+             patch.object(sdlc.ruleset_api, "read_rulesets", return_value=(duplicate, False)), \
+             patch.object(sdlc.subprocess, "run") as duplicate_write, \
              self.assertRaisesRegex(ValueError, "resolve duplicates manually"):
             sdlc.policy_command("apply", "owner/repo")
+        duplicate_write.assert_not_called()
+
+    def test_legacy_rulesets_are_reported_and_never_replaced(self):
+        legacy = {"id": 90, "name": "old policy", "source": "owner/repo"}
+        output = io.StringIO()
+        with patch.object(sdlc, "policy_context", return_value=("owner/repo", "main")), \
+             patch.object(sdlc, "policy_config", return_value={}), \
+             patch.object(sdlc.ruleset_api, "read_rulesets", return_value=([legacy], False)), \
+             redirect_stdout(output):
+            sdlc.policy_command("plan", "owner/repo")
+        self.assertEqual(json.loads(output.getvalue())["unmanaged_rulesets"], [legacy])
+
+    def test_policy_plan_fails_on_ruleset_read_error_instead_of_assuming_missing(self):
+        with patch.object(sdlc, "policy_context", return_value=("owner/repo", "main")), \
+             patch.object(sdlc, "policy_config", return_value={}), \
+             patch.object(sdlc.ruleset_api, "read_rulesets", side_effect=OSError("API unavailable")), \
+             self.assertRaisesRegex(OSError, "API unavailable"):
+            sdlc.policy_command("plan", "owner/repo")
 
     def test_mergify_policies_use_native_queue_conditions_for_admission(self):
         root = Path(__file__).parents[1]

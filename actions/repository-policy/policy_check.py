@@ -5,9 +5,9 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import urllib.request
 
 from repository_policy import check_live, render_policy
+from ruleset_api import read_rulesets
 
 
 def canonical_rulesets(items, name, repository):
@@ -60,16 +60,12 @@ def evaluate_policy_check(proposed, base_config, live_rulesets, caller_present, 
 
 
 def read_live_rulesets(repository):
-    endpoint = f"https://api.github.com/repos/{repository}/rulesets?includes_parents=true&per_page=100"
-    result = subprocess.run(["gh", "api", endpoint.removeprefix("https://api.github.com/")], text=True, capture_output=True)
-    if result.returncode == 0:
-        print("Read live rulesets using the Actions GITHUB_TOKEN.")
-        return json.loads(result.stdout)
-    # Public repositories can expose rulesets anonymously when GITHUB_TOKEN
-    # does not have the fine-grained Administration:read permission.
-    with urllib.request.urlopen(endpoint, timeout=30) as response:
-        print("Read live rulesets anonymously; GitHub may redact bypass actors.")
-        return json.load(response)
+    rulesets, anonymous = read_rulesets(repository, include_parents=True, anonymous_fallback=True)
+    if anonymous:
+        print("Read ruleset summaries/details anonymously; GitHub may redact bypass actors.")
+    else:
+        print("Read ruleset summaries/details using the Actions GITHUB_TOKEN.")
+    return rulesets
 
 
 def main():

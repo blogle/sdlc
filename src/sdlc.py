@@ -12,6 +12,7 @@ import os
 POLICY_DIR = Path(os.environ.get("SDLC_POLICY_MODULE_PATH", Path(__file__).resolve().parents[1] / "actions/repository-policy"))
 sys.path.insert(0, str(POLICY_DIR))
 import repository_policy
+import ruleset_api
 
 ROOT = Path.cwd()
 RANK = {"patch": 1, "minor": 2, "major": 3}
@@ -128,14 +129,14 @@ def policy_config():
 def policy_command(action, repo=None):
     full_name, branch = policy_context(repo)
     desired = repository_policy.render_policy(policy_config(), branch)
-    response = subprocess.run(["gh", "api", f"repos/{full_name}/rulesets?per_page=100"], check=True, capture_output=True, text=True)
-    all_rulesets = json.loads(response.stdout)
-    matches = [item for item in all_rulesets if item.get("name") == repository_policy.RULESET_NAME]
+    all_rulesets, _ = ruleset_api.read_rulesets(full_name, include_parents=(action in ("plan", "check")))
+    named = [item for item in all_rulesets if item.get("name") == repository_policy.RULESET_NAME]
+    matches = [item for item in named if item.get("source", full_name) == full_name]
     if len(matches) > 1:
         raise ValueError(f"found {len(matches)} canonical rulesets named {repository_policy.RULESET_NAME!r}; resolve duplicates manually")
     current = matches[0] if matches else None
     if action == "plan":
-        print(json.dumps({"repository": full_name, "default_branch": branch, "action": "create" if current is None else ("update" if repository_policy.normalize_ruleset(current) != repository_policy.normalize_ruleset(desired) else "no-op"), "desired": desired, "current": current, "unmanaged_rulesets": [item for item in all_rulesets if item.get("name") != repository_policy.RULESET_NAME]}, indent=2, sort_keys=True))
+        print(json.dumps({"repository": full_name, "default_branch": branch, "action": "create" if current is None else ("update" if repository_policy.normalize_ruleset(current, desired) != repository_policy.normalize_ruleset(desired, desired) else "no-op"), "desired": desired, "current": current, "inherited_canonical_rulesets": [item for item in named if item not in matches], "unmanaged_rulesets": [item for item in all_rulesets if item.get("name") != repository_policy.RULESET_NAME]}, indent=2, sort_keys=True))
         return
     if action == "check":
         repository_policy.check_live(current, desired, full_name)
@@ -144,11 +145,11 @@ def policy_command(action, repo=None):
     if action == "apply":
         if current is None:
             subprocess.run(["gh", "api", "--method", "POST", f"repos/{full_name}/rulesets", "--input", "-"], input=json.dumps(desired), text=True, check=True, capture_output=True)
-        elif repository_policy.normalize_ruleset(current) != repository_policy.normalize_ruleset(desired):
+        elif repository_policy.normalize_ruleset(current, desired) != repository_policy.normalize_ruleset(desired, desired):
             subprocess.run(["gh", "api", "--method", "PUT", f"repos/{full_name}/rulesets/{current['id']}", "--input", "-"], input=json.dumps(desired), text=True, check=True, capture_output=True)
-        verify = json.loads(subprocess.run(["gh", "api", f"repos/{full_name}/rulesets?per_page=100"], check=True, capture_output=True, text=True).stdout)
-        verified = [item for item in verify if item.get("name") == repository_policy.RULESET_NAME]
-        if len(verified) != 1 or repository_policy.normalize_ruleset(verified[0]) != repository_policy.normalize_ruleset(desired):
+        verify, _ = ruleset_api.read_rulesets(full_name, include_parents=False)
+        verified = [item for item in verify if item.get("name") == repository_policy.RULESET_NAME and item.get("source", full_name) == full_name]
+        if len(verified) != 1 or repository_policy.normalize_ruleset(verified[0], desired) != repository_policy.normalize_ruleset(desired, desired):
             raise ValueError("read-after-write verification failed; rerun `nix develop -c sdlc policy plan`")
         print(f"policy applied and verified for {full_name}")
 

@@ -11,31 +11,59 @@ PR_FAST_CONTEXT = "sdlc / pr-fast"
 POLICY_CONTEXT = "sdlc / policy"
 
 
-def normalize_ruleset(ruleset):
-    """Compare only the canonical ruleset's policy-bearing API fields."""
+def normalize_ruleset(ruleset, desired=None):
+    """Project API details onto the fields owned by the canonical renderer."""
     if ruleset is None:
         return None
-    rules = []
+    desired = desired or ruleset
+    actual_by_type = {}
     for rule in ruleset.get("rules", []):
-        projected = {key: value for key, value in rule.items() if key in ("type", "parameters")}
-        if projected.get("type") == "required_status_checks":
-            params = dict(projected.get("parameters", {}))
-            params["required_status_checks"] = sorted(
-                ({"context": item["context"]} for item in params.get("required_status_checks", [])), key=lambda item: item["context"]
-            )
-            projected["parameters"] = params
-        rules.append(projected)
-    rules.sort(key=lambda item: item["type"])
-    result = {key: rules if key == "rules" else ruleset.get(key) for key in ("name", "target", "enforcement", "conditions", "rules", "bypass_actors")}
-    return result
+        actual_by_type.setdefault(rule.get("type"), []).append(rule)
+    desired_rules = []
+    actual_rules = []
+    for expected in desired.get("rules", []):
+        rule_type = expected["type"]
+        desired_rules.append(expected)
+        found = actual_by_type.get(rule_type, [])
+        if len(found) != 1:
+            actual_rules.append({"type": rule_type, "missing_or_duplicate": len(found)})
+            continue
+        actual = found[0]
+        expected_parameters = expected.get("parameters", {})
+        actual_parameters = actual.get("parameters", {})
+        projected_parameters = {}
+        for key, expected_value in expected_parameters.items():
+            actual_value = actual_parameters.get(key)
+            if key == "required_status_checks":
+                actual_value = sorted(
+                    ({"context": item.get("context")} for item in actual_value or []),
+                    key=lambda item: item["context"] or "",
+                )
+                expected_value = sorted(
+                    ({"context": item.get("context")} for item in expected_value),
+                    key=lambda item: item["context"] or "",
+                )
+            projected_parameters[key] = actual_value
+        actual_rules.append({"type": rule_type, "parameters": projected_parameters})
+    extras = sorted(set(actual_by_type) - {rule["type"] for rule in desired_rules})
+    if extras:
+        actual_rules.append({"unexpected_rule_types": extras})
+    return {
+        "name": ruleset.get("name"),
+        "target": ruleset.get("target"),
+        "enforcement": ruleset.get("enforcement"),
+        "conditions": ruleset.get("conditions"),
+        "rules": actual_rules,
+        "bypass_actors": ruleset.get("bypass_actors"),
+    }
 
 
 def check_live(current, desired, repository):
     fix = f"nix develop -c sdlc policy apply --repo {repository}"
     if current is None:
         raise ValueError(f"canonical ruleset is missing; repair with `{fix}`")
-    visible = normalize_ruleset(current)
-    expected = normalize_ruleset(desired)
+    visible = normalize_ruleset(current, desired)
+    expected = normalize_ruleset(desired, desired)
     if "bypass_actors" not in current:
         visible.pop("bypass_actors", None)
         expected.pop("bypass_actors", None)
