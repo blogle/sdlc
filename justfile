@@ -7,11 +7,14 @@ check:
     python3 -m unittest discover -s tests -v
     python3 -m py_compile src/sdlc.py
     python3 -m py_compile actions/repository-policy/repository_policy.py
-    bash -n actions/repository-policy/reconcile-repository-policy.sh
+    python3 -m py_compile actions/repository-policy/policy_check.py
+    python3 -m py_compile actions/repository-policy/ruleset_api.py
     python3 -m json.tool examples/minimal/renovate.json >/dev/null
     python3 -m json.tool examples/clean-room/renovate.json >/dev/null
     python3 -m json.tool examples/minimal/.github/repository-policy.json >/dev/null
-    actionlint -ignore 'unexpected key "queue" for "concurrency" section' -ignore 'specifying action "\$/actions/repository-policy" in invalid format because ref is missing' -ignore 'reusable workflow call "\$/\.github/workflows/stage\.yml".*not following the format' .github/workflows/*.yml examples/minimal/.github/workflows/*.yml
+    python3 -m json.tool examples/clean-room/.github/repository-policy.json >/dev/null
+    python3 -m json.tool .github/repository-policy.json >/dev/null
+    actionlint -ignore 'unexpected key "queue" for "concurrency" section' -ignore 'specifying action "\$/actions/repository-policy" in invalid format because ref is missing' -ignore 'reusable workflow call "\$/\.github/workflows/stage\.yml".*not following the format' .github/workflows/*.yml examples/minimal/.github/workflows/*.yml examples/clean-room/.github/workflows/*.yml
     renovate-config-validator --strict --no-global default.json
     nix run nixpkgs#yq-go -- eval '.' .mergify.yml >/dev/null
     nix run nixpkgs#yq-go -- eval '.' examples/minimal/.mergify.yml >/dev/null
@@ -49,6 +52,7 @@ clean-room:
     trap 'rm -rf "$tmp"' EXIT
     cp examples/clean-room/flake.nix "$tmp/flake.nix"
     cp examples/clean-room/ci.nix "$tmp/ci.nix"
+    cp -R examples/clean-room/.github "$tmp/.github"
     nix flake lock --override-input sdlc "github:blogle/sdlc/$ref" "$tmp"
     nix flake check "$tmp"
     nix run "$tmp#nix-eval-jobs" -- --flake "$tmp#hydraJobs.x86_64-linux.ci-pr-fast" --force-recurse --meta | python3 -c 'import json,sys; jobs=[json.loads(line) for line in sys.stdin if line.strip()]; assert len(jobs) == 2, jobs'

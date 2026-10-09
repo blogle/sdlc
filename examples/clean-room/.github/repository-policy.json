@@ -1,4 +1,4 @@
 {
   "extra_required_status_checks": [],
-  "require_policy_check": true
+  "require_policy_check": false
 }
