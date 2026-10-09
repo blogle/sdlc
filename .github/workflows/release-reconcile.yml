@@ -1,0 +1,120 @@
+name: SDLC rolling release reconcile
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+    secrets:
+      SDLC_RELEASE_APP_ID:
+        required: true
+      SDLC_RELEASE_APP_PRIVATE_KEY:
+        required: true
+
+concurrency:
+  group: sdlc-release-reconcile-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/create-github-app-token@v1
+        id: release-app
+        with:
+          app-id: ${{ secrets.SDLC_RELEASE_APP_ID }}
+          private-key: ${{ secrets.SDLC_RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+          token: ${{ steps.release-app.outputs.token }}
+      - uses: DeterminateSystems/nix-installer-action@v23
+        with:
+          extra-conf: |
+            substituters = https://cache.nixos.org/ https://nix-community.cachix.org
+            trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=
+      - name: Reconcile one rolling release PR
+        env:
+          GH_TOKEN: ${{ steps.release-app.outputs.token }}
+        run: |
+          set -euo pipefail
+          fail() { printf 'release reconcile stopped: %s\n' "$*" >&2; exit 1; }
+          branch='sdlc/release-next'
+          repo="$GITHUB_REPOSITORY"
+          gh auth setup-git
+          # Auto-release remains disabled until the repository's canonical
+          # ruleset has been applied and read back successfully.
+          nix run "$GITHUB_WORKSPACE"#sdlc -- policy check --repo "$repo"
+
+          for attempt in 1 2 3; do
+            git fetch --prune --tags origin main "$branch" || true
+            baseline="$(git rev-parse origin/main)"
+            if git cat-file -e "origin/main:.sdlc/release.json" 2>/dev/null; then
+              predecessor="$(git show "origin/main:.sdlc/release.json")"
+              predecessor_version="$(jq -r '.version // empty' <<<"$predecessor")"
+              predecessor_source="$(jq -r '.source_main_sha // empty' <<<"$predecessor")"
+              [[ "$predecessor_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || fail 'committed release manifest has no valid version'
+              [[ "$predecessor_source" =~ ^[0-9a-f]{40}$ ]] || fail 'committed release manifest has no valid source SHA'
+              tag_sha="$(git rev-list -n1 "refs/tags/v$predecessor_version" 2>/dev/null || true)"
+              [[ -n "$tag_sha" ]] || fail "release v$predecessor_version has no committed tag; publication predecessor is unreconciled"
+              [[ "$(git rev-parse "$tag_sha^")" == "$predecessor_source" ]] || fail "release v$predecessor_version tag does not identify the manifest's merged commit"
+              [[ "$(git show "$tag_sha:.sdlc/release.json" | sha256sum | cut -d' ' -f1)" == "$(sha256sum <<<"$predecessor" | cut -d' ' -f1)" ]] || fail "release v$predecessor_version tag manifest differs from main"
+              git merge-base --is-ancestor "$tag_sha" "$baseline" || fail "release v$predecessor_version tag is not on main"
+              gh release view "v$predecessor_version" --repo "$repo" >/dev/null 2>&1 || fail "release v$predecessor_version has no completed publication ledger"
+            fi
+            plan_dir="$(mktemp -d)"
+            trap 'rm -rf "$plan_dir"' EXIT
+            git worktree add --detach "$plan_dir" "$baseline" >/dev/null
+            if ! plan_json="$(cd "$plan_dir" && nix run "$GITHUB_WORKSPACE"#sdlc -- changelog plan --json)"; then
+              git worktree remove --force "$plan_dir" >/dev/null
+              fail 'fragment validation failed; no release PR was changed'
+            fi
+            if [[ "$(jq -r '.release' <<<"$plan_json")" != true ]]; then
+              if number="$(gh pr list --repo "$repo" --state open --base main --head "$branch" --json number --jq '.[0].number' 2>/dev/null)" && [[ -n "$number" ]]; then
+                gh pr close "$number" --repo "$repo" --comment 'No unreleased fragments remain; candidate retired.'
+              fi
+              git worktree remove --force "$plan_dir" >/dev/null
+              exit 0
+            fi
+            if ! (cd "$plan_dir" && nix run "$GITHUB_WORKSPACE"#sdlc -- release snapshot --source-sha "$baseline"); then
+              git worktree remove --force "$plan_dir" >/dev/null
+              fail 'deterministic snapshot generation failed; no release PR was changed'
+            fi
+            candidate="$(git -C "$plan_dir" rev-parse HEAD)"
+            git -C "$plan_dir" config user.name 'sdlc-release[bot]'
+            git -C "$plan_dir" config user.email 'sdlc-release[bot]@users.noreply.github.com'
+            git -C "$plan_dir" add CHANGELOG.md .sdlc/release.json .changes
+            source_date="$(git -C "$plan_dir" show -s --format=%cI "$baseline")"
+            GIT_AUTHOR_DATE="$source_date" GIT_COMMITTER_DATE="$source_date" \
+              git -C "$plan_dir" commit -m "docs: prepare rolling release candidate" >/dev/null
+            candidate="$(git -C "$plan_dir" rev-parse HEAD)"
+            old=''
+            if git rev-parse --verify "refs/remotes/origin/$branch" >/dev/null 2>&1; then
+              old="$(git rev-parse "refs/remotes/origin/$branch")"
+              lease="--force-with-lease=refs/heads/$branch:$old"
+            else
+              lease="--force-with-lease=refs/heads/$branch:"
+            fi
+            if git -C "$plan_dir" push "$lease" origin "HEAD:refs/heads/$branch"; then
+              git worktree remove --force "$plan_dir" >/dev/null
+              break
+            fi
+            git worktree remove --force "$plan_dir" >/dev/null
+            [[ "$attempt" != 3 ]] || fail 'release branch changed concurrently after three lease retries'
+            sleep "$attempt"
+          done
+
+          number="$(gh pr list --repo "$repo" --state open --base main --head "$branch" --json number --jq '.[0].number' 2>/dev/null || true)"
+          title='chore: rolling release candidate'
+          body="Generated by the release App from main snapshot $baseline. This PR is bot-owned, excluded from Mergify, and is replaceable until merged.\n\nCandidate commit: $candidate\n\nManifest schema (.sdlc/release.json): schema=1; version; prior_released_boundary; source_main_sha; ordered fragments[{path, blob_sha}]; changelog_sha256; generated_tree; publication{artifacts, build_command}. The generated_tree digest covers explicitly defined CHANGELOG.md content and consumed-fragment deletion records, excluding the manifest itself. The manifest is authoritative only after this PR merges. The source SHA and fragment blob SHAs bind the candidate to one exact main snapshot. A successor is blocked only while the predecessor lacks its exact tag or completed publication ledger. Publication, tagging, and release-gate validation are later milestones and are not enabled here."
+          if [[ -n "$number" ]]; then
+            gh pr edit "$number" --repo "$repo" --title "$title" --body "$body"
+          else
+            gh pr create --repo "$repo" --base main --head "$branch" --title "$title" --body "$body"
+          fi
