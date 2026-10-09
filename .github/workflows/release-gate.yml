@@ -53,7 +53,8 @@ jobs:
           [[ "$result" -eq 0 ]] && conclusion=success
           gh api --method POST "repos/$GITHUB_REPOSITORY/check-runs" \
             -f name='sdlc / release-gate' -f head_sha="$head_sha" \
-            -f status=completed -f conclusion="$conclusion"
+            -f status=completed -f conclusion="$conclusion" \
+            -f 'output[title]=Release gate' -f 'output[summary]=Release candidate validation completed.'
           [[ "$result" -eq 0 ]] || exit "$result"
 
   base-refresh:
@@ -95,6 +96,7 @@ jobs:
             [[ "$result" -eq 0 ]] && conclusion=success
             gh api --method POST "repos/$GITHUB_REPOSITORY/check-runs" \
               -f name='sdlc / release-gate' -f head_sha="$head_sha" \
-              -f status=completed -f conclusion="$conclusion"
+              -f status=completed -f conclusion="$conclusion" \
+              -f 'output[title]=Release gate refresh' -f 'output[summary]=Release candidate revalidated after main advanced.'
             [[ "$result" -eq 0 ]] || exit "$result"
           done
