@@ -27,6 +27,14 @@ jobs:
             substituters = https://cache.nixos.org/ https://nix-community.cachix.org
             trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=
       - uses: Mic92/hestia@v3
+        with:
+          # Keep upstream-signed outputs in their upstream caches rather than
+          # filling the repository's GitHub Actions cache with Nixpkgs closures.
+          upstream-cache-filter: true
+          upstream-cache-key-names: "cache.nixos.org-1 nix-community.cachix.org-1"
+          # Matrix evaluation registers the input .drv closures. They must
+          # use the same filter as the build jobs, with prefetch below.
+          filter-drv-closures: true
       - name: Validate consumer changelog fragments
         if: inputs.stage == 'pr-fast'
         run: nix run .#sdlc -- changelog check
@@ -53,6 +61,8 @@ jobs:
       - uses: Mic92/hestia@v3
         with:
           wait-manifest-version: ${{ needs.evaluate.outputs.manifest-version }}
+          upstream-cache-filter: true
+          upstream-cache-key-names: "cache.nixos.org-1 nix-community.cachix.org-1"
       - name: Prefetch derivation closures from Hestia
         run: |
           "$HESTIA_BIN" prefetch ${{ matrix.installables }}
