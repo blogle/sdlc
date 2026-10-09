@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 import os
+import hashlib
 
 POLICY_DIR = Path(os.environ.get("SDLC_POLICY_MODULE_PATH", Path(__file__).resolve().parents[1] / "actions/repository-policy"))
 sys.path.insert(0, str(POLICY_DIR))
@@ -17,6 +18,7 @@ import ruleset_api
 ROOT = Path.cwd()
 RANK = {"patch": 1, "minor": 2, "major": 3}
 VERSION_RE = re.compile(r"^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
+MANIFEST_PATH = ".sdlc/release.json"
 
 
 def fragments(selected=None):
@@ -62,6 +64,91 @@ def next_version(bump):
     if bump == "minor":
         return f"{major}.{minor + 1}.0"
     return f"{major}.{minor}.{patch + 1}"
+
+
+def _git(*args):
+    return subprocess.run(["git", *args], cwd=ROOT, check=True, capture_output=True, text=True).stdout.strip()
+
+
+def _manifest_at(ref="HEAD"):
+    try:
+        raw = _git("show", f"{ref}:{MANIFEST_PATH}")
+    except subprocess.CalledProcessError:
+        return None
+    try:
+        manifest = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{MANIFEST_PATH} at {ref}: invalid JSON: {exc}") from exc
+    if not isinstance(manifest, dict) or not VERSION_RE.match(str(manifest.get("version", ""))):
+        raise ValueError(f"{MANIFEST_PATH} at {ref}: missing valid version")
+    return manifest
+
+
+def _version_after(previous, bump):
+    if previous:
+        match = VERSION_RE.match(str(previous))
+        if not match:
+            raise ValueError(f"invalid previous release version {previous!r}")
+        major, minor, patch = map(int, match.groups())
+    else:
+        major, minor, patch = max(_tag_versions(), default=(0, 0, 0))
+    if bump == "major":
+        return f"{major + 1}.0.0"
+    if bump == "minor":
+        return f"{major}.{minor + 1}.0"
+    return f"{major}.{minor}.{patch + 1}"
+
+
+def _tag_versions():
+    try:
+        tags = _git("tag", "--list", "v[0-9]*").splitlines()
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return []
+    return [tuple(map(int, VERSION_RE.match(tag).groups())) for tag in tags if VERSION_RE.match(tag)]
+
+
+def _sha256(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def release_snapshot(source_sha, date=None):
+    """Generate one deterministic rolling candidate from an exact main snapshot."""
+    if not re.fullmatch(r"[0-9a-f]{40}", source_sha):
+        raise ValueError("--source-sha must be a full commit SHA")
+    if _git("rev-parse", source_sha) != source_sha:
+        raise ValueError(f"source SHA {source_sha} is not available")
+    if _git("rev-parse", "HEAD") != source_sha:
+        raise ValueError("snapshot must be generated from the source SHA checkout")
+    entries = fragments()
+    if not entries:
+        return None
+    previous = _manifest_at(source_sha)
+    bump = bump_intent(entries)
+    version = _version_after(previous.get("version") if previous else None, bump)
+    release_date = date or _git("show", "-s", "--format=%cs", source_sha)
+    bindings = []
+    for path, item in entries:
+        relative = path.relative_to(ROOT).as_posix()
+        blob = _git("rev-parse", f"{source_sha}:{relative}")
+        bindings.append({"path": relative, "blob_sha": blob, "type": item["type"], "semver": item["semver"], "summary": item["summary"]})
+    changelog("finalize", version=version, date=release_date, selected=[item["path"] for item in bindings])
+    changelog_path = ROOT / "CHANGELOG.md"
+    generated = {"CHANGELOG.md": changelog_path.read_bytes()}
+    generated_tree_sha = hashlib.sha256(b"".join(path.encode() + b"\0" + generated[path] for path in sorted(generated))).hexdigest()
+    manifest = {
+        "schemaVersion": 1,
+        "version": version,
+        "prior_released_boundary": previous.get("source_main_sha") if previous else None,
+        "source_main_sha": source_sha,
+        "fragments": [{key: item[key] for key in ("path", "blob_sha")} for item in bindings],
+        "changelog_sha256": _sha256(changelog_path),
+        "generated_tree_sha256": generated_tree_sha,
+        "publication": {"version": version, "source_main_sha": source_sha},
+    }
+    manifest_path = ROOT / MANIFEST_PATH
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    return manifest
 
 
 def render(entries):
@@ -163,6 +250,12 @@ def main():
     changes.add_argument("--date")
     changes.add_argument("--json", action="store_true")
     changes.add_argument("--fragment", nargs="*", help="limit plan/finalize to fragments changed by one merged commit")
+    release = commands.add_parser("release")
+    release_commands = release.add_subparsers(dest="release_action", required=True)
+    snapshot = release_commands.add_parser("snapshot")
+    snapshot.add_argument("--source-sha", required=True)
+    snapshot.add_argument("--date")
+    snapshot.add_argument("--json", action="store_true")
     policy = commands.add_parser("policy")
     policy.add_argument("action", choices=["plan", "apply", "check"])
     policy.add_argument("--repo", help="GitHub OWNER/NAME (defaults to this checkout's origin)")
@@ -170,6 +263,14 @@ def main():
     try:
         if args.command == "changelog":
             changelog(args.action, args.version, args.date, args.json, args.fragment)
+        elif args.command == "release" and args.release_action == "snapshot":
+            manifest = release_snapshot(args.source_sha, args.date)
+            if args.json:
+                print(json.dumps({"release": manifest is not None, "manifest": manifest}, sort_keys=True))
+            elif manifest:
+                print(f"generated release candidate {manifest['version']} from {manifest['source_main_sha']}")
+            else:
+                print("no changelog fragments; no release")
         else:
             policy_command(args.action, args.repo)
     except (ValueError, subprocess.CalledProcessError) as exc:
