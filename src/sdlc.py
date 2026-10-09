@@ -111,6 +111,53 @@ def _sha256(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _generated_tree_digest_bytes(changelog_bytes, bindings):
+    records = [("CHANGELOG.md", "file", changelog_bytes)]
+    records.extend((item["path"], "deleted", item["blob_sha"].encode()) for item in bindings)
+    payload = b"".join(path.encode() + b"\0" + kind.encode() + b"\0" + content + b"\0" for path, kind, content in sorted(records))
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _generated_tree_digest(changelog_path, bindings):
+    return _generated_tree_digest_bytes(changelog_path.read_bytes(), bindings)
+
+
+def verify_release_tree(source_sha, merged_sha, manifest):
+    """Verify the actual merged tree against a reconstructible snapshot."""
+    if manifest.get("schema") != 1 or manifest.get("source_main_sha") != source_sha:
+        raise ValueError("release manifest schema or source SHA is invalid")
+    if _git("rev-parse", f"{merged_sha}^") != source_sha:
+        raise ValueError("merged release commit parent does not equal source_main_sha")
+    fragments = manifest.get("fragments")
+    if not isinstance(fragments, list) or fragments != sorted(fragments, key=lambda item: item.get("path", "")):
+        raise ValueError("release manifest fragments must be sorted")
+    bindings = []
+    for item in fragments:
+        if not isinstance(item, dict) or set(("path", "blob_sha")) - set(item):
+            raise ValueError("release manifest fragment entries require path and blob_sha")
+        path, blob = item["path"], item["blob_sha"]
+        if _git("rev-parse", f"{source_sha}:{path}") != blob:
+            raise ValueError(f"source fragment blob does not match manifest: {path}")
+        try:
+            _git("rev-parse", f"{merged_sha}:{path}")
+        except subprocess.CalledProcessError:
+            pass
+        else:
+            raise ValueError(f"consumed fragment remains in merged tree: {path}")
+        bindings.append(item)
+    changed = set(_git("diff", "--name-only", source_sha, merged_sha).splitlines())
+    allowed = {"CHANGELOG.md", MANIFEST_PATH} | {item["path"] for item in bindings}
+    if changed != allowed:
+        raise ValueError(f"merged release changed unexpected paths: {sorted(changed - allowed)}")
+    changelog = subprocess.run(["git", "show", f"{merged_sha}:CHANGELOG.md"], cwd=ROOT, check=True, capture_output=True).stdout
+    if manifest.get("changelog_sha256") != hashlib.sha256(changelog).hexdigest():
+        raise ValueError("merged CHANGELOG.md digest does not match manifest")
+    expected = _generated_tree_digest_bytes(changelog, bindings)
+    if manifest.get("generated_tree") != expected:
+        raise ValueError("merged generated tree digest does not match manifest")
+    return True
+
+
 def release_snapshot(source_sha, date=None):
     """Generate one deterministic rolling candidate from an exact main snapshot."""
     if not re.fullmatch(r"[0-9a-f]{40}", source_sha):
@@ -133,17 +180,16 @@ def release_snapshot(source_sha, date=None):
         bindings.append({"path": relative, "blob_sha": blob, "type": item["type"], "semver": item["semver"], "summary": item["summary"]})
     changelog("finalize", version=version, date=release_date, selected=[item["path"] for item in bindings])
     changelog_path = ROOT / "CHANGELOG.md"
-    generated = {"CHANGELOG.md": changelog_path.read_bytes()}
-    generated_tree_sha = hashlib.sha256(b"".join(path.encode() + b"\0" + generated[path] for path in sorted(generated))).hexdigest()
+    generated_tree_sha = _generated_tree_digest(changelog_path, bindings)
     manifest = {
-        "schemaVersion": 1,
+        "schema": 1,
         "version": version,
         "prior_released_boundary": previous.get("source_main_sha") if previous else None,
         "source_main_sha": source_sha,
         "fragments": [{key: item[key] for key in ("path", "blob_sha")} for item in bindings],
         "changelog_sha256": _sha256(changelog_path),
-        "generated_tree_sha256": generated_tree_sha,
-        "publication": {"version": version, "source_main_sha": source_sha},
+        "generated_tree": generated_tree_sha,
+        "publication": {"artifacts": [], "build_command": "true"},
     }
     manifest_path = ROOT / MANIFEST_PATH
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
