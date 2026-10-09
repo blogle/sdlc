@@ -47,7 +47,7 @@ def check_live(current, desired, repository):
 def render_policy(config, default_branch):
     if not isinstance(config, dict):
         raise ValueError("policy declaration must be a JSON object")
-    unknown = set(config) - {"default_branch", "extra_required_status_checks"}
+    unknown = set(config) - {"default_branch", "extra_required_status_checks", "require_policy_check"}
     if unknown:
         raise ValueError(f"unknown policy declaration field(s): {', '.join(sorted(unknown))}")
 
@@ -62,7 +62,10 @@ def render_policy(config, default_branch):
     if PR_FAST_CONTEXT in extra:
         raise ValueError(f"{PR_FAST_CONTEXT!r} is canonical; do not repeat it as an extra check")
 
-    contexts = [PR_FAST_CONTEXT, POLICY_CONTEXT, *sorted(extra)]
+    require_policy_check = config.get("require_policy_check", False)
+    if not isinstance(require_policy_check, bool):
+        raise ValueError("require_policy_check must be a boolean")
+    contexts = [PR_FAST_CONTEXT, *([POLICY_CONTEXT] if require_policy_check else []), *sorted(extra)]
     return {
         "name": RULESET_NAME,
         "target": "branch",

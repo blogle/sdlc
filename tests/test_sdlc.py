@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import tempfile
 import unittest
+from pathlib import Path
 from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
 
@@ -102,7 +103,7 @@ class ConsumerWorkflowTests(unittest.TestCase):
 
 class RepositoryPolicyTests(unittest.TestCase):
     def test_renderer_builds_complete_canonical_ruleset(self):
-        ruleset = repository_policy.render_policy({"extra_required_status_checks": ["security / scan"]}, "main")
+        ruleset = repository_policy.render_policy({"extra_required_status_checks": ["security / scan"], "require_policy_check": True}, "main")
         self.assertEqual(ruleset["name"], "SDLC default branch")
         self.assertEqual(ruleset["conditions"]["ref_name"]["include"], ["~DEFAULT_BRANCH"])
         rules = {rule["type"]: rule for rule in ruleset["rules"]}
@@ -119,6 +120,14 @@ class RepositoryPolicyTests(unittest.TestCase):
         for branch in ("main", "master"):
             rendered = repository_policy.render_policy({}, branch)
             self.assertEqual(rendered["conditions"]["ref_name"]["include"], ["~DEFAULT_BRANCH"])
+
+    def test_policy_check_context_is_activated_only_by_declaration_flag(self):
+        for enabled, expected in ((False, ["sdlc / pr-fast"]), (True, ["sdlc / pr-fast", "sdlc / policy"])):
+            rendered = repository_policy.render_policy({"require_policy_check": enabled}, "main")
+            checks = next(rule for rule in rendered["rules"] if rule["type"] == "required_status_checks")
+            self.assertEqual([item["context"] for item in checks["parameters"]["required_status_checks"]], expected)
+        with self.assertRaisesRegex(ValueError, "require_policy_check must be a boolean"):
+            repository_policy.render_policy({"require_policy_check": "yes"}, "main")
 
     def test_check_fails_closed_for_missing_skew_and_hidden_bypass(self):
         desired = repository_policy.render_policy({}, "main")
@@ -142,7 +151,7 @@ class RepositoryPolicyTests(unittest.TestCase):
 
     def test_minimal_consumer_declares_only_extra_checks(self):
         declaration = json.loads((Path(__file__).parents[1] / "examples/minimal/.github/repository-policy.json").read_text())
-        self.assertEqual(declaration, {"extra_required_status_checks": []})
+        self.assertEqual(declaration, {"extra_required_status_checks": [], "require_policy_check": True})
 
     def test_policy_workflow_is_read_only_and_stable_check_is_not_skipped(self):
         root = Path(__file__).parents[1]
@@ -157,10 +166,57 @@ class RepositoryPolicyTests(unittest.TestCase):
         self.assertNotIn("SDLC_POLICY_APP", caller)
 
     def test_pr_check_validates_proposal_but_uses_base_declaration(self):
-        actual = policy_check.desired_for_check({"extra_required_status_checks": ["new"]}, {}, "main")
-        self.assertNotIn("new", [item["context"] for rule in actual["rules"] if rule["type"] == "required_status_checks" for item in rule["parameters"]["required_status_checks"]])
+        desired = repository_policy.render_policy({}, "main")
+        live = [dict(desired, source="owner/repo")]
+        with redirect_stdout(io.StringIO()):
+            outcome = policy_check.evaluate_policy_check(
+                {"extra_required_status_checks": ["new"]}, {}, live, True, "owner/repo", "main", True
+            )
+        self.assertEqual(outcome, "drift-check")
         with self.assertRaisesRegex(ValueError, "must not contain duplicates"):
-            policy_check.desired_for_check({"extra_required_status_checks": ["dup", "dup"]}, {}, "main")
+            policy_check.evaluate_policy_check(
+                {"extra_required_status_checks": ["dup", "dup"]}, {}, live, True, "owner/repo", "main", True
+            )
+
+    def test_initial_onboarding_has_explicit_interim_outcome_only_without_live_policy(self):
+        output = io.StringIO()
+        with redirect_stdout(output):
+            result = policy_check.evaluate_policy_check({"require_policy_check": False}, None, [], True, "owner/repo", "main", True)
+        self.assertEqual(result, "first-onboarding")
+        self.assertIn("FIRST-ONBOARDING", output.getvalue())
+        self.assertIn("does NOT prove live repository protection", output.getvalue())
+        self.assertIn("policy apply --repo owner/repo", output.getvalue())
+        root = Path(__file__).parents[1]
+        self.assertTrue(policy_check.has_policy_caller(root))
+        with self.assertRaisesRegex(ValueError, "must install the policy-check.yml caller"):
+            policy_check.evaluate_policy_check({"require_policy_check": False}, None, [], False, "owner/repo", "main", True)
+        already_live = [dict(repository_policy.render_policy({"require_policy_check": False}, "main"), source="owner/repo")]
+        with self.assertRaisesRegex(ValueError, "not first-time onboarding"):
+            policy_check.evaluate_policy_check({"require_policy_check": False}, None, already_live, True, "owner/repo", "main", True)
+
+    def test_existing_onboarded_base_cannot_delete_or_lose_declaration(self):
+        with self.assertRaisesRegex(ValueError, "policy declaration was removed"):
+            policy_check.evaluate_policy_check(None, {}, [], True, "owner/repo", "main", True)
+        with self.assertRaisesRegex(ValueError, "canonical ruleset is missing"):
+            policy_check.evaluate_policy_check({}, {}, [], True, "owner/repo", "main", True)
+
+    def test_existing_live_ruleset_drift_fails_against_base_policy(self):
+        desired = repository_policy.render_policy({}, "main")
+        live = [dict(desired, source="owner/repo", enforcement="disabled")]
+        with self.assertRaisesRegex(ValueError, "drift detected"):
+            policy_check.evaluate_policy_check({}, {}, live, True, "owner/repo", "main", True)
+
+    def test_read_only_ruleset_api_uses_gh_then_public_anonymous_fallback(self):
+        gh_result = type("Result", (), {"returncode": 0, "stdout": "[]"})()
+        with patch.object(policy_check.subprocess, "run", return_value=gh_result) as run, redirect_stdout(io.StringIO()):
+            self.assertEqual(policy_check.read_live_rulesets("owner/repo"), [])
+        self.assertIn("gh", run.call_args.args[0])
+        denied = type("Result", (), {"returncode": 1, "stdout": "", "stderr": "HTTP 403"})()
+        response = io.StringIO("[]")
+        with patch.object(policy_check.subprocess, "run", return_value=denied), \
+             patch.object(policy_check.urllib.request, "urlopen", return_value=response), \
+             redirect_stdout(io.StringIO()):
+            self.assertEqual(policy_check.read_live_rulesets("owner/repo"), [])
 
     def test_local_policy_apply_is_idempotent_and_verifies_read_after_write(self):
         desired = repository_policy.render_policy({}, "main")
