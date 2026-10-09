@@ -53,7 +53,7 @@ jobs:
           nix run "$GITHUB_WORKSPACE"#sdlc -- policy check --repo "$repo"
 
           for attempt in 1 2 3; do
-            git fetch --prune origin main "$branch" || true
+            git fetch --prune --tags origin main "$branch" || true
             baseline="$(git rev-parse origin/main)"
             if git cat-file -e "origin/main:.sdlc/release.json" 2>/dev/null; then
               predecessor="$(git show "origin/main:.sdlc/release.json")"
