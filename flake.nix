@@ -19,8 +19,8 @@
           pkgs = nixpkgs.legacyPackages.${system};
           sdlcCli = pkgs.writeShellApplication {
             name = "sdlc";
-            runtimeInputs = [ pkgs.python3 ];
-            text = ''exec python3 ${./src/sdlc.py} "$@"'';
+            runtimeInputs = [ pkgs.python3 pkgs.gh ];
+            text = ''export SDLC_POLICY_MODULE_PATH=${./actions/repository-policy}; exec python3 ${./src/sdlc.py} "$@"'';
           };
         in {
           default = sdlcCli;
@@ -42,7 +42,7 @@
             packages = sdlcLib.devTools {
               inherit pkgs;
               sdlcCli = self.packages.${system}.sdlc;
-            } ++ [ pkgs.just pkgs.python3 pkgs.actionlint pkgs.renovate ];
+            } ++ [ pkgs.just pkgs.python3 pkgs.gh pkgs.actionlint pkgs.renovate ];
           };
         });
       checks = eachSystem (system:

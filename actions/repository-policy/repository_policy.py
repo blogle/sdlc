@@ -3,16 +3,79 @@
 import argparse
 import json
 from pathlib import Path
+import sys
 
 
 RULESET_NAME = "SDLC default branch"
 PR_FAST_CONTEXT = "sdlc / pr-fast"
+POLICY_CONTEXT = "sdlc / policy"
+
+
+def normalize_ruleset(ruleset, desired=None):
+    """Project API details onto the fields owned by the canonical renderer."""
+    if ruleset is None:
+        return None
+    desired = desired or ruleset
+    actual_by_type = {}
+    for rule in ruleset.get("rules", []):
+        actual_by_type.setdefault(rule.get("type"), []).append(rule)
+    desired_rules = []
+    actual_rules = []
+    for expected in desired.get("rules", []):
+        rule_type = expected["type"]
+        desired_rules.append(expected)
+        found = actual_by_type.get(rule_type, [])
+        if len(found) != 1:
+            actual_rules.append({"type": rule_type, "missing_or_duplicate": len(found)})
+            continue
+        actual = found[0]
+        expected_parameters = expected.get("parameters", {})
+        actual_parameters = actual.get("parameters", {})
+        projected_parameters = {}
+        for key, expected_value in expected_parameters.items():
+            actual_value = actual_parameters.get(key)
+            if key == "required_status_checks":
+                actual_value = sorted(
+                    ({"context": item.get("context")} for item in actual_value or []),
+                    key=lambda item: item["context"] or "",
+                )
+                expected_value = sorted(
+                    ({"context": item.get("context")} for item in expected_value),
+                    key=lambda item: item["context"] or "",
+                )
+            projected_parameters[key] = actual_value
+        actual_rules.append({"type": rule_type, "parameters": projected_parameters})
+    extras = sorted(set(actual_by_type) - {rule["type"] for rule in desired_rules})
+    if extras:
+        actual_rules.append({"unexpected_rule_types": extras})
+    return {
+        "name": ruleset.get("name"),
+        "target": ruleset.get("target"),
+        "enforcement": ruleset.get("enforcement"),
+        "conditions": ruleset.get("conditions"),
+        "rules": actual_rules,
+        "bypass_actors": ruleset.get("bypass_actors"),
+    }
+
+
+def check_live(current, desired, repository):
+    fix = f"nix develop -c sdlc policy apply --repo {repository}"
+    if current is None:
+        raise ValueError(f"canonical ruleset is missing; repair with `{fix}`")
+    visible = normalize_ruleset(current, desired)
+    expected = normalize_ruleset(desired, desired)
+    if "bypass_actors" not in current:
+        visible.pop("bypass_actors", None)
+        expected.pop("bypass_actors", None)
+        print("::warning::GitHub redacted bypass_actors; all visible policy fields matched, but bypass configuration was not verified.", file=sys.stderr)
+    if visible != expected:
+        raise ValueError(f"live canonical ruleset drift detected; inspect with `nix develop -c sdlc policy plan --repo {repository}` and repair with `{fix}`")
 
 
 def render_policy(config, default_branch):
     if not isinstance(config, dict):
         raise ValueError("policy declaration must be a JSON object")
-    unknown = set(config) - {"default_branch", "extra_required_status_checks"}
+    unknown = set(config) - {"default_branch", "extra_required_status_checks", "require_policy_check"}
     if unknown:
         raise ValueError(f"unknown policy declaration field(s): {', '.join(sorted(unknown))}")
 
@@ -27,14 +90,18 @@ def render_policy(config, default_branch):
     if PR_FAST_CONTEXT in extra:
         raise ValueError(f"{PR_FAST_CONTEXT!r} is canonical; do not repeat it as an extra check")
 
-    contexts = [PR_FAST_CONTEXT, *sorted(extra)]
+    require_policy_check = config.get("require_policy_check", False)
+    if not isinstance(require_policy_check, bool):
+        raise ValueError("require_policy_check must be a boolean")
+    contexts = [PR_FAST_CONTEXT, *([POLICY_CONTEXT] if require_policy_check else []), *sorted(extra)]
     return {
         "name": RULESET_NAME,
         "target": "branch",
         "enforcement": "active",
+        "bypass_actors": [],
         "conditions": {
             "ref_name": {
-                "include": [f"refs/heads/{branch}"],
+                "include": ["~DEFAULT_BRANCH" if branch == default_branch else f"refs/heads/{branch}"],
                 "exclude": [],
             }
         },

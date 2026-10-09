@@ -1,11 +1,21 @@
 name: CI
-on: [pull_request, merge_group]
+on: [pull_request, merge_group, push]
 jobs:
   pr-fast:
     uses: blogle/sdlc/.github/workflows/pr-fast.yml@v1.0.0
   candidate:
     if: github.event_name == 'merge_group' || startsWith(github.event.pull_request.head.ref, 'mergify/merge-queue/')
     uses: blogle/sdlc/.github/workflows/candidate.yml@v1.0.0
+  policy:
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    uses: blogle/sdlc/.github/workflows/policy-check.yml@v1.0.0
+  sdlc-policy:
+    name: sdlc / policy
+    needs: policy
+    if: always() && (github.event_name == 'pull_request' || github.event_name == 'push')
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ needs.policy.result }}" = success
   sdlc-pr-fast:
     name: sdlc / pr-fast
     needs: pr-fast
