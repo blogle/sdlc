@@ -63,12 +63,14 @@ changelog *args:
     sdlc changelog {{args}}
 
 # Consumer publication contract. The publisher builds and records immutable
-# bytes first; this hook only promotes the ledger's exact tagged identity.
+# bytes in a version/SHA-keyed GitHub Release asset; this hook only finalizes
+# that exact tagged identity and never rebuilds.
 release-publish version:
     test -n "{{version}}"
     test -n "${SDLC_RELEASE_LEDGER:-}"
     test -f "${SDLC_RELEASE_LEDGER}"
     test "$(jq -r .version "${SDLC_RELEASE_LEDGER}")" = "{{version}}"
     test "$(jq -r .tagged "${SDLC_RELEASE_LEDGER}")" = true
-    git rev-parse --verify "refs/tags/v{{version}}" >/dev/null
-    if ! gh release view "v{{version}}" >/dev/null 2>&1; then gh release create "v{{version}}" --verify-tag --title "v{{version}}" --generate-notes; fi
+    test "$(git rev-parse HEAD)" = "$(git rev-parse "refs/tags/v{{version}}^{commit}")"
+    gh release view "v{{version}}" >/dev/null
+    gh release edit "v{{version}}" --draft=false

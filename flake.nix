@@ -48,7 +48,7 @@
       checks = eachSystem (system:
         let pkgs = nixpkgs.legacyPackages.${system};
         in {
-          test = pkgs.runCommand "sdlc-tests" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+          test = pkgs.runCommand "sdlc-tests" { nativeBuildInputs = [ pkgs.git pkgs.python3 ]; } ''
             cd ${./.}
             python3 -m unittest discover -s tests -v
             touch $out

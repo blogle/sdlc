@@ -16,37 +16,38 @@ manifest is authoritative only after its generated commit is squash-merged to
 
 ```json
 {
-  "schema": 1,
+  "schemaVersion": 1,
   "version": "1.2.3",
+  "prior_released_boundary": "<prior source SHA or null>",
   "source_main_sha": "<40 lowercase hex characters>",
   "fragments": [{"path": ".changes/topic.json", "blob_sha": "<blob SHA>"}],
   "changelog_sha256": "<sha256 hex>",
-  "generated_tree": "<commit tree SHA>",
-  "publication": {
-    "artifacts": [{"name": "package", "path": "dist/package", "digest": "sha256:<hex>"}],
-    "build_command": "consumer-owned command that builds the listed paths"
-  }
+  "generated_tree_sha256": "<deterministic generated-file digest>",
+  "publication": {"version": "1.2.3", "source_main_sha": "<same source SHA>"}
 }
 ```
 
 `fragments` are sorted and describe the exact blobs consumed by the generated
-commit. `publication.artifacts` is a list of immutable output names and paths;
-the optional digest is checked when supplied. The publisher runs the recorded
-build command once from the merged SHA, computes missing digests, and records
-them before tagging. The consumer's existing `just release-publish <version>`
-hook then promotes/releases those recorded bytes without rebuilding or
-inventing a registry interface.
+commit. `generated_tree_sha256` is deliberately not a Git tree SHA: the Git
+tree contains `.sdlc/release.json`, so embedding its Git tree identity would be
+self-referential. The generator computes the digest over the sorted generated
+file set, currently `CHANGELOG.md`, as `path + NUL + bytes`; the publisher
+reconstructs that digest from the merged commit and independently verifies the
+complete source-to-merged tree diff. `publication` is metadata only and is not
+an artifact DSL. The publisher creates one standard source archive from the
+exact merged commit and stores it as a GitHub Release asset.
 
 ## Publisher guarantees
 
 - The actual merged commit must be on `main`, have exactly one parent, and that
   parent must equal `source_main_sha`.
-- The manifest tree, changelog digest, fragment deletion, version, and artifact
-  declarations are checked before any tag or release write.
-- `.sdlc/release-ledger.json` is atomically replaced after each transition and
-  uploaded as a durable, release-keyed Actions artifact. A retry may resume a
-  build, tag, or publication, but cannot change a recorded digest or release
-  identity.
+- The manifest tree, changelog digest, fragment deletion, version, and
+  publication metadata are checked before any tag or release write.
+- `.sdlc/release-ledger.json` is atomically replaced as an audit record. The
+  actual bytes are stored durably in a draft GitHub Release asset named with
+  the version and exact merged SHA. A retry reads and verifies that asset
+  before building or uploading; it never relies on a 90-day Actions artifact
+  and never overwrites an existing asset.
 - An existing `v<version>` tag is accepted only when it points to the exact
   merged SHA. A conflict is a hard failure. Tagging uses the merged SHA, never
   the workflow event SHA or the replaceable release branch.
@@ -56,6 +57,7 @@ inventing a registry interface.
   release gate are deployed.
 
 The updater may add fields, but it must preserve these fields and semantics.
-If it cannot provide the manifest or a buildable artifact declaration, the
-publisher fails closed rather than guessing a source range or rebuilding a
-different release.
+The release-gate worker must use the same `schemaVersion`, digest names, and
+publication shape. If the manifest is absent or differs from the actual
+merged tree, the publisher fails closed rather than guessing a source range or
+rebuilding a different release.
