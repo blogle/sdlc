@@ -6,6 +6,7 @@ default:
 check:
     python3 -m unittest discover -s tests -v
     python3 -m py_compile src/sdlc.py
+    python3 -m py_compile src/release_publisher.py
     python3 -m py_compile actions/repository-policy/repository_policy.py
     python3 -m py_compile actions/repository-policy/policy_check.py
     python3 -m py_compile actions/repository-policy/ruleset_api.py
@@ -60,3 +61,14 @@ clean-room:
 
 changelog *args:
     sdlc changelog {{args}}
+
+# Consumer publication contract. The publisher builds and records immutable
+# bytes first; this hook only promotes the ledger's exact tagged identity.
+release-publish version:
+    test -n "{{version}}"
+    test -n "${SDLC_RELEASE_LEDGER:-}"
+    test -f "${SDLC_RELEASE_LEDGER}"
+    test "$(jq -r .version "${SDLC_RELEASE_LEDGER}")" = "{{version}}"
+    test "$(jq -r .tagged "${SDLC_RELEASE_LEDGER}")" = true
+    git rev-parse --verify "refs/tags/v{{version}}" >/dev/null
+    if ! gh release view "v{{version}}" >/dev/null 2>&1; then gh release create "v{{version}}" --verify-tag --title "v{{version}}" --generate-notes; fi
