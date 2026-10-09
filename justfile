@@ -60,3 +60,10 @@ clean-room:
 
 changelog *args:
     sdlc changelog {{args}}
+
+# Self-hosting consumer hook: publish the immutable tag produced by the reusable
+# release workflow. Never rebuild or mutate the release commit here.
+release-publish version:
+    test -n "{{version}}"
+    git rev-parse --verify "refs/tags/v{{version}}" >/dev/null
+    if ! gh release view "v{{version}}" >/dev/null 2>&1; then gh release create "v{{version}}" --verify-tag --title "v{{version}}" --generate-notes; fi
