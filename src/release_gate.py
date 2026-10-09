@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 import base64
 from dataclasses import dataclass
-import hashlib
 import importlib.util
 import io
 import json
@@ -157,7 +156,7 @@ def _manifest_at(repo: str, sha: str) -> Mapping[str, Any]:
         raise GateError("release manifest is missing or invalid JSON") from exc
 
 
-def _load_snapshot_generator(source_dir: Path) -> Callable[[str], Mapping[str, Any]]:
+def _load_coordinator(source_dir: Path) -> Any:
     module_path = source_dir / "src/sdlc.py"
     if not module_path.exists():
         raise GateError("coordinator changelog snapshot interface is unavailable")
@@ -166,89 +165,69 @@ def _load_snapshot_generator(source_dir: Path) -> Callable[[str], Mapping[str, A
         raise GateError("cannot load coordinator changelog snapshot interface")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    generator = getattr(module, "release_snapshot", None)
-    if not callable(generator):
-        raise GateError("coordinator does not expose sdlc.release_snapshot")
-
-    def generate(source_sha: str) -> Mapping[str, Any]:
-        module.ROOT = source_dir
-        with redirect_stdout(io.StringIO()):
-            result = generator(source_sha)
-        if not isinstance(result, dict):
-            raise GateError("coordinator snapshot produced no release manifest")
-        return result
-
-    return generate
+    if not callable(getattr(module, "release_snapshot", None)) or not callable(getattr(module, "verify_release_tree", None)):
+        raise GateError("coordinator does not expose the shared snapshot generator/verifier")
+    return module
 
 
-def replay_snapshot(source_sha: str, *, git: Callable[..., str | bytes] = _git) -> Mapping[str, Any]:
-    """Re-run the coordinator snapshot from the exact source commit."""
+def _with_coordinator(source_sha: str, callback: Callable[[Any], Any]) -> Any:
     with tempfile.TemporaryDirectory(prefix="release-gate-") as temp:
         source_dir = Path(temp) / "source"
-        git("worktree", "add", "--detach", str(source_dir), source_sha)
+        _git("worktree", "add", "--detach", str(source_dir), source_sha)
         try:
-            return _load_snapshot_generator(source_dir)(source_sha)
+            return callback(_load_coordinator(source_dir))
         finally:
             try:
-                git("worktree", "remove", "--force", str(source_dir))
+                _git("worktree", "remove", "--force", str(source_dir))
             except GateError:
                 pass
 
 
-def _fragment_paths(manifest: Mapping[str, Any]) -> list[str]:
-    raw = manifest.get("fragments")
-    if not isinstance(raw, list) or not raw:
-        raise GateError("release manifest must contain fragments")
-    paths = []
-    previous = ""
-    for item in raw:
-        if not isinstance(item, dict):
-            raise GateError("release manifest fragment is not an object")
-        path = item.get("path")
-        if not isinstance(path, str) or not path.startswith(FRAGMENT_PREFIX) or not path.endswith(FRAGMENT_SUFFIX) or "/" in path[len(FRAGMENT_PREFIX):]:
-            raise GateError(f"invalid release fragment path {path!r}")
-        if path <= previous:
-            raise GateError("release manifest fragments must be unique and sorted")
-        if not isinstance(item.get("blob_sha"), str) or len(item["blob_sha"]) != 40:
-            raise GateError(f"invalid blob SHA for release fragment {path}")
-        paths.append(path)
-        previous = path
-    return paths
+def replay_snapshot(source_sha: str, *, git: Callable[..., str | bytes] = _git) -> Mapping[str, Any]:
+    """Re-run the coordinator snapshot from the exact source commit."""
+    def generate(module: Any) -> Mapping[str, Any]:
+        module.ROOT = Path(module.__file__).resolve().parents[1]
+        with redirect_stdout(io.StringIO()):
+            result = module.release_snapshot(source_sha)
+        if not isinstance(result, dict):
+            raise GateError("coordinator snapshot produced no release manifest")
+        return result
+
+    return _with_coordinator(source_sha, generate)
 
 
-def verify_candidate(source_sha: str, head_sha: str, manifest: Mapping[str, Any], *, git: Callable[..., str | bytes] = _git, planner: Callable[[str], Mapping[str, Any]] = replay_snapshot) -> None:
-    """Replay the canonical planner and prove the candidate changed only its output."""
-    if manifest.get("schemaVersion") != 1:
-        raise GateError("release manifest schemaVersion must be 1")
+def _validate_manifest_contract(manifest: Mapping[str, Any], source_sha: str) -> None:
+    if manifest.get("schema") != 1 or "schemaVersion" in manifest:
+        raise GateError("release manifest schema must be 1")
     if manifest.get("source_main_sha") != source_sha:
         raise GateError("manifest source_main_sha does not match current main")
-    paths = _fragment_paths(manifest)
+    publication = manifest.get("publication")
+    if publication != {"version": manifest.get("version"), "source_main_sha": source_sha}:
+        raise GateError("manifest publication must contain only version and source_main_sha")
+    if "generated_tree" not in manifest or "generated_tree_sha256" in manifest:
+        raise GateError("manifest must use generated_tree canonical digest")
+
+
+def verify_candidate(source_sha: str, head_sha: str, manifest: Mapping[str, Any], *, git: Callable[..., str | bytes] = _git, planner: Callable[[str], Mapping[str, Any]] = replay_snapshot, verifier: Callable[[str, str, Mapping[str, Any]], None] | None = None) -> None:
+    """Replay the canonical planner and prove the candidate changed only its output."""
+    _validate_manifest_contract(manifest, source_sha)
     expected = planner(source_sha)
     repeated = planner(source_sha)
     if dict(expected) != dict(repeated):
         raise GateError("coordinator snapshot replay is not deterministic")
     if dict(expected) != dict(manifest):
         raise GateError("candidate manifest differs from deterministic coordinator replay")
-    for item in manifest["fragments"]:
-        path = item["path"]
-        source_blob = git("rev-parse", f"{source_sha}:{path}")
-        if source_blob != item["blob_sha"]:
-            raise GateError(f"fragment blob changed at {path}")
+    def verify(module: Any) -> None:
+        module.ROOT = Path.cwd()
         try:
-            git("rev-parse", f"{head_sha}:{path}")
-        except GateError:
-            continue
-        raise GateError(f"consumed fragment remains in release tree: {path}")
-    changed = set(str(git("diff", "--name-only", source_sha, head_sha)).splitlines())
-    allowed = {"CHANGELOG.md", MANIFEST_PATH, *paths}
-    if changed != allowed:
-        raise GateError(f"candidate changed paths differ from generated output: {sorted(changed ^ allowed)}")
-    changelog = git("show", f"{head_sha}:CHANGELOG.md", raw=True)
-    if manifest.get("changelog_sha256") != hashlib.sha256(changelog).hexdigest():
-        raise GateError("CHANGELOG.md digest does not match manifest")
-    generated_tree = hashlib.sha256(b"CHANGELOG.md\0" + changelog).hexdigest()
-    if manifest.get("generated_tree_sha256") != generated_tree:
-        raise GateError("generated tree digest does not match manifest")
+            module.verify_release_tree(source_sha, head_sha, dict(manifest))
+        except (ValueError, OSError, subprocess.CalledProcessError) as exc:
+            raise GateError(f"shared release tree verifier rejected candidate: {exc}") from exc
+
+    if verifier is not None:
+        verifier(source_sha, head_sha, manifest)
+    else:
+        _with_coordinator(source_sha, verify)
 
 
 def evaluate_release_gate(*, pr: PullRequest, authenticated_login: str, app_slug: str, main_sha: str, parent_sha: str | None, checks: Iterable[Check], manifest: Mapping[str, Any] | None, release_bot_login: str, repository: str, protection: Mapping[str, Any], planner: Callable[[str], Mapping[str, Any]] = replay_snapshot) -> None:

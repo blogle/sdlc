@@ -78,13 +78,13 @@ class ReleaseGateTests(unittest.TestCase):
     def test_manifest_uses_canonical_coordinator_schema_and_replays_twice(self):
         changelog = b"# Changelog\n\n## [1.0.0]\n"
         manifest = {
-            "schemaVersion": 1,
+            "schema": 1,
             "version": "1.0.0",
             "prior_released_boundary": None,
             "source_main_sha": "main",
             "fragments": [{"path": ".changes/one.json", "blob_sha": "a" * 40}],
             "changelog_sha256": hashlib.sha256(changelog).hexdigest(),
-            "generated_tree_sha256": hashlib.sha256(b"CHANGELOG.md\0" + changelog).hexdigest(),
+            "generated_tree": "digest",
             "publication": {"version": "1.0.0", "source_main_sha": "main"},
         }
         calls = []
@@ -104,8 +104,12 @@ class ReleaseGateTests(unittest.TestCase):
                 return changelog
             raise AssertionError(args)
 
-        verify_candidate("main", "head", manifest, git=git, planner=planner)
+        verify_candidate("main", "head", manifest, git=git, planner=planner, verifier=lambda *_: None)
         self.assertEqual(calls, ["main", "main"])
+
+    def test_old_private_manifest_names_are_rejected_without_translation(self):
+        with self.assertRaisesRegex(GateError, "schema"):
+            verify_candidate("main", "head", {"schemaVersion": 1}, planner=lambda _: {})
 
     def test_merge_rechecks_live_base_and_expected_head(self):
         api = FakeApi("new-main", self.release_pr(), [Check("sdlc / pr-fast", "success", "head"), Check("sdlc / release-gate", "success", "head", "release-bot")])
@@ -137,6 +141,8 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertIn("jq -r '.pull_request.head.sha'", workflow)
         self.assertIn("repos/$GITHUB_REPOSITORY/check-runs", workflow)
         self.assertNotIn("GITHUB_EVENT_PULL_REQUEST_HEAD_SHA", workflow)
+        self.assertIn("pull_request_target:", workflow)
+        self.assertIn("name='sdlc / release-gate'", workflow)
 
 
 if __name__ == "__main__":
