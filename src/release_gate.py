@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Release-only freshness, deterministic-generation, and merge guards.
+"""Fail-closed release candidate validation and merge authorization.
 
-The coordinator owns planning and generation.  This module deliberately accepts
-its planned-manifest callable instead of implementing another generator.
+Release snapshot generation is owned by ``sdlc.release_snapshot`` from the
+rolling-release coordinator.  This module replays that interface; it does not
+implement a second changelog generator.
 """
 from __future__ import annotations
 
@@ -10,24 +11,27 @@ import argparse
 import base64
 from dataclasses import dataclass
 import hashlib
+import importlib.util
+import io
 import json
+import os
+from pathlib import Path
 import subprocess
-from typing import Any, Callable, Iterable, Mapping, Protocol
+import tempfile
+from contextlib import redirect_stdout
+from typing import Any, Callable, Iterable, Mapping
 
 
 RELEASE_BRANCH = "sdlc/release-next"
 RELEASE_CHECK = "sdlc / release-gate"
-DEFAULT_REQUIRED_CHECKS = ("sdlc / pr-fast",)
-PROTECTED_REQUIRED_CHECKS = DEFAULT_REQUIRED_CHECKS
-ALLOWED_GENERATED_PATHS = {"CHANGELOG.md", ".sdlc/release.json"}
+REQUIRED_CHECKS = ("sdlc / pr-fast",)
+MANIFEST_PATH = ".sdlc/release.json"
+FRAGMENT_PREFIX = ".changes/"
+FRAGMENT_SUFFIX = ".json"
 
 
 class GateError(RuntimeError):
-    """A release must not proceed when an invariant cannot be proven."""
-
-
-class ManifestPlanner(Protocol):
-    def __call__(self, *, source_sha: str, manifest: Mapping[str, Any]) -> Mapping[str, Any]: ...
+    """A release operation cannot prove an invariant."""
 
 
 @dataclass(frozen=True)
@@ -47,138 +51,15 @@ class Check:
     name: str
     conclusion: str | None
     sha: str
+    app_slug: str | None = None
 
 
-def _required_check(checks: Iterable[Check], name: str, head_sha: str) -> None:
-    matching = [item for item in checks if item.name == name]
-    if not any(item.sha == head_sha and item.conclusion == "success" for item in matching):
-        raise GateError(f"required check {name!r} is not successful for release head {head_sha}")
-
-
-def verify_manifest(
-    *,
-    source_sha: str,
-    head_sha: str,
-    manifest: Mapping[str, Any],
-    git: Callable[..., str],
-    planner: ManifestPlanner,
-) -> None:
-    """Verify the exact generated tree and compare it to the coordinator plan.
-
-    Calling the planner twice is intentional: a planner that produces different
-    results for the same snapshot is rejected before the release can merge.
-    """
-    if manifest.get("schema_version") != 1:
-        raise GateError("release manifest schema_version must be 1")
-    if manifest.get("source_main_sha") != source_sha:
-        raise GateError("manifest source_main_sha does not match current main")
-    fragments = manifest.get("fragments")
-    if not isinstance(fragments, list) or not fragments:
-        raise GateError("release manifest must contain fragments")
-
-    expected = planner(source_sha=source_sha, manifest=manifest)
-    repeat = planner(source_sha=source_sha, manifest=manifest)
-    if dict(expected) != dict(repeat):
-        raise GateError("release planner is not deterministic")
-    if dict(expected) != dict(manifest):
-        raise GateError("release manifest differs from the coordinator plan")
-
-    for item in fragments:
-        if not isinstance(item, dict) or set(("path", "blob_sha")) - set(item):
-            raise GateError("manifest fragment entries require path and blob_sha")
-        path = item["path"]
-        if not isinstance(path, str) or not path.startswith(".changes/") or not path.endswith(".json"):
-            raise GateError(f"invalid fragment path {path!r}")
-        source_blob = git("rev-parse", f"{source_sha}:{path}")
-        if source_blob != item["blob_sha"]:
-            raise GateError(f"fragment blob changed at {path}")
-        try:
-            git("rev-parse", f"{head_sha}:{path}")
-        except GateError:
-            pass
-        else:
-            raise GateError(f"consumed fragment remains in release tree: {path}")
-
-    changelog_sha = hashlib.sha256(git("show", f"{head_sha}:CHANGELOG.md", raw=True)).hexdigest()
-    if manifest.get("changelog_digest") != changelog_sha:
-        raise GateError("CHANGELOG.md digest does not match manifest")
-    tree = git("rev-parse", f"{head_sha}^{{tree}}")
-    if manifest.get("generated_tree_identity") != tree:
-        raise GateError("generated tree identity does not match release head")
-    changed = set(git("diff", "--name-only", source_sha, head_sha).splitlines())
-    allowed = ALLOWED_GENERATED_PATHS | {item["path"] for item in fragments}
-    if not changed <= allowed:
-        raise GateError(f"release changes outside generated paths: {sorted(changed - allowed)}")
-
-
-def evaluate_release_gate(
-    *,
-    pr: PullRequest,
-    authenticated_login: str,
-    main_sha: str,
-    parent_sha: str | None,
-    checks: Iterable[Check],
-    manifest: Mapping[str, Any] | None,
-    git: Callable[..., str] | None = None,
-    planner: ManifestPlanner | None = None,
-    required_checks: Iterable[str] = DEFAULT_REQUIRED_CHECKS,
-    release_bot_login: str,
-    repository: str | None = None,
-    protection: Mapping[str, Any] | None = None,
-) -> None:
-    """Pass a release PR, or trivially pass an ordinary PR."""
-    if pr.head_branch != RELEASE_BRANCH:
-        return
-    if (pr.head_login != release_bot_login or pr.head_type != "Bot" or
-            pr.author_login != release_bot_login or pr.author_type != "Bot" or
-            authenticated_login != release_bot_login):
-        raise GateError("release branch is not owned by the authenticated release bot")
-    if repository is not None and pr.head_repo != repository:
-        raise GateError("release branch must belong to the protected repository")
-    if protection is None:
-        raise GateError("live branch protection and required checks are unavailable")
-    verify_protection(protection, PROTECTED_REQUIRED_CHECKS)
-    if parent_sha != main_sha:
-        raise GateError("release head parent is not current main")
-    for name in required_checks:
-        _required_check(checks, name, pr.head_sha)
-    if manifest is None or git is None or planner is None:
-        raise GateError("release candidate manifest and coordinator planner are required")
-    verify_manifest(source_sha=main_sha, head_sha=pr.head_sha, manifest=manifest, git=git, planner=planner)
-
-
-def merge_release_pr(
-    *,
-    api: Any,
-    pr_number: int,
-    expected_head_sha: str,
-    current_main_sha: str,
-    release_bot_login: str,
-) -> Mapping[str, Any]:
-    """Merge with GitHub's head-SHA precondition, never pretending base is atomic."""
-    pr = api.pull_request(pr_number)
-    if pr.head_branch != RELEASE_BRANCH or pr.head_sha != expected_head_sha:
-        raise GateError("release head changed before merge")
-    if (pr.head_login != release_bot_login or pr.head_type != "Bot" or
-            pr.author_login != release_bot_login or pr.author_type != "Bot"):
-        raise GateError("release PR is not owned by the release bot")
-    if api.main_sha() != current_main_sha:
-        raise GateError("main advanced before merge; regenerate release candidate")
-    verify_protection(api.protection(), PROTECTED_REQUIRED_CHECKS)
-    checks = api.checks(expected_head_sha)
-    for name in DEFAULT_REQUIRED_CHECKS:
-        _required_check(checks, name, expected_head_sha)
-    # GitHub's sha parameter protects the head only. A concurrent base merge
-    # can still race this call; post-merge identity validation must catch it.
-    return api.merge(pr_number, sha=expected_head_sha, merge_method="squash")
-
-
-def _git(*args: str, raw: bool = False) -> str:
+def _git(*args: str, cwd: str | Path | None = None, raw: bool = False) -> str | bytes:
     try:
-        result = subprocess.run(["git", *args], check=True, capture_output=True)
+        result = subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
     except subprocess.CalledProcessError as exc:
-        raise GateError(f"git cannot prove release tree invariant: {' '.join(args)}") from exc
-    return (result.stdout if raw else result.stdout.decode()).strip()
+        raise GateError(f"git cannot prove release invariant: {' '.join(args)}") from exc
+    return result.stdout.strip() if raw else result.stdout.decode().strip()
 
 
 def _gh_json(endpoint: str) -> Any:
@@ -186,26 +67,56 @@ def _gh_json(endpoint: str) -> Any:
         result = subprocess.run(["gh", "api", endpoint], check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as exc:
         raise GateError(f"live GitHub API data unavailable for {endpoint}") from exc
-    return json.loads(result.stdout)
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise GateError(f"invalid GitHub API response for {endpoint}") from exc
 
 
-def verify_protection(protection: Mapping[str, Any], required_checks: Iterable[str]) -> None:
-    """Require live protection; never infer safety from repository defaults."""
-    active_rulesets = [item for item in protection.get("rulesets", ()) if item.get("enforcement") == "active"]
-    if not active_rulesets and not protection.get("classic"):
-        raise GateError("no applicable branch protection or ruleset is configured")
+def _pull_request(repo: str, number: int) -> PullRequest:
+    data = _gh_json(f"repos/{repo}/pulls/{number}")
+    head = data.get("head", {})
+    user = data.get("user", {})
+    head_repo = head.get("repo") or {}
+    return PullRequest(
+        number,
+        head.get("sha", ""),
+        head.get("ref", ""),
+        (head.get("user") or {}).get("login", ""),
+        (head.get("user") or {}).get("type", ""),
+        head_repo.get("full_name", ""),
+        user.get("login", ""),
+        user.get("type", ""),
+    )
+
+
+def _checks(repo: str, sha: str) -> list[Check]:
+    return [
+        Check(item.get("name", ""), item.get("conclusion"), item.get("head_sha", ""), (item.get("app") or {}).get("slug"))
+        for item in _gh_json(f"repos/{repo}/commits/{sha}/check-runs?per_page=100").get("check_runs", [])
+    ]
+
+
+def _required_check(checks: Iterable[Check], name: str, sha: str, app_slug: str | None = None) -> None:
+    candidates = [item for item in checks if item.name == name and item.sha == sha and item.conclusion == "success"]
+    if app_slug is not None:
+        candidates = [item for item in candidates if item.app_slug == app_slug]
+    if not candidates:
+        suffix = f" from App {app_slug!r}" if app_slug else ""
+        raise GateError(f"required check {name!r}{suffix} is not successful for exact head {sha}")
+
+
+def verify_protection(protection: Mapping[str, Any], required_checks: Iterable[str] = REQUIRED_CHECKS) -> None:
+    active = [item for item in protection.get("rulesets", ()) if item.get("enforcement") == "active"]
+    if not active and not protection.get("classic"):
+        raise GateError("no applicable branch protection or active ruleset is configured")
     if protection.get("strict") is True:
         raise GateError("global strict freshness is enabled; release gate will not change repository policy")
     if protection.get("bypass_actors"):
-        raise GateError("protected release gate requires zero bypass actors")
+        raise GateError("release merge requires zero protection bypass actors")
     missing = set(required_checks) - set(protection.get("contexts", ()))
     if missing:
-        raise GateError(f"required protected checks are absent: {sorted(missing)}")
-
-
-def _manifest(repo: str, head_sha: str) -> Mapping[str, Any]:
-    item = _gh_json(f"repos/{repo}/contents/.sdlc/release.json?ref={head_sha}")
-    return json.loads(base64.b64decode(item["content"]).decode())
+        raise GateError(f"protected required checks are absent: {sorted(missing)}")
 
 
 def _protection(repo: str, branch: str) -> Mapping[str, Any]:
@@ -213,59 +124,247 @@ def _protection(repo: str, branch: str) -> Mapping[str, Any]:
     try:
         classic = _gh_json(f"repos/{repo}/branches/{branch}/protection")
     except GateError:
-        # Ruleset readback is authoritative for repositories where the token
-        # cannot read the legacy branch-protection endpoint.
         classic = {}
-    checks = set(classic.get("required_status_checks", {}).get("contexts", ()))
+    contexts = set(classic.get("required_status_checks", {}).get("contexts", ()))
     strict = classic.get("required_status_checks", {}).get("strict")
-    bypass_actors = []
-    for ruleset in rulesets:
-        bypass_actors.extend(ruleset.get("bypass_actors") or ())
-        detail = ruleset if ruleset.get("rules") else _gh_json(f"repos/{repo}/rulesets/{ruleset['id']}")
+    bypass = []
+    for summary in rulesets:
+        bypass.extend(summary.get("bypass_actors") or ())
+        detail = summary if summary.get("rules") else _gh_json(f"repos/{repo}/rulesets/{summary['id']}")
         for rule in detail.get("rules", ()):
             if rule.get("type") != "required_status_checks":
                 continue
             params = rule.get("parameters", {})
-            checks.update(item.get("context") for item in params.get("required_status_checks", ()))
+            contexts.update(item.get("context") for item in params.get("required_status_checks", ()))
             strict = strict or params.get("strict_required_status_checks_policy", False)
-    return {"classic": bool(classic), "rulesets": rulesets, "contexts": checks, "strict": strict, "bypass_actors": bypass_actors}
+    return {"classic": bool(classic), "rulesets": rulesets, "contexts": contexts, "strict": strict, "bypass_actors": bypass}
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--repo", required=True)
-    parser.add_argument("--pr", type=int, required=True)
-    parser.add_argument("--release-bot", required=True)
-    args = parser.parse_args()
-    # The workflow supplies trusted API data and uses this CLI as a fail-closed
-    # assertion point. Normal PRs intentionally succeed without release data.
-    pr_data = _gh_json(f"repos/{args.repo}/pulls/{args.pr}")
-    pr = PullRequest(args.pr, pr_data["head"]["sha"], pr_data["head"]["ref"], pr_data["head"]["user"]["login"], pr_data["head"]["user"]["type"], pr_data["head"]["repo"]["full_name"], pr_data["user"]["login"], pr_data["user"]["type"])
-    if pr.head_branch != RELEASE_BRANCH:
-        return 0
+def _authenticated_app(release_bot_login: str) -> tuple[str, str]:
     user = _gh_json("user")
     app = _gh_json("app")
-    if f"{app['slug']}[bot]" != user["login"]:
+    slug = app.get("slug", "")
+    if user.get("login") != release_bot_login or user.get("login") != f"{slug}[bot]":
         raise GateError("authenticated token is not the configured release GitHub App")
+    return user["login"], slug
+
+
+def _manifest_at(repo: str, sha: str) -> Mapping[str, Any]:
+    item = _gh_json(f"repos/{repo}/contents/{MANIFEST_PATH}?ref={sha}")
+    try:
+        return json.loads(base64.b64decode(item["content"]).decode())
+    except (KeyError, ValueError, json.JSONDecodeError) as exc:
+        raise GateError("release manifest is missing or invalid JSON") from exc
+
+
+def _load_snapshot_generator(source_dir: Path) -> Callable[[str], Mapping[str, Any]]:
+    module_path = source_dir / "src/sdlc.py"
+    if not module_path.exists():
+        raise GateError("coordinator changelog snapshot interface is unavailable")
+    spec = importlib.util.spec_from_file_location("coordinator_sdlc", module_path)
+    if spec is None or spec.loader is None:
+        raise GateError("cannot load coordinator changelog snapshot interface")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    generator = getattr(module, "release_snapshot", None)
+    if not callable(generator):
+        raise GateError("coordinator does not expose sdlc.release_snapshot")
+
+    def generate(source_sha: str) -> Mapping[str, Any]:
+        module.ROOT = source_dir
+        with redirect_stdout(io.StringIO()):
+            result = generator(source_sha)
+        if not isinstance(result, dict):
+            raise GateError("coordinator snapshot produced no release manifest")
+        return result
+
+    return generate
+
+
+def replay_snapshot(source_sha: str, *, git: Callable[..., str | bytes] = _git) -> Mapping[str, Any]:
+    """Re-run the coordinator snapshot from the exact source commit."""
+    with tempfile.TemporaryDirectory(prefix="release-gate-") as temp:
+        source_dir = Path(temp) / "source"
+        git("worktree", "add", "--detach", str(source_dir), source_sha)
+        try:
+            return _load_snapshot_generator(source_dir)(source_sha)
+        finally:
+            try:
+                git("worktree", "remove", "--force", str(source_dir))
+            except GateError:
+                pass
+
+
+def _fragment_paths(manifest: Mapping[str, Any]) -> list[str]:
+    raw = manifest.get("fragments")
+    if not isinstance(raw, list) or not raw:
+        raise GateError("release manifest must contain fragments")
+    paths = []
+    previous = ""
+    for item in raw:
+        if not isinstance(item, dict):
+            raise GateError("release manifest fragment is not an object")
+        path = item.get("path")
+        if not isinstance(path, str) or not path.startswith(FRAGMENT_PREFIX) or not path.endswith(FRAGMENT_SUFFIX) or "/" in path[len(FRAGMENT_PREFIX):]:
+            raise GateError(f"invalid release fragment path {path!r}")
+        if path <= previous:
+            raise GateError("release manifest fragments must be unique and sorted")
+        if not isinstance(item.get("blob_sha"), str) or len(item["blob_sha"]) != 40:
+            raise GateError(f"invalid blob SHA for release fragment {path}")
+        paths.append(path)
+        previous = path
+    return paths
+
+
+def verify_candidate(source_sha: str, head_sha: str, manifest: Mapping[str, Any], *, git: Callable[..., str | bytes] = _git, planner: Callable[[str], Mapping[str, Any]] = replay_snapshot) -> None:
+    """Replay the canonical planner and prove the candidate changed only its output."""
+    if manifest.get("schemaVersion") != 1:
+        raise GateError("release manifest schemaVersion must be 1")
+    if manifest.get("source_main_sha") != source_sha:
+        raise GateError("manifest source_main_sha does not match current main")
+    paths = _fragment_paths(manifest)
+    expected = planner(source_sha)
+    repeated = planner(source_sha)
+    if dict(expected) != dict(repeated):
+        raise GateError("coordinator snapshot replay is not deterministic")
+    if dict(expected) != dict(manifest):
+        raise GateError("candidate manifest differs from deterministic coordinator replay")
+    for item in manifest["fragments"]:
+        path = item["path"]
+        source_blob = git("rev-parse", f"{source_sha}:{path}")
+        if source_blob != item["blob_sha"]:
+            raise GateError(f"fragment blob changed at {path}")
+        try:
+            git("rev-parse", f"{head_sha}:{path}")
+        except GateError:
+            continue
+        raise GateError(f"consumed fragment remains in release tree: {path}")
+    changed = set(str(git("diff", "--name-only", source_sha, head_sha)).splitlines())
+    allowed = {"CHANGELOG.md", MANIFEST_PATH, *paths}
+    if changed != allowed:
+        raise GateError(f"candidate changed paths differ from generated output: {sorted(changed ^ allowed)}")
+    changelog = git("show", f"{head_sha}:CHANGELOG.md", raw=True)
+    if manifest.get("changelog_sha256") != hashlib.sha256(changelog).hexdigest():
+        raise GateError("CHANGELOG.md digest does not match manifest")
+    generated_tree = hashlib.sha256(b"CHANGELOG.md\0" + changelog).hexdigest()
+    if manifest.get("generated_tree_sha256") != generated_tree:
+        raise GateError("generated tree digest does not match manifest")
+
+
+def evaluate_release_gate(*, pr: PullRequest, authenticated_login: str, app_slug: str, main_sha: str, parent_sha: str | None, checks: Iterable[Check], manifest: Mapping[str, Any] | None, release_bot_login: str, repository: str, protection: Mapping[str, Any], planner: Callable[[str], Mapping[str, Any]] = replay_snapshot) -> None:
+    if pr.head_branch != RELEASE_BRANCH:
+        return
+    if (authenticated_login != release_bot_login or pr.head_login != release_bot_login or pr.head_type != "Bot" or pr.author_login != release_bot_login or pr.author_type != "Bot" or pr.head_repo != repository):
+        raise GateError("release PR is not owned by the authenticated release App")
+    verify_protection(protection)
+    if parent_sha != main_sha:
+        raise GateError("release head parent is not current main")
+    _required_check(checks, "sdlc / pr-fast", pr.head_sha)
+    if manifest is None:
+        raise GateError("release manifest is required")
+    verify_candidate(main_sha, pr.head_sha, manifest, planner=planner)
+
+
+class GithubMergeApi:
+    def __init__(self, repo: str, branch: str, app_slug: str):
+        self.repo, self.branch, self.app_slug = repo, branch, app_slug
+
+    def pull_request(self, number: int) -> PullRequest:
+        return _pull_request(self.repo, number)
+
+    def main_sha(self) -> str:
+        return _gh_json(f"repos/{self.repo}/commits/{self.branch}")["sha"]
+
+    def parent_sha(self, sha: str) -> str:
+        parents = _gh_json(f"repos/{self.repo}/commits/{sha}").get("parents", [])
+        if len(parents) != 1:
+            raise GateError("release head must have exactly one parent")
+        return parents[0]["sha"]
+
+    def protection(self) -> Mapping[str, Any]:
+        return _protection(self.repo, self.branch)
+
+    def checks(self, sha: str) -> list[Check]:
+        return _checks(self.repo, sha)
+
+    def merge(self, number: int, *, sha: str, merge_method: str) -> Mapping[str, Any]:
+        if merge_method != "squash":
+            raise GateError("release merge must use squash")
+        result = subprocess.run(["gh", "api", "--method", "PUT", f"repos/{self.repo}/pulls/{number}/merge", "-f", f"sha={sha}", "-f", "merge_method=squash"], check=True, capture_output=True, text=True)
+        return json.loads(result.stdout)
+
+
+def merge_release_pr(*, api: GithubMergeApi, pr_number: int, expected_head_sha: str, current_main_sha: str, release_bot_login: str) -> Mapping[str, Any]:
+    """Trusted worker preflight; GitHub's ``sha`` is the only merge precondition."""
+    pr = api.pull_request(pr_number)
+    if pr.head_branch != RELEASE_BRANCH or pr.head_sha != expected_head_sha:
+        raise GateError("release head changed before merge")
+    if pr.head_login != release_bot_login or pr.head_type != "Bot" or pr.author_login != release_bot_login or pr.author_type != "Bot":
+        raise GateError("release PR is not owned by the release App")
+    if api.main_sha() != current_main_sha:
+        raise GateError("main advanced before merge; regenerate release candidate")
+    if api.parent_sha(expected_head_sha) != current_main_sha:
+        raise GateError("release head parent is not current main")
+    verify_protection(api.protection())
+    checks = api.checks(expected_head_sha)
+    _required_check(checks, "sdlc / pr-fast", expected_head_sha)
+    _required_check(checks, RELEASE_CHECK, expected_head_sha, api.app_slug)
+    return api.merge(pr_number, sha=expected_head_sha, merge_method="squash")
+
+
+def _gate_command(args: argparse.Namespace) -> int:
+    pr = _pull_request(args.repo, args.pr)
+    if pr.head_branch != RELEASE_BRANCH:
+        return 0
+    login, slug = _authenticated_app(args.release_bot)
     repo = _gh_json(f"repos/{args.repo}")
     main = _gh_json(f"repos/{args.repo}/commits/{repo['default_branch']}")
     commit = _gh_json(f"repos/{args.repo}/commits/{pr.head_sha}")
-    check_data = _gh_json(f"repos/{args.repo}/commits/{pr.head_sha}/check-runs?per_page=100").get("check_runs", [])
-    checks = [Check(item["name"], item.get("conclusion"), item["head_sha"]) for item in check_data]
     evaluate_release_gate(
         pr=pr,
-        authenticated_login=user["login"],
+        authenticated_login=login,
+        app_slug=slug,
         main_sha=main["sha"],
         parent_sha=(commit.get("parents") or [{}])[0].get("sha"),
-        checks=checks,
-        manifest=_manifest(args.repo, pr.head_sha),
-        git=_git,
-        planner=lambda **_: _manifest(args.repo, pr.head_sha),
+        checks=_checks(args.repo, pr.head_sha),
+        manifest=_manifest_at(args.repo, pr.head_sha),
         release_bot_login=args.release_bot,
         repository=args.repo,
         protection=_protection(args.repo, repo["default_branch"]),
     )
     return 0
+
+
+def _merge_command(args: argparse.Namespace) -> int:
+    pr = _pull_request(args.repo, args.pr)
+    if pr.head_branch != RELEASE_BRANCH:
+        raise GateError("target PR is not the release PR")
+    login, slug = _authenticated_app(args.release_bot)
+    if login != args.release_bot:
+        raise GateError("authenticated App does not match release bot")
+    api = GithubMergeApi(args.repo, "main", slug)
+    expected = args.expected_head or pr.head_sha
+    api_result = merge_release_pr(api=api, pr_number=args.pr, expected_head_sha=expected, current_main_sha=api.main_sha(), release_bot_login=args.release_bot)
+    if not api_result.get("merged"):
+        raise GateError(f"GitHub declined release merge: {api_result}")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    commands = parser.add_subparsers(dest="command", required=True)
+    for name in ("gate", "merge"):
+        command = commands.add_parser(name)
+        command.add_argument("--repo", required=True)
+        command.add_argument("--pr", type=int, required=True)
+        command.add_argument("--release-bot", required=True)
+    commands.choices["merge"].add_argument("--expected-head")
+    args = parser.parse_args()
+    try:
+        return _gate_command(args) if args.command == "gate" else _merge_command(args)
+    except (GateError, OSError, subprocess.CalledProcessError) as exc:
+        print(f"release-gate: {exc}", file=os.sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
