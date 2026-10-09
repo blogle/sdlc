@@ -1,0 +1,48 @@
+name: SDLC release merge
+
+on:
+  check_run:
+    types: [completed]
+  workflow_dispatch:
+
+concurrency:
+  group: sdlc-release-merge-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  checks: read
+  pull-requests: read
+
+jobs:
+  merge:
+    name: merge validated release PR
+    if: github.event_name == 'workflow_dispatch' || (github.event.check_run.name == 'sdlc / release-gate' && github.event.check_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/create-github-app-token@v1
+        id: release-app
+        with:
+          app-id: ${{ secrets.SDLC_RELEASE_APP_ID }}
+          private-key: ${{ secrets.SDLC_RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: read
+          permission-pull-requests: write
+          permission-checks: read
+      - name: Recheck and squash merge release PR
+        env:
+          GH_TOKEN: ${{ steps.release-app.outputs.token }}
+          RELEASE_BOT_LOGIN: ${{ vars.SDLC_RELEASE_BOT_LOGIN }}
+        run: |
+          set -euo pipefail
+          prs="$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=$GITHUB_REPOSITORY:sdlc/release-next" --jq '.[].number')"
+          for pr in $prs; do
+            python3 src/release_gate.py merge --repo "$GITHUB_REPOSITORY" --pr "$pr" --release-bot "$RELEASE_BOT_LOGIN"
+          done
