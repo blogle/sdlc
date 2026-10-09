@@ -234,6 +234,8 @@ class ConsumerWorkflowTests(unittest.TestCase):
         self.assertIn("refs/tags/v$predecessor_version", workflow)
         self.assertIn("gh release view", workflow)
         self.assertIn("git merge-base --is-ancestor \"$tag_sha\" \"$baseline\"", workflow)
+        self.assertIn('git rev-parse "$tag_sha^"', workflow)
+        self.assertIn('tag manifest differs from main', workflow)
 
     def test_release_reconcile_retries_races_without_competing_prs(self):
         workflow = (Path(__file__).parents[1] / ".github/workflows/release-reconcile.yml").read_text()
