@@ -1,0 +1,5 @@
+{
+  "type": "feature",
+  "semver": "minor",
+  "summary": "Dogfood the reusable SDLC release workflow and publication hook in the SDLC repository"
+}

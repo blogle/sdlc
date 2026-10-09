@@ -1,0 +1,24 @@
+name: SDLC self-release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      publish_version:
+        description: Re-publish an existing release without re-finalizing changelog fragments
+        type: string
+        required: false
+
+# The library exercises exactly the same release contract as consumers.
+# Its shared release workflow still requires SDLC_RELEASE_APP_* credentials
+# for direct protected-main finalization (tracked in issue #9).
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    uses: ./.github/workflows/release.yml
+    with:
+      publish_version: ${{ inputs.publish_version || '' }}
+    secrets: inherit
