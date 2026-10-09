@@ -44,3 +44,10 @@ jobs:
     uses: ./.github/workflows/stage.yml
     with:
       stage: candidate
+  candidate-context:
+    name: sdlc / candidate
+    needs: candidate
+    if: always() && github.event_name == 'pull_request' && startsWith(github.event.pull_request.head.ref, 'mergify/merge-queue/')
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ needs.candidate.result }}" = success

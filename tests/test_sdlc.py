@@ -96,6 +96,14 @@ class ConsumerWorkflowTests(unittest.TestCase):
         self.assertIn("if: always() && (github.event_name == 'merge_group' || startsWith(github.event.pull_request.head.ref, 'mergify/merge-queue/'))", workflow)
         self.assertIn('test \"${{ needs.candidate.result }}\" = success', workflow)
 
+    def test_sdlc_source_ci_emits_stable_candidate_only_for_speculative_prs(self):
+        workflow = (Path(__file__).parents[1] / ".github/workflows/ci.yml").read_text()
+        self.assertIn("candidate-context:\n    name: sdlc / candidate", workflow)
+        self.assertIn("needs: candidate", workflow)
+        self.assertIn("if: always() && github.event_name == 'pull_request' && startsWith(github.event.pull_request.head.ref, 'mergify/merge-queue/')", workflow)
+        self.assertIn('test "${{ needs.candidate.result }}" = success', workflow)
+        self.assertNotIn("merge_group", workflow)
+
     def test_nested_stage_workflows_follow_outer_exact_revision(self):
         root = Path(__file__).parents[1]
         for name in ("pr-fast.yml", "candidate.yml"):
