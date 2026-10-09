@@ -60,3 +60,16 @@ clean-room:
 
 changelog *args:
     sdlc changelog {{args}}
+
+# Consumer publication contract. The publisher builds and records immutable
+# bytes in a version/SHA-keyed GitHub Release asset; this hook only finalizes
+# that exact tagged identity and never rebuilds.
+release-publish version:
+    test -n "{{version}}"
+    test -n "${SDLC_RELEASE_LEDGER:-}"
+    test -f "${SDLC_RELEASE_LEDGER}"
+    test "$(jq -r .version "${SDLC_RELEASE_LEDGER}")" = "{{version}}"
+    test "$(jq -r .tagged "${SDLC_RELEASE_LEDGER}")" = true
+    test "$(git rev-parse HEAD)" = "$(git rev-parse "refs/tags/v{{version}}^{commit}")"
+    gh release view "v{{version}}" >/dev/null
+    gh release edit "v{{version}}" --draft=false
