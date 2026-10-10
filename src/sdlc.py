@@ -111,15 +111,16 @@ def _sha256(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _generated_tree_digest_bytes(changelog_bytes, bindings):
+def generated_tree_digest(changelog_bytes, bindings):
+    """Digest the canonical generated records, excluding the manifest."""
     records = [("CHANGELOG.md", "file", changelog_bytes)]
-    records.extend((item["path"], "deleted", item["blob_sha"].encode()) for item in bindings)
+    records.extend((item["path"], "deleted", item["blob_sha"].encode("ascii")) for item in bindings)
     payload = b"".join(path.encode() + b"\0" + kind.encode() + b"\0" + content + b"\0" for path, kind, content in sorted(records))
     return hashlib.sha256(payload).hexdigest()
 
 
 def _generated_tree_digest(changelog_path, bindings):
-    return _generated_tree_digest_bytes(changelog_path.read_bytes(), bindings)
+    return generated_tree_digest(changelog_path.read_bytes(), bindings)
 
 
 def verify_release_tree(source_sha, merged_sha, manifest):
@@ -152,7 +153,7 @@ def verify_release_tree(source_sha, merged_sha, manifest):
     changelog = subprocess.run(["git", "show", f"{merged_sha}:CHANGELOG.md"], cwd=ROOT, check=True, capture_output=True).stdout
     if manifest.get("changelog_sha256") != hashlib.sha256(changelog).hexdigest():
         raise ValueError("merged CHANGELOG.md digest does not match manifest")
-    expected = _generated_tree_digest_bytes(changelog, bindings)
+    expected = generated_tree_digest(changelog, bindings)
     if manifest.get("generated_tree") != expected:
         raise ValueError("merged generated tree digest does not match manifest")
     return True
@@ -189,7 +190,7 @@ def release_snapshot(source_sha, date=None):
         "fragments": [{key: item[key] for key in ("path", "blob_sha")} for item in bindings],
         "changelog_sha256": _sha256(changelog_path),
         "generated_tree": generated_tree_sha,
-        "publication": {"artifacts": [], "build_command": "true"},
+        "publication": {"version": version, "source_main_sha": source_sha},
     }
     manifest_path = ROOT / MANIFEST_PATH
     manifest_path.parent.mkdir(parents=True, exist_ok=True)

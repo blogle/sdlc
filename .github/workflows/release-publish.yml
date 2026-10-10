@@ -132,8 +132,19 @@ jobs:
           version="$(jq -r .version .sdlc/release.json)"
           nix develop -c just release-publish "$version"
       - name: Record completed publication
+        env:
+          GH_TOKEN: ${{ steps.release-app.outputs.token }}
+          MERGED_SHA: ${{ inputs.merged_sha }}
         run: |
           set -euo pipefail
+          version="$(jq -r .version .sdlc/release.json)"
+          tag="v${version}"
+          asset="sdlc-source-${version}-${MERGED_SHA}.tar.gz"
+          release_json="$(gh release view "$tag" --json isDraft,isPrerelease,assets)"
+          [[ "$(jq -r '.isDraft' <<<"$release_json")" == false ]] || { echo 'GitHub Release is still draft' >&2; exit 1; }
+          [[ "$(jq -r '.isPrerelease' <<<"$release_json")" == false ]] || { echo 'GitHub Release is prerelease' >&2; exit 1; }
+          asset_digest="$(jq -r --arg asset "$asset" '.assets[] | select(.name == $asset) | .digest // empty' <<<"$release_json")"
+          [[ "$asset_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo 'published immutable asset digest is missing' >&2; exit 1; }
           python3 - <<'PY'
           import json
           import sys

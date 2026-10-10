@@ -5,8 +5,11 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
+import src.release_gate as release_gate
 from src.release_gate import Check, GateError, PullRequest, evaluate_release_gate, merge_release_pr, verify_candidate, verify_protection
+from src.sdlc import generated_tree_digest
 
 
 PROTECTION = {"classic": True, "contexts": ["sdlc / pr-fast"], "bypass_actors": []}
@@ -78,13 +81,13 @@ class ReleaseGateTests(unittest.TestCase):
     def test_manifest_uses_canonical_coordinator_schema_and_replays_twice(self):
         changelog = b"# Changelog\n\n## [1.0.0]\n"
         manifest = {
-            "schemaVersion": 1,
+            "schema": 1,
             "version": "1.0.0",
             "prior_released_boundary": None,
             "source_main_sha": "main",
             "fragments": [{"path": ".changes/one.json", "blob_sha": "a" * 40}],
             "changelog_sha256": hashlib.sha256(changelog).hexdigest(),
-            "generated_tree_sha256": hashlib.sha256(b"CHANGELOG.md\0" + changelog).hexdigest(),
+            "generated_tree": generated_tree_digest(changelog, [{"path": ".changes/one.json", "blob_sha": "a" * 40}]),
             "publication": {"version": "1.0.0", "source_main_sha": "main"},
         }
         calls = []
@@ -104,7 +107,8 @@ class ReleaseGateTests(unittest.TestCase):
                 return changelog
             raise AssertionError(args)
 
-        verify_candidate("main", "head", manifest, git=git, planner=planner)
+        with patch.object(release_gate, "verify_release_tree"):
+            verify_candidate("main", "head", manifest, git=git, planner=planner)
         self.assertEqual(calls, ["main", "main"])
 
     def test_merge_rechecks_live_base_and_expected_head(self):

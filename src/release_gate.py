@@ -21,6 +21,11 @@ import tempfile
 from contextlib import redirect_stdout
 from typing import Any, Callable, Iterable, Mapping
 
+try:
+    from sdlc import verify_release_tree
+except ModuleNotFoundError:
+    from .sdlc import verify_release_tree
+
 
 RELEASE_BRANCH = "sdlc/release-next"
 RELEASE_CHECK = "sdlc / release-gate"
@@ -218,8 +223,8 @@ def _fragment_paths(manifest: Mapping[str, Any]) -> list[str]:
 
 def verify_candidate(source_sha: str, head_sha: str, manifest: Mapping[str, Any], *, git: Callable[..., str | bytes] = _git, planner: Callable[[str], Mapping[str, Any]] = replay_snapshot) -> None:
     """Replay the canonical planner and prove the candidate changed only its output."""
-    if manifest.get("schemaVersion") != 1:
-        raise GateError("release manifest schemaVersion must be 1")
+    if manifest.get("schema") != 1:
+        raise GateError("release manifest schema must be 1")
     if manifest.get("source_main_sha") != source_sha:
         raise GateError("manifest source_main_sha does not match current main")
     paths = _fragment_paths(manifest)
@@ -246,9 +251,10 @@ def verify_candidate(source_sha: str, head_sha: str, manifest: Mapping[str, Any]
     changelog = git("show", f"{head_sha}:CHANGELOG.md", raw=True)
     if manifest.get("changelog_sha256") != hashlib.sha256(changelog).hexdigest():
         raise GateError("CHANGELOG.md digest does not match manifest")
-    generated_tree = hashlib.sha256(b"CHANGELOG.md\0" + changelog).hexdigest()
-    if manifest.get("generated_tree_sha256") != generated_tree:
-        raise GateError("generated tree digest does not match manifest")
+    try:
+        verify_release_tree(source_sha, head_sha, manifest)
+    except (ValueError, subprocess.CalledProcessError) as exc:
+        raise GateError(f"shared coordinator tree verification failed: {exc}") from exc
 
 
 def evaluate_release_gate(*, pr: PullRequest, authenticated_login: str, app_slug: str, main_sha: str, parent_sha: str | None, checks: Iterable[Check], manifest: Mapping[str, Any] | None, release_bot_login: str, repository: str, protection: Mapping[str, Any], planner: Callable[[str], Mapping[str, Any]] = replay_snapshot) -> None:

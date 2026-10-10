@@ -10,13 +10,16 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from sdlc import generated_tree_digest, verify_release_tree
 
 
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 HEX256_RE = re.compile(r"^[0-9a-f]{64}$")
 VERSION_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 FRAGMENT_RE = re.compile(r"^\.changes/[^/]+\.json$")
-GENERATED_FILES = ("CHANGELOG.md",)
 
 
 class IdentityError(ValueError):
@@ -39,14 +42,6 @@ def _sha(value: object, label: str) -> str:
     return value
 
 
-def generated_files_digest(files: dict[str, bytes]) -> str:
-    """Hash generated files without including the self-referential manifest."""
-    if tuple(sorted(files)) != GENERATED_FILES:
-        raise IdentityError("generated file set does not match the publisher contract")
-    payload = b"".join(path.encode() + b"\0" + files[path] for path in sorted(files))
-    return hashlib.sha256(payload).hexdigest()
-
-
 def validate_identity(
     manifest: dict,
     *,
@@ -59,8 +54,8 @@ def validate_identity(
     changelog: bytes,
 ) -> ReleaseIdentity:
     """Validate the canonical updater manifest against the actual merged tree."""
-    if manifest.get("schemaVersion") != 1:
-        raise IdentityError("release manifest schemaVersion must be 1")
+    if manifest.get("schema") != 1:
+        raise IdentityError("release manifest schema must be 1")
     version = manifest.get("version")
     if not isinstance(version, str) or not VERSION_RE.fullmatch(version):
         raise IdentityError("release manifest has an invalid semantic version")
@@ -97,8 +92,8 @@ def validate_identity(
     changelog_digest = hashlib.sha256(changelog).hexdigest()
     if manifest.get("changelog_sha256") != changelog_digest:
         raise IdentityError("merged CHANGELOG.md digest does not match manifest")
-    if manifest.get("generated_tree_sha256") != generated_files_digest({"CHANGELOG.md": changelog}):
-        raise IdentityError("generated_tree_sha256 does not match manifest")
+    if manifest.get("generated_tree") != generated_tree_digest(changelog, [{"path": path, "blob_sha": blob} for path, blob in bindings]):
+        raise IdentityError("generated_tree does not match manifest")
     publication = manifest.get("publication")
     if publication != {"version": version, "source_main_sha": source}:
         raise IdentityError("manifest publication must contain only version and source_main_sha")
@@ -206,6 +201,10 @@ def validate_checkout(commit: str) -> ReleaseIdentity:
     tree = git("rev-parse", f"{commit}^{{tree}}")
     manifest = json.loads(subprocess.run(["git", "show", f"{commit}:.sdlc/release.json"], check=True, capture_output=True, text=True).stdout)
     changelog = subprocess.run(["git", "show", f"{commit}:CHANGELOG.md"], check=True, capture_output=True).stdout
+    try:
+        verify_release_tree(parent, commit, manifest)
+    except (ValueError, subprocess.CalledProcessError) as exc:
+        raise IdentityError(f"shared coordinator tree verification failed: {exc}") from exc
     return validate_identity(
         manifest,
         merged_sha=commit,

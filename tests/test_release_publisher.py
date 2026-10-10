@@ -7,6 +7,8 @@ import sys
 import tempfile
 import unittest
 
+from src.sdlc import generated_tree_digest
+
 
 SPEC = importlib.util.spec_from_file_location(
     "release_publisher", Path(__file__).parents[1] / "src/release_publisher.py"
@@ -20,12 +22,12 @@ class PublisherTests(unittest.TestCase):
         changelog = b"# Changelog\n\n## [1.0.0]\n"
         fragment = "0" * 40
         return {
-            "schemaVersion": 1,
+            "schema": 1,
             "version": "1.0.0",
             "source_main_sha": "1" * 40,
             "fragments": [{"path": ".changes/one.json", "blob_sha": fragment}],
             "changelog_sha256": hashlib.sha256(changelog).hexdigest(),
-            "generated_tree_sha256": publisher.generated_files_digest({"CHANGELOG.md": changelog}),
+            "generated_tree": generated_tree_digest(changelog, [{"path": ".changes/one.json", "blob_sha": fragment}]),
             "publication": {"version": "1.0.0", "source_main_sha": "1" * 40},
         }, changelog
 
@@ -56,7 +58,7 @@ class PublisherTests(unittest.TestCase):
                 changed_paths={"CHANGELOG.md", ".sdlc/release.json", ".changes/one.json"},
                 changelog=changelog + b"mutated",
             )
-        manifest["generated_tree_sha256"] = "9" * 64
+        manifest["generated_tree"] = "9" * 64
         with self.assertRaisesRegex(publisher.IdentityError, "generated_tree"):
             publisher.validate_identity(
                 manifest,
@@ -112,13 +114,13 @@ class PublisherTests(unittest.TestCase):
             changelog = b"# Changelog\n\n## [1.0.0]\n\n- **fix**: one\n"
             (root / "CHANGELOG.md").write_bytes(changelog)
             manifest = {
-                "schemaVersion": 1,
+                "schema": 1,
                 "version": "1.0.0",
                 "prior_released_boundary": None,
                 "source_main_sha": source,
                 "fragments": [{"path": ".changes/one.json", "blob_sha": subprocess.run(["git", "rev-parse", f"{source}:.changes/one.json"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()}],
                 "changelog_sha256": hashlib.sha256(changelog).hexdigest(),
-                "generated_tree_sha256": publisher.generated_files_digest({"CHANGELOG.md": changelog}),
+                "generated_tree": generated_tree_digest(changelog, [{"path": ".changes/one.json", "blob_sha": subprocess.run(["git", "rev-parse", f"{source}:.changes/one.json"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()}]),
                 "publication": {"version": "1.0.0", "source_main_sha": source},
             }
             (root / ".sdlc").mkdir()
@@ -153,6 +155,8 @@ class PublisherTests(unittest.TestCase):
         self.assertIn("gh release upload", workflow)
         self.assertIn("git archive --format=tar.gz", workflow)
         self.assertIn("sdlc-source-${version}-${MERGED_SHA}.tar.gz", workflow)
+        self.assertIn("isDraft", workflow)
+        self.assertIn("published immutable asset digest is missing", workflow)
         self.assertNotIn("ledger_artifact", workflow)
         self.assertNotIn('gh release download "$tag" --pattern "$asset" --dir .sdlc --clobber', workflow)
         self.assertIn("git merge-base --is-ancestor \"$MERGED_SHA\" FETCH_HEAD", workflow)

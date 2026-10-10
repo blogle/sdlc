@@ -115,7 +115,7 @@ class ChangelogTests(unittest.TestCase):
                 self.assertEqual(manifest["schema"], 1)
                 self.assertIn("generated_tree", manifest)
                 self.assertNotIn("generated_tree_sha256", manifest)
-                self.assertEqual(manifest["publication"], {"artifacts": [], "build_command": "true"})
+                self.assertEqual(manifest["publication"], {"version": manifest["version"], "source_main_sha": source})
                 self.assertEqual(manifest["version"], "1.0.0")
                 self.assertEqual([item["path"] for item in manifest["fragments"]], [".changes/a.json", ".changes/b.json", ".changes/c.json"])
                 self.assertEqual([item["blob_sha"] for item in manifest["fragments"]], [
@@ -225,7 +225,7 @@ class ConsumerWorkflowTests(unittest.TestCase):
         self.assertIn("policy check --repo", workflow)
         self.assertIn("ruleset has been applied and read back successfully", workflow)
         self.assertNotIn("committed release manifest awaiting publication", workflow)
-        for field in ("schema=1", "prior_released_boundary", "source_main_sha", "generated_tree", "changelog_sha256", "publication{artifacts, build_command}"):
+        for field in ("schema=1", "prior_released_boundary", "source_main_sha", "generated_tree", "changelog_sha256", "publication{version, source_main_sha}"):
             self.assertIn(field, workflow)
         self.assertNotIn("committed release manifest awaiting publication", workflow)
 
