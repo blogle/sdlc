@@ -109,7 +109,7 @@ class ReleaseGateTests(unittest.TestCase):
             release_gate._required_check(checks, "sdlc / pr-fast", "head", "trusted")
 
     def test_check_api_is_paginated_and_preserves_completion_metadata(self):
-        response = json.dumps([[{"name": "sdlc / pr-fast", "conclusion": "success", "head_sha": "head", "id": 7, "completed_at": "2026-10-10T01:00:00Z", "app": {"slug": "ci"}}]])
+        response = json.dumps([{"total_count": 1, "check_runs": [{"name": "sdlc / pr-fast", "conclusion": "success", "head_sha": "head", "id": 7, "completed_at": "2026-10-10T01:00:00Z", "app": {"slug": "ci"}}]}])
         with patch.object(release_gate.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, response, "")) as run:
             checks = release_gate._checks("blogle/sdlc", "head")
         self.assertEqual(checks[0].check_id, 7)

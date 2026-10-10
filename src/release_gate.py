@@ -108,8 +108,17 @@ def _checks(repo: str, sha: str) -> list[Check]:
         pages = json.loads(result.stdout)
     except (subprocess.CalledProcessError, json.JSONDecodeError) as exc:
         raise GateError(f"paginated GitHub check data unavailable for {sha}") from exc
-    if not isinstance(pages, list) or any(not isinstance(page, list) for page in pages):
+    if not isinstance(pages, list) or any(
+        not isinstance(page, dict) or not isinstance(page.get("check_runs"), list)
+        for page in pages
+    ):
         raise GateError(f"ambiguous paginated GitHub check data for {sha}")
+    items = [item for page in pages for item in page["check_runs"]]
+    if any(not isinstance(item, dict) or not isinstance(item.get("id"), int) or not isinstance(item.get("completed_at"), str) or not item["completed_at"] for item in items):
+        raise GateError(f"ambiguous GitHub check metadata for {sha}")
+    ids = [item["id"] for item in items]
+    if len(ids) != len(set(ids)):
+        raise GateError(f"duplicate paginated GitHub checks for {sha}")
     return [
         Check(
             item.get("name", ""),
@@ -119,8 +128,7 @@ def _checks(repo: str, sha: str) -> list[Check]:
             item.get("id"),
             item.get("completed_at"),
         )
-        for page in pages
-        for item in page
+        for item in items
     ]
 
 
