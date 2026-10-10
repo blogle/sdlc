@@ -1,5 +1,0 @@
-{
-  "type": "feature",
-  "semver": "minor",
-  "summary": "Automatically enqueue Mergify-eligible pull requests while retaining GitHub ruleset and candidate validation gates"
-}

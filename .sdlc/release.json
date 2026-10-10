@@ -1,0 +1,18 @@
+{
+  "changelog_sha256": "620f04fc33b87b4287dfdbf756477f9a844bf5a34b70a70e70f2f090df8da876",
+  "fragments": [
+    {
+      "blob_sha": "89ca215a23803111a3a6883000b77ad3d01d4814",
+      "path": ".changes/mergify-auto-progression.json"
+    }
+  ],
+  "generated_tree": "0b9a34200eb95431c9a904eb8aab9bbdca192167a255057b0c96bbc4ad347b0e",
+  "prior_released_boundary": null,
+  "publication": {
+    "source_main_sha": "be79bf361e632086fee5a42d48ca64a9d0f84327",
+    "version": "1.2.0"
+  },
+  "schema": 1,
+  "source_main_sha": "be79bf361e632086fee5a42d48ca64a9d0f84327",
+  "version": "1.2.0"
+}
