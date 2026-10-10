@@ -54,7 +54,7 @@ jobs:
         run: |
           set -euo pipefail
           rulesets="$(gh api "repos/${REPOSITORY}/rulesets" --paginate)"
-          REPOSITORY="$REPOSITORY" python3 -c 'import json,os,sys; data=json.load(sys.stdin); repo=os.environ["REPOSITORY"]; matches=[x for x in data if x.get("name") == "SDLC default branch" and x.get("source", repo) == repo and x.get("enforcement") == "active"]; raise SystemExit("canonical active ruleset missing; refusing publication") if len(matches) != 1 else None' <<<"$rulesets"
+          REPOSITORY="$REPOSITORY" python3 -c 'import json,os,sys; data=json.load(sys.stdin); repo=os.environ["REPOSITORY"]; matches=[x for x in data if x.get("name") == "SDLC default branch" and x.get("source", repo) == repo and x.get("enforcement") == "active"]; sys.exit("canonical active ruleset missing; refusing publication") if len(matches) != 1 else None' <<<"$rulesets"
           nix run .#sdlc -- policy check --repo "$REPOSITORY"
           git fetch origin main --tags
           test "$(git rev-parse HEAD)" = "$MERGED_SHA"
