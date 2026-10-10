@@ -67,6 +67,24 @@ class ReleaseGateTests(unittest.TestCase):
                 checks=(), manifest={}, release_bot_login="release-bot[bot]", repository="blogle/sdlc", protection=PROTECTION,
             )
 
+    def test_installation_auth_uses_supported_provenance_endpoints_only(self):
+        with patch.object(release_gate, "_gh_json", side_effect=lambda endpoint: {
+            "installation/repositories?per_page=100": {"repositories": [{"full_name": "blogle/sdlc"}]},
+        }[endpoint]) as api:
+            self.assertEqual(
+                release_gate._authenticated_app("release-bot[bot]", "release-bot", "blogle/sdlc"),
+                ("release-bot[bot]", "release-bot"),
+            )
+            self.assertEqual(api.call_args_list[0].args[0], "installation/repositories?per_page=100")
+            self.assertNotIn("user", [call.args[0] for call in api.call_args_list])
+            self.assertNotIn("app", [call.args[0] for call in api.call_args_list])
+
+    def test_installation_auth_rejects_wrong_configured_bot_or_repository(self):
+        with self.assertRaisesRegex(GateError, "configured release bot"):
+            release_gate._authenticated_app("other[bot]", "release-bot", "blogle/sdlc")
+        with patch.object(release_gate, "_gh_json", return_value={"repositories": []}), self.assertRaisesRegex(GateError, "cannot access"):
+            release_gate._authenticated_app("release-bot[bot]", "release-bot", "blogle/sdlc")
+
     def test_required_check_must_be_successful_for_exact_head(self):
         with self.assertRaisesRegex(GateError, "exact head"):
             evaluate_release_gate(
@@ -141,6 +159,8 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertIn("jq -r '.pull_request.head.sha'", workflow)
         self.assertIn("repos/$GITHUB_REPOSITORY/check-runs", workflow)
         self.assertNotIn("GITHUB_EVENT_PULL_REQUEST_HEAD_SHA", workflow)
+        self.assertNotIn("if: github.event.pull_request.head.ref == 'sdlc/release-next'", workflow)
+        self.assertIn("steps.release-app.outputs.app-slug", workflow)
 
 
 if __name__ == "__main__":

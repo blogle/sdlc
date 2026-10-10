@@ -2,6 +2,16 @@ name: SDLC rolling release reconcile
 on:
   workflow_call:
     inputs:
+      merged_sha:
+        description: Actual squash-merged release commit on main
+        type: string
+        required: false
+        default: ""
+      activate:
+        description: Explicit production activation after credential verification
+        type: boolean
+        required: false
+        default: false
       publish_version:
         description: Reserved for the post-merge publisher; milestone 1/2 fail closed.
         type: string
@@ -12,6 +22,17 @@ on:
         required: true
       SDLC_RELEASE_APP_PRIVATE_KEY:
         required: true
+  workflow_dispatch:
+    inputs:
+      merged_sha:
+        description: Actual squash-merged release commit on main
+        required: true
+        type: string
+      activate:
+        description: Explicit production activation after credential verification
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -24,15 +45,20 @@ concurrency:
 
 jobs:
   reconcile:
-    if: inputs.publish_version == ''
+    if: inputs.publish_version == '' && inputs.merged_sha == ''
     uses: ./.github/workflows/release-reconcile.yml
     secrets: inherit
 
+  publish:
+    if: inputs.merged_sha != '' && inputs.publish_version == ''
+    uses: ./.github/workflows/release-publish.yml
+    with:
+      merged_sha: ${{ inputs.merged_sha }}
+      activate: ${{ inputs.activate }}
+    secrets: inherit
   publication-not-implemented:
     if: inputs.publish_version != ''
     runs-on: ubuntu-latest
     steps:
-      - name: Fail closed until post-merge publication is implemented
-        run: |
-          printf 'publish_version=%s is unavailable in rolling-release milestones 1/2\n' '${{ inputs.publish_version }}' >&2
-          exit 1
+      - name: Fail closed for the retired publication input
+        run: printf 'publish_version is retired; provide actual merged_sha\n' >&2; exit 1

@@ -160,6 +160,9 @@ class PublisherTests(unittest.TestCase):
         self.assertNotIn("ledger_artifact", workflow)
         self.assertNotIn('gh release download "$tag" --pattern "$asset" --dir .sdlc --clobber', workflow)
         self.assertIn("git merge-base --is-ancestor \"$MERGED_SHA\" FETCH_HEAD", workflow)
+        self.assertIn("gh auth setup-git", workflow)
+        self.assertIn("GH_TOKEN: ${{ steps.release-app.outputs.token }}", workflow)
+        self.assertLess(workflow.index("Prepare one immutable source artifact"), workflow.index("Create or verify exact annotated version tag"))
 
 
 if __name__ == "__main__":

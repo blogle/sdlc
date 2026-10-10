@@ -249,6 +249,13 @@ class ConsumerWorkflowTests(unittest.TestCase):
         self.assertIn("gh pr edit \"$number\"", workflow)
         self.assertNotIn("gh pr create", workflow.split("if [[ -n \"$number\" ]]", 1)[0])
 
+    def test_release_merge_wakes_from_trusted_workflow_and_records_actual_sha(self):
+        workflow = (Path(__file__).parents[1] / ".github/workflows/release-merge.yml").read_text()
+        self.assertIn("workflow_run:", workflow)
+        self.assertNotIn("check_run:", workflow)
+        self.assertIn(".merge_commit_sha", workflow)
+        self.assertIn("gh workflow run release.yml", workflow)
+
 
 class RepositoryPolicyTests(unittest.TestCase):
     def test_renderer_builds_complete_canonical_ruleset(self):

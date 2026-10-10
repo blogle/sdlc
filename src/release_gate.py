@@ -145,13 +145,19 @@ def _protection(repo: str, branch: str) -> Mapping[str, Any]:
     return {"classic": bool(classic), "rulesets": rulesets, "contexts": contexts, "strict": strict, "bypass_actors": bypass}
 
 
-def _authenticated_app(release_bot_login: str) -> tuple[str, str]:
-    user = _gh_json("user")
-    app = _gh_json("app")
-    slug = app.get("slug", "")
-    if user.get("login") != release_bot_login or user.get("login") != f"{slug}[bot]":
-        raise GateError("authenticated token is not the configured release GitHub App")
-    return user["login"], slug
+def _authenticated_app(release_bot_login: str, app_slug: str, repository: str) -> tuple[str, str]:
+    """Validate the trusted action output and installation repository access.
+
+    Installation tokens deliberately cannot call ``/app`` or ``/user``.  The
+    app slug comes from create-github-app-token's trusted step output, while
+    this endpoint proves that the installation can access this repository.
+    """
+    if not app_slug or release_bot_login != f"{app_slug}[bot]":
+        raise GateError("configured release bot does not match the authenticated release App")
+    repositories = _gh_json("installation/repositories?per_page=100").get("repositories", [])
+    if not any(item.get("full_name") == repository for item in repositories):
+        raise GateError("authenticated release App installation cannot access this repository")
+    return release_bot_login, app_slug
 
 
 def _manifest_at(repo: str, sha: str) -> Mapping[str, Any]:
@@ -322,7 +328,7 @@ def _gate_command(args: argparse.Namespace) -> int:
     pr = _pull_request(args.repo, args.pr)
     if pr.head_branch != RELEASE_BRANCH:
         return 0
-    login, slug = _authenticated_app(args.release_bot)
+    login, slug = _authenticated_app(args.release_bot, args.app_slug, args.repo)
     repo = _gh_json(f"repos/{args.repo}")
     main = _gh_json(f"repos/{args.repo}/commits/{repo['default_branch']}")
     commit = _gh_json(f"repos/{args.repo}/commits/{pr.head_sha}")
@@ -345,7 +351,7 @@ def _merge_command(args: argparse.Namespace) -> int:
     pr = _pull_request(args.repo, args.pr)
     if pr.head_branch != RELEASE_BRANCH:
         raise GateError("target PR is not the release PR")
-    login, slug = _authenticated_app(args.release_bot)
+    login, slug = _authenticated_app(args.release_bot, args.app_slug, args.repo)
     if login != args.release_bot:
         raise GateError("authenticated App does not match release bot")
     api = GithubMergeApi(args.repo, "main", slug)
@@ -364,6 +370,7 @@ def main() -> int:
         command.add_argument("--repo", required=True)
         command.add_argument("--pr", type=int, required=True)
         command.add_argument("--release-bot", required=True)
+        command.add_argument("--app-slug", default="")
     commands.choices["merge"].add_argument("--expected-head")
     args = parser.parse_args()
     try:

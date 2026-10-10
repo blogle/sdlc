@@ -6,15 +6,15 @@ name: SDLC merged release publisher
 on:
   workflow_call:
     inputs:
-      merged_sha:
-        description: Actual squash-merged release commit on main
-        required: true
-        type: string
       activate:
         description: Explicit opt-in after updater and release-gate rollout
         required: false
         type: boolean
         default: false
+      merged_sha:
+        description: Actual squash-merged release commit on main
+        required: true
+        type: string
     secrets:
       SDLC_RELEASE_APP_ID:
         required: true
@@ -60,11 +60,29 @@ jobs:
           test "$(git rev-parse HEAD)" = "$MERGED_SHA"
           git merge-base --is-ancestor "$MERGED_SHA" FETCH_HEAD
           python3 src/release_publisher.py "$MERGED_SHA" > identity.json
-      - name: Create or verify exact annotated version tag
+      - name: Prepare one immutable source artifact
         env:
+          GH_TOKEN: ${{ steps.release-app.outputs.token }}
           MERGED_SHA: ${{ inputs.merged_sha }}
         run: |
           set -euo pipefail
+          mkdir -p .sdlc
+          version="$(jq -r .version .sdlc/release.json)"
+          asset="sdlc-source-${version}-${MERGED_SHA}.tar.gz"
+          if gh release view "v${version}" --json assets >/dev/null 2>&1 && \
+             gh release view "v${version}" --json assets --jq ".assets[] | select(.name == \"$asset\") | .id" | grep -q .; then
+            gh release download "v${version}" --pattern "$asset" --dir .sdlc
+          else
+            git archive --format=tar.gz --output ".sdlc/$asset" "$MERGED_SHA"
+          fi
+          printf 'asset=%s\n' "$asset" > .sdlc/artifact.env
+      - name: Create or verify exact annotated version tag
+        env:
+          GH_TOKEN: ${{ steps.release-app.outputs.token }}
+          MERGED_SHA: ${{ inputs.merged_sha }}
+        run: |
+          set -euo pipefail
+          gh auth setup-git
           version="$(jq -r .version .sdlc/release.json)"
           tag="v${version}"
           if git show-ref --verify --quiet "refs/tags/$tag"; then
@@ -84,24 +102,21 @@ jobs:
           if ! gh release view "$tag" >/dev/null 2>&1; then
             gh release create "$tag" --verify-tag --draft --title "$tag" --notes "Release $tag from the verified merged commit $MERGED_SHA."
           fi
-      - name: Read or build one immutable source artifact
+      - name: Persist artifact bytes without overwriting
         env:
           GH_TOKEN: ${{ steps.release-app.outputs.token }}
           MERGED_SHA: ${{ inputs.merged_sha }}
         run: |
           set -euo pipefail
-          mkdir -p .sdlc
+          source .sdlc/artifact.env
           version="$(jq -r .version .sdlc/release.json)"
           tag="v${version}"
-          asset="sdlc-source-${version}-${MERGED_SHA}.tar.gz"
           asset_id="$(gh release view "$tag" --json assets --jq ".assets[] | select(.name == \"$asset\") | .id" || true)"
-          if [[ -n "$asset_id" ]]; then
-            gh release download "$tag" --pattern "$asset" --dir .sdlc
-          else
-            git archive --format=tar.gz --output ".sdlc/$asset" "$MERGED_SHA"
-            # No --clobber: a concurrent or interrupted upload must be read
-            # and verified on the next serialized retry, never replaced.
+          if [[ -z "$asset_id" ]]; then
             gh release upload "$tag" ".sdlc/$asset"
+          else
+            rm -f ".sdlc/$asset"
+            gh release download "$tag" --pattern "$asset" --dir .sdlc
           fi
           digest="$(sha256sum ".sdlc/$asset" | cut -d' ' -f1)"
           remote_digest="$(gh release view "$tag" --json assets --jq ".assets[] | select(.name == \"$asset\") | .digest // \"\"" || true)"
@@ -126,6 +141,7 @@ jobs:
           retention-days: 90
       - name: Publish exact tag and durable asset through consumer contract
         env:
+          GH_TOKEN: ${{ steps.release-app.outputs.token }}
           SDLC_RELEASE_LEDGER: .sdlc/release-ledger.json
         run: |
           set -euo pipefail
