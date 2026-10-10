@@ -76,7 +76,7 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertEqual(pr.head_type, "User")
         self.assertEqual(pr.author_login, "sdlc-release[bot]")
         self.assertEqual(pr.author_type, "Bot")
-        api = FakeApi("main", pr, [Check("sdlc / pr-fast", "success", "head"), Check("sdlc / release-gate", "success", "head", "sdlc-release")], "sdlc-release")
+        api = FakeApi("main", pr, [Check("sdlc / pr-fast", "success", "head", check_id=1, completed_at="2026-10-10T01:00:00Z"), Check("sdlc / release-gate", "success", "head", "sdlc-release", 2, "2026-10-10T01:00:00Z")], "sdlc-release")
         merge_release_pr(api=api, pr_number=14, expected_head_sha="head", current_main_sha="main", release_bot_login="sdlc-release[bot]")
 
     def test_same_repository_release_pr_by_human_is_rejected(self):
@@ -84,6 +84,49 @@ class ReleaseGateTests(unittest.TestCase):
         api = FakeApi("main", pr, [])
         with self.assertRaisesRegex(GateError, "release App"):
             merge_release_pr(api=api, pr_number=14, expected_head_sha="head", current_main_sha="main", release_bot_login="sdlc-release[bot]")
+
+    def test_latest_failure_invalidates_older_success_for_exact_head(self):
+        checks = [
+            Check("sdlc / pr-fast", "success", "head", "ci", 10, "2026-10-10T01:00:00Z"),
+            Check("sdlc / pr-fast", "failure", "head", "ci", 11, "2026-10-10T02:00:00Z"),
+        ]
+        with self.assertRaisesRegex(GateError, "latest required check"):
+            release_gate._required_check(checks, "sdlc / pr-fast", "head", "ci")
+
+    def test_new_success_after_failure_authorizes_exact_head(self):
+        checks = [
+            Check("sdlc / pr-fast", "failure", "head", "ci", 10, "2026-10-10T01:00:00Z"),
+            Check("sdlc / pr-fast", "success", "head", "ci", 11, "2026-10-10T02:00:00Z"),
+        ]
+        release_gate._required_check(checks, "sdlc / pr-fast", "head", "ci")
+
+    def test_success_from_another_app_cannot_override_latest_failure(self):
+        checks = [
+            Check("sdlc / pr-fast", "failure", "head", "trusted", 10, "2026-10-10T02:00:00Z"),
+            Check("sdlc / pr-fast", "success", "head", "attacker", 11, "2026-10-10T03:00:00Z"),
+        ]
+        with self.assertRaisesRegex(GateError, "not successful"):
+            release_gate._required_check(checks, "sdlc / pr-fast", "head", "trusted")
+
+    def test_check_api_is_paginated_and_preserves_completion_metadata(self):
+        response = json.dumps([[{"name": "sdlc / pr-fast", "conclusion": "success", "head_sha": "head", "id": 7, "completed_at": "2026-10-10T01:00:00Z", "app": {"slug": "ci"}}]])
+        with patch.object(release_gate.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, response, "")) as run:
+            checks = release_gate._checks("blogle/sdlc", "head")
+        self.assertEqual(checks[0].check_id, 7)
+        self.assertIn("--paginate", run.call_args.args[0])
+        self.assertIn("--slurp", run.call_args.args[0])
+
+    def test_raw_git_output_preserves_newline_terminated_changelog_bytes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            subprocess.run(["git", "init", "-q"], cwd=temp, check=True)
+            subprocess.run(["git", "config", "user.name", "test"], cwd=temp, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=temp, check=True)
+            changelog = Path(temp) / "CHANGELOG.md"
+            changelog.write_bytes(b"# Changelog\n")
+            subprocess.run(["git", "add", "CHANGELOG.md"], cwd=temp, check=True)
+            subprocess.run(["git", "commit", "-qm", "source"], cwd=temp, check=True)
+            commit = release_gate._git("rev-parse", "HEAD", cwd=temp)
+            self.assertEqual(release_gate._git("show", f"{commit}:CHANGELOG.md", cwd=temp, raw=True), b"# Changelog\n")
 
     def test_installation_auth_uses_supported_provenance_endpoints_only(self):
         with patch.object(release_gate, "_gh_json", side_effect=lambda endpoint: {
@@ -107,7 +150,7 @@ class ReleaseGateTests(unittest.TestCase):
         with self.assertRaisesRegex(GateError, "exact head"):
             evaluate_release_gate(
                 pr=self.release_pr(), authenticated_login="release-bot[bot]", app_slug="release-bot", main_sha="main", parent_sha="main",
-                checks=[Check("sdlc / pr-fast", "success", "old-head")], manifest={}, release_bot_login="release-bot[bot]", repository="blogle/sdlc", protection=PROTECTION,
+                checks=[Check("sdlc / pr-fast", "success", "old-head", check_id=1, completed_at="2026-10-10T01:00:00Z")], manifest={}, release_bot_login="release-bot[bot]", repository="blogle/sdlc", protection=PROTECTION,
             )
 
     def test_missing_protection_fails_closed(self):
@@ -148,18 +191,18 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertEqual(calls, ["main", "main"])
 
     def test_merge_rechecks_live_base_and_expected_head(self):
-        api = FakeApi("new-main", self.release_pr(), [Check("sdlc / pr-fast", "success", "head"), Check("sdlc / release-gate", "success", "head", "release-bot")])
+        api = FakeApi("new-main", self.release_pr(), [Check("sdlc / pr-fast", "success", "head", check_id=1, completed_at="2026-10-10T01:00:00Z"), Check("sdlc / release-gate", "success", "head", "release-bot", 2, "2026-10-10T01:00:00Z")])
         with self.assertRaisesRegex(GateError, "advanced"):
             merge_release_pr(api=api, pr_number=14, expected_head_sha="head", current_main_sha="old-main", release_bot_login="release-bot[bot]")
         self.assertIsNone(api.merge_args)
 
     def test_merge_passes_expected_head_and_requires_app_owned_gate(self):
-        api = FakeApi("main", self.release_pr(), [Check("sdlc / pr-fast", "success", "head"), Check("sdlc / release-gate", "success", "head", "release-bot")])
+        api = FakeApi("main", self.release_pr(), [Check("sdlc / pr-fast", "success", "head", check_id=1, completed_at="2026-10-10T01:00:00Z"), Check("sdlc / release-gate", "success", "head", "release-bot", 2, "2026-10-10T01:00:00Z")])
         merge_release_pr(api=api, pr_number=14, expected_head_sha="head", current_main_sha="main", release_bot_login="release-bot[bot]")
         self.assertEqual(api.merge_args, (14, {"sha": "head", "merge_method": "squash"}))
 
     def test_merge_rejects_same_named_check_from_another_app(self):
-        api = FakeApi("main", self.release_pr(), [Check("sdlc / pr-fast", "success", "head"), Check("sdlc / release-gate", "success", "head", "attacker")])
+        api = FakeApi("main", self.release_pr(), [Check("sdlc / pr-fast", "success", "head", check_id=1, completed_at="2026-10-10T01:00:00Z"), Check("sdlc / release-gate", "success", "head", "attacker", 2, "2026-10-10T01:00:00Z")])
         with self.assertRaisesRegex(GateError, "App"):
             merge_release_pr(api=api, pr_number=14, expected_head_sha="head", current_main_sha="main", release_bot_login="release-bot[bot]")
 
@@ -174,7 +217,7 @@ class ReleaseGateTests(unittest.TestCase):
 
     def test_workflow_uses_event_json_and_head_specific_app_check(self):
         workflow = (Path(__file__).parents[1] / ".github/workflows/release-gate.yml").read_text()
-        self.assertIn("jq -r '.pull_request.head.sha'", workflow)
+        self.assertIn("jq -r '.head.sha'", workflow)
         self.assertIn("repos/$GITHUB_REPOSITORY/check-runs", workflow)
         self.assertNotIn("GITHUB_EVENT_PULL_REQUEST_HEAD_SHA", workflow)
         self.assertNotIn("if: github.event.pull_request.head.ref == 'sdlc/release-next'", workflow)
