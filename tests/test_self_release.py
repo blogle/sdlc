@@ -37,14 +37,15 @@ class SelfReleaseDogfoodTests(unittest.TestCase):
         self.assertIn("sdlc-release-publish-${{ github.repository }}", publisher)
 
     def test_release_merge_without_fragments_is_a_successful_noop_before_publication(self):
-        workflow = (ROOT / ".github/workflows/release-reconcile.yml").read_text()
-        self.assertLess(workflow.index("changelog plan --json"), workflow.index("refs/tags/v$predecessor_version"))
-        self.assertIn('if [[ "$(jq -r \'.release\' <<<"$plan_json")" != true ]]', workflow)
+        reconcile = (ROOT / "src/release_reconcile.py").read_text()
+        body = reconcile[reconcile.index("def reconcile") :]
+        self.assertLess(body.index("if not _has_fragments"), body.index("_verify_predecessor"))
+        self.assertIn("_retire(repo, branch, default_branch)", reconcile)
 
     def test_successor_fragments_stay_blocked_until_predecessor_is_published(self):
-        workflow = (ROOT / ".github/workflows/release-reconcile.yml").read_text()
-        self.assertLess(workflow.index("refs/tags/v$predecessor_version"), workflow.index("release snapshot --source-sha"))
-        self.assertIn("publication predecessor is unreconciled", workflow)
+        reconcile = (ROOT / "src/release_reconcile.py").read_text()
+        self.assertLess(reconcile.index("_verify_predecessor(repo"), reconcile.index("sdlc.release_snapshot"))
+        self.assertIn("publication predecessor is unreconciled", reconcile)
 
     def test_publication_completion_wakes_reconciliation(self):
         workflow = (ROOT / ".github/workflows/self-release.yml").read_text()
@@ -57,7 +58,7 @@ class SelfReleaseDogfoodTests(unittest.TestCase):
 
     def test_publication_failure_keeps_reconciliation_fail_closed(self):
         workflow = (ROOT / ".github/workflows/self-release.yml").read_text()
-        reconcile = (ROOT / ".github/workflows/release-reconcile.yml").read_text()
+        reconcile = (ROOT / "src/release_reconcile.py").read_text()
         self.assertIn("types: [completed]", workflow)
         self.assertIn('"$publisher_conclusion" != skipped', workflow)
         self.assertIn("still draft", reconcile)
@@ -72,9 +73,10 @@ class SelfReleaseDogfoodTests(unittest.TestCase):
 
     def test_publication_wakeup_retry_is_idempotent(self):
         workflow = (ROOT / ".github/workflows/release-reconcile.yml").read_text()
+        reconcile = (ROOT / "src/release_reconcile.py").read_text()
         self.assertIn("cancel-in-progress: false", workflow)
-        self.assertIn("gh pr edit \"$number\"", workflow)
-        self.assertIn("--force-with-lease=refs/heads/$branch:$old", workflow)
+        self.assertIn('"pr", "edit"', reconcile)
+        self.assertIn("--force-with-lease=refs/heads/{branch}:{old}", reconcile)
 
 
 if __name__ == "__main__":

@@ -12,6 +12,11 @@ on:
         type: boolean
         required: false
         default: false
+      sdlc_ref:
+        description: Pinned SDLC flake reference, or empty for the trusted checkout
+        type: string
+        required: false
+        default: ""
     secrets:
       SDLC_RELEASE_APP_ID:
         required: true
@@ -28,6 +33,11 @@ on:
         required: true
         type: boolean
         default: false
+      sdlc_ref:
+        description: Pinned SDLC flake reference, or empty for the trusted checkout
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -37,6 +47,8 @@ jobs:
   reconcile:
     if: inputs.merged_sha == ''
     uses: ./.github/workflows/release-reconcile.yml
+    with:
+      sdlc_ref: ${{ inputs.sdlc_ref }}
     secrets: inherit
 
   publish:
@@ -45,4 +57,5 @@ jobs:
     with:
       merged_sha: ${{ inputs.merged_sha }}
       activate: ${{ inputs.activate }}
+      sdlc_ref: ${{ inputs.sdlc_ref }}
     secrets: inherit

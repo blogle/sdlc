@@ -1,6 +1,18 @@
 name: SDLC release merge
 
 on:
+  workflow_call:
+    inputs:
+      sdlc_ref:
+        description: Pinned SDLC flake reference, or empty for the trusted checkout
+        type: string
+        required: false
+        default: ""
+    secrets:
+      SDLC_RELEASE_APP_ID:
+        required: true
+      SDLC_RELEASE_APP_PRIVATE_KEY:
+        required: true
   workflow_run:
     workflows: [SDLC release gate]
     types: [completed]
@@ -45,11 +57,13 @@ jobs:
           GH_TOKEN: ${{ steps.release-app.outputs.token }}
           RELEASE_BOT_LOGIN: ${{ vars.SDLC_RELEASE_BOT_LOGIN }}
           RELEASE_APP_SLUG: ${{ steps.release-app.outputs.app-slug }}
+          SDLC_FLAKE: ${{ inputs.sdlc_ref != '' && inputs.sdlc_ref || github.workspace }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
-          prs="$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=${GITHUB_REPOSITORY%%/*}:sdlc/release-next" --jq '.[].number')"
-          for pr in $prs; do
-            python3 src/release_gate.py merge --repo "$GITHUB_REPOSITORY" --pr "$pr" --release-bot "$RELEASE_BOT_LOGIN" --app-slug "$RELEASE_APP_SLUG"
+            prs="$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&base=$DEFAULT_BRANCH&head=${GITHUB_REPOSITORY%%/*}:sdlc/release-next" --jq '.[].number')"
+            for pr in $prs; do
+              nix run "$SDLC_FLAKE"#sdlc -- release merge --repo "$GITHUB_REPOSITORY" --pr "$pr" --release-bot "$RELEASE_BOT_LOGIN" --app-slug "$RELEASE_APP_SLUG"
             merged_sha="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq '.merge_commit_sha')"
             [[ "$merged_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "missing actual squash merged SHA" >&2; exit 1; }
             # workflow_dispatch is expressly permitted to be triggered using
