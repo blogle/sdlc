@@ -6,6 +6,11 @@ jobs:
   candidate:
     if: github.event_name == 'merge_group' || startsWith(github.event.pull_request.head.ref, 'mergify/merge-queue/')
     uses: blogle/sdlc/.github/workflows/candidate.yml@v1.0.0
+  # A normal PR cannot publish cache entries visible to another PR.
+  # Rebuild the candidate targets on the default branch after merging.
+  cache-warm:
+    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    uses: blogle/sdlc/.github/workflows/candidate.yml@v1.0.0
   policy:
     if: github.event_name == 'pull_request' || github.event_name == 'push'
     uses: blogle/sdlc/.github/workflows/policy-check.yml@v1.0.0
