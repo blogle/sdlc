@@ -1,0 +1,58 @@
+name: SDLC release App credential preflight
+
+# Temporary, read-only diagnostic. It runs only on this same-repository
+# preflight branch and never exposes or modifies credentials.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  app-credentials:
+    name: Verify release App credentials and permissions
+    if: ${{ github.event.pull_request.head.repo.full_name == 'blogle/sdlc' && github.event.pull_request.head.ref == 'chore/sdlc-app-preflight-20261009' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify credential names available in this Actions context
+        env:
+          RELEASE_APP_ID: ${{ secrets.SDLC_RELEASE_APP_ID }}
+          RELEASE_APP_KEY: ${{ secrets.SDLC_RELEASE_APP_PRIVATE_KEY }}
+          RELEASE_BOT: ${{ vars.SDLC_RELEASE_BOT_LOGIN }}
+        run: |
+          set -euo pipefail
+          [[ -n "$RELEASE_APP_ID" ]] || { echo "::error::SDLC_RELEASE_APP_ID is not configured or accessible"; exit 1; }
+          [[ -n "$RELEASE_APP_KEY" ]] || { echo "::error::SDLC_RELEASE_APP_PRIVATE_KEY is not configured or accessible"; exit 1; }
+          [[ -n "$RELEASE_BOT" ]] || { echo "::error::SDLC_RELEASE_BOT_LOGIN is not configured or accessible"; exit 1; }
+      - name: Obtain read-only release App installation token
+        id: readonly
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.SDLC_RELEASE_APP_ID }}
+          private-key: ${{ secrets.SDLC_RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: read
+      - name: Verify installation token identity and repository scope
+        env:
+          GH_TOKEN: ${{ steps.readonly.outputs.token }}
+          APP_SLUG: ${{ steps.readonly.outputs.app-slug }}
+          RELEASE_BOT: ${{ vars.SDLC_RELEASE_BOT_LOGIN }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_BOT" == "${APP_SLUG}[bot]" ]] || { echo "::error::Release bot login is not derived from the authenticated App slug"; exit 1; }
+          gh api /installation/repositories --paginate --jq '.repositories[].full_name' | grep -Fxq "$GITHUB_REPOSITORY" || { echo "::error::Installation token lacks access to this repository"; exit 1; }
+          echo 'Authenticated release App installation can read this repository.'
+      - name: Verify required production token privileges without mutations
+        id: privilege
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.SDLC_RELEASE_APP_ID }}
+          private-key: ${{ secrets.SDLC_RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-checks: write
+          permission-actions: write
+      - name: Record safe result
+        run: |
+          echo 'Release App secrets, expected bot identity, repository installation, and requested Contents/PR/Checks/Actions write permissions verified.' >> "$GITHUB_STEP_SUMMARY"
