@@ -257,6 +257,8 @@ class ConsumerWorkflowTests(unittest.TestCase):
         self.assertNotIn("check_run:", workflow)
         self.assertIn(".merge_commit_sha", workflow)
         self.assertIn("gh workflow run release.yml", workflow)
+        self.assertIn("DeterminateSystems/nix-installer-action@v23", workflow)
+        self.assertLess(workflow.index("DeterminateSystems/nix-installer-action@v23"), workflow.index('nix run "$SDLC_FLAKE"#sdlc -- release merge'))
 
     def test_release_gate_revalidates_after_successful_ci_completion(self):
         workflow = (Path(__file__).parents[1] / ".github/workflows/release-gate.yml").read_text()
@@ -268,6 +270,8 @@ class ConsumerWorkflowTests(unittest.TestCase):
         self.assertIn(".head.sha", workflow)
         self.assertIn("sdlc / pr-fast", Path(__file__).parents[1].joinpath("src/release_gate.py").read_text())
         self.assertNotIn("check_run:", workflow)
+        self.assertEqual(workflow.count("DeterminateSystems/nix-installer-action@v23"), 2)
+        self.assertLess(workflow.index("DeterminateSystems/nix-installer-action@v23"), workflow.index('nix run "$SDLC_FLAKE"#sdlc -- release gate'))
 
 
 class RepositoryPolicyTests(unittest.TestCase):

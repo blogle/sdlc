@@ -41,6 +41,11 @@ jobs:
           # This is deliberately the trusted base workflow, never PR code.
           fetch-depth: 0
           persist-credentials: false
+      - uses: DeterminateSystems/nix-installer-action@v23
+        with:
+          extra-conf: |
+            substituters = https://cache.nixos.org/ https://nix-community.cachix.org
+            trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=
       - uses: actions/create-github-app-token@v1
         id: release-app
         with:
@@ -99,6 +104,11 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: DeterminateSystems/nix-installer-action@v23
+        with:
+          extra-conf: |
+            substituters = https://cache.nixos.org/ https://nix-community.cachix.org
+            trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=
       - uses: actions/create-github-app-token@v1
         id: release-app
         with:
