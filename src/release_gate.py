@@ -57,6 +57,8 @@ class Check:
     conclusion: str | None
     sha: str
     app_slug: str | None = None
+    check_id: int | None = None
+    completed_at: str | None = None
 
 
 def _git(*args: str, cwd: str | Path | None = None, raw: bool = False) -> str | bytes:
@@ -64,7 +66,7 @@ def _git(*args: str, cwd: str | Path | None = None, raw: bool = False) -> str | 
         result = subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
     except subprocess.CalledProcessError as exc:
         raise GateError(f"git cannot prove release invariant: {' '.join(args)}") from exc
-    return result.stdout.strip() if raw else result.stdout.decode().strip()
+    return result.stdout if raw else result.stdout.decode().strip()
 
 
 def _gh_json(endpoint: str) -> Any:
@@ -96,19 +98,52 @@ def _pull_request(repo: str, number: int) -> PullRequest:
 
 
 def _checks(repo: str, sha: str) -> list[Check]:
+    try:
+        result = subprocess.run(
+            ["gh", "api", f"repos/{repo}/commits/{sha}/check-runs?per_page=100", "--paginate", "--slurp"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        pages = json.loads(result.stdout)
+    except (subprocess.CalledProcessError, json.JSONDecodeError) as exc:
+        raise GateError(f"paginated GitHub check data unavailable for {sha}") from exc
+    if not isinstance(pages, list) or any(
+        not isinstance(page, dict) or not isinstance(page.get("check_runs"), list)
+        for page in pages
+    ):
+        raise GateError(f"ambiguous paginated GitHub check data for {sha}")
+    items = [item for page in pages for item in page["check_runs"]]
+    if any(not isinstance(item, dict) or not isinstance(item.get("id"), int) or not isinstance(item.get("completed_at"), str) or not item["completed_at"] for item in items):
+        raise GateError(f"ambiguous GitHub check metadata for {sha}")
+    ids = [item["id"] for item in items]
+    if len(ids) != len(set(ids)):
+        raise GateError(f"duplicate paginated GitHub checks for {sha}")
     return [
-        Check(item.get("name", ""), item.get("conclusion"), item.get("head_sha", ""), (item.get("app") or {}).get("slug"))
-        for item in _gh_json(f"repos/{repo}/commits/{sha}/check-runs?per_page=100").get("check_runs", [])
+        Check(
+            item.get("name", ""),
+            item.get("conclusion"),
+            item.get("head_sha", ""),
+            (item.get("app") or {}).get("slug"),
+            item.get("id"),
+            item.get("completed_at"),
+        )
+        for item in items
     ]
 
 
 def _required_check(checks: Iterable[Check], name: str, sha: str, app_slug: str | None = None) -> None:
-    candidates = [item for item in checks if item.name == name and item.sha == sha and item.conclusion == "success"]
+    candidates = [item for item in checks if item.name == name and item.sha == sha]
     if app_slug is not None:
         candidates = [item for item in candidates if item.app_slug == app_slug]
-    if not candidates:
+    if not candidates or any(item.check_id is None or item.completed_at is None for item in candidates):
+        if candidates:
+            raise GateError(f"required check {name!r} has ambiguous completion ordering for exact head {sha}")
         suffix = f" from App {app_slug!r}" if app_slug else ""
         raise GateError(f"required check {name!r}{suffix} is not successful for exact head {sha}")
+    latest = max(candidates, key=lambda item: (item.completed_at, item.check_id))
+    if latest.conclusion != "success":
+        raise GateError(f"latest required check {name!r} is not successful for exact head {sha}")
 
 
 def verify_protection(protection: Mapping[str, Any], required_checks: Iterable[str] = REQUIRED_CHECKS) -> None:
@@ -356,7 +391,9 @@ def _merge_command(args: argparse.Namespace) -> int:
         raise GateError("authenticated App does not match release bot")
     api = GithubMergeApi(args.repo, "main", slug)
     expected = args.expected_head or pr.head_sha
-    api_result = merge_release_pr(api=api, pr_number=args.pr, expected_head_sha=expected, current_main_sha=api.main_sha(), release_bot_login=args.release_bot)
+    current_main = api.main_sha()
+    verify_candidate(current_main, expected, _manifest_at(args.repo, expected))
+    api_result = merge_release_pr(api=api, pr_number=args.pr, expected_head_sha=expected, current_main_sha=current_main, release_bot_login=args.release_bot)
     if not api_result.get("merged"):
         raise GateError(f"GitHub declined release merge: {api_result}")
     return 0

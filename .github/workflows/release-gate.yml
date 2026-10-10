@@ -5,6 +5,9 @@ on:
     types: [opened, synchronize, reopened]
   push:
     branches: [main]
+  workflow_run:
+    workflows: [SDLC CI]
+    types: [completed]
 
 permissions:
   contents: read
@@ -14,7 +17,7 @@ permissions:
 jobs:
   pull-request-gate:
     name: release gate driver
-    if: github.event_name == 'pull_request_target'
+    if: github.event_name == 'pull_request_target' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -41,20 +44,33 @@ jobs:
           RELEASE_APP_SLUG: ${{ steps.release-app.outputs.app-slug }}
         run: |
           set -euo pipefail
-          pr_number="$(jq -r '.pull_request.number' "$GITHUB_EVENT_PATH")"
-          head_sha="$(jq -r '.pull_request.head.sha' "$GITHUB_EVENT_PATH")"
-          git fetch --no-tags origin "$head_sha"
-          set +e
-          python3 src/release_gate.py gate --repo "$GITHUB_REPOSITORY" --pr "$pr_number" --release-bot "$RELEASE_BOT_LOGIN" --app-slug "$RELEASE_APP_SLUG"
-          result=$?
-          set -e
-          conclusion=failure
-          [[ "$result" -eq 0 ]] && conclusion=success
-          gh api --method POST "repos/$GITHUB_REPOSITORY/check-runs" \
-            -f name='sdlc / release-gate' -f head_sha="$head_sha" \
-            -f status=completed -f conclusion="$conclusion" \
-            -f 'output[title]=Release gate' -f 'output[summary]=Release candidate validation completed.'
-          [[ "$result" -eq 0 ]] || exit "$result"
+          if [[ "$GITHUB_EVENT_NAME" == 'pull_request_target' ]]; then
+            pr_numbers="$(jq -r '.pull_request.number' "$GITHUB_EVENT_PATH")"
+          else
+            pr_numbers="$(jq -r '.workflow_run.pull_requests[]?.number' "$GITHUB_EVENT_PATH")"
+            if [[ -z "$pr_numbers" ]]; then
+              pr_numbers="$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=${GITHUB_REPOSITORY%%/*}:sdlc/release-next" --jq '.[].number')"
+            fi
+          fi
+          for pr_number in $pr_numbers; do
+            pr_json="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr_number")"
+            [[ "$(jq -r '.base.ref' <<<"$pr_json")" == 'main' ]] || continue
+            [[ "$(jq -r '.head.ref' <<<"$pr_json")" == 'sdlc/release-next' ]] || continue
+            head_sha="$(jq -r '.head.sha' <<<"$pr_json")"
+            [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]] || continue
+            git fetch --no-tags origin "$head_sha"
+            set +e
+            python3 src/release_gate.py gate --repo "$GITHUB_REPOSITORY" --pr "$pr_number" --release-bot "$RELEASE_BOT_LOGIN" --app-slug "$RELEASE_APP_SLUG"
+            result=$?
+            set -e
+            conclusion=failure
+            [[ "$result" -eq 0 ]] && conclusion=success
+            gh api --method POST "repos/$GITHUB_REPOSITORY/check-runs" \
+              -f name='sdlc / release-gate' -f head_sha="$head_sha" \
+              -f status=completed -f conclusion="$conclusion" \
+              -f 'output[title]=Release gate' -f 'output[summary]=Release candidate validation completed.'
+            [[ "$result" -eq 0 ]] || exit "$result"
+          done
 
   base-refresh:
     name: refresh release gate after main advances
@@ -84,7 +100,7 @@ jobs:
           RELEASE_APP_SLUG: ${{ steps.release-app.outputs.app-slug }}
         run: |
           set -euo pipefail
-          prs="$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=$GITHUB_REPOSITORY:sdlc/release-next" --jq '.[].number')"
+          prs="$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=${GITHUB_REPOSITORY%%/*}:sdlc/release-next" --jq '.[].number')"
           for pr in $prs; do
             head_sha="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq '.head.sha')"
             git fetch --no-tags origin "$head_sha"

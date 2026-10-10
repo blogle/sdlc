@@ -256,6 +256,17 @@ class ConsumerWorkflowTests(unittest.TestCase):
         self.assertIn(".merge_commit_sha", workflow)
         self.assertIn("gh workflow run release.yml", workflow)
 
+    def test_release_gate_revalidates_after_successful_ci_completion(self):
+        workflow = (Path(__file__).parents[1] / ".github/workflows/release-gate.yml").read_text()
+        self.assertIn("workflow_run:", workflow)
+        self.assertIn("workflows: [SDLC CI]", workflow)
+        self.assertIn("github.event.workflow_run.conclusion == 'success'", workflow)
+        self.assertIn(".workflow_run.pull_requests[]?.number", workflow)
+        self.assertIn("pulls?state=open&head=${GITHUB_REPOSITORY%%/*}:sdlc/release-next", workflow)
+        self.assertIn(".head.sha", workflow)
+        self.assertIn("sdlc / pr-fast", Path(__file__).parents[1].joinpath("src/release_gate.py").read_text())
+        self.assertNotIn("check_run:", workflow)
+
 
 class RepositoryPolicyTests(unittest.TestCase):
     def test_renderer_builds_complete_canonical_ruleset(self):
