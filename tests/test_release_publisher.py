@@ -149,6 +149,32 @@ class PublisherTests(unittest.TestCase):
             with self.assertRaisesRegex(publisher.IdentityError, "different release identity"):
                 publisher.ArtifactLedger.load_or_create(path, identity)
 
+    def test_consumer_receipts_record_multiple_immutable_artifacts(self):
+        manifest, changelog = self.identity_inputs()
+        identity = publisher.validate_identity(
+            manifest,
+            merged_sha="3" * 40,
+            parent_sha="1" * 40,
+            tree_sha="2" * 40,
+            source_blobs={".changes/one.json": "0" * 40},
+            merged_blobs={"CHANGELOG.md": "a" * 40, ".sdlc/release.json": "b" * 40},
+            changed_paths={"CHANGELOG.md", ".sdlc/release.json", ".changes/one.json"},
+            changelog=changelog,
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            ledger_path = Path(temp) / "release-ledger.json"
+            publisher.ArtifactLedger.load_or_create(ledger_path, identity).save()
+            receipts = Path(temp) / "publication-receipts.json"
+            receipts.write_text(json.dumps({
+                "schema": 1,
+                "artifacts": [
+                    {"name": "anvil", "digest": "sha256:" + "a" * 64, "version": "1.0.0", "merged_sha": "3" * 40, "source_main_sha": "1" * 40},
+                    {"name": "sandbox", "digest": "sha256:" + "b" * 64, "version": "1.0.0", "merged_sha": "3" * 40, "source_main_sha": "1" * 40},
+                ],
+            }))
+            publisher.record_receipts(ledger_path, receipts, "1.0.0", "3" * 40, "1" * 40)
+            self.assertEqual(json.loads(ledger_path.read_text())["artifacts"], {"anvil": "a" * 64, "sandbox": "b" * 64})
+
     def test_workflow_resumes_from_immutable_release_asset(self):
         workflow = (Path(__file__).parents[1] / ".github/workflows/release-publish.yml").read_text()
         self.assertIn("gh release download", workflow)
@@ -162,6 +188,9 @@ class PublisherTests(unittest.TestCase):
         self.assertIn("git merge-base --is-ancestor \"$MERGED_SHA\" FETCH_HEAD", workflow)
         self.assertIn("gh auth setup-git", workflow)
         self.assertIn("GH_TOKEN: ${{ steps.release-app.outputs.token }}", workflow)
+        self.assertIn('nix run "$SDLC_FLAKE"#sdlc -- release publish', workflow)
+        self.assertIn('nix run "$SDLC_FLAKE"#sdlc -- release receipts', workflow)
+        self.assertNotIn("python3 src/release_publisher.py", workflow)
         self.assertLess(workflow.index("Prepare one immutable source artifact"), workflow.index("Create or verify exact annotated version tag"))
         self.assertLess(workflow.index("git config user.name 'sdlc-release[bot]'"), workflow.index('git tag -a "$tag"'))
         self.assertLess(workflow.index("git config user.email 'sdlc-release[bot]@users.noreply.github.com'"), workflow.index('git tag -a "$tag"'))

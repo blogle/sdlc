@@ -2,7 +2,6 @@ import importlib.util
 import json
 from pathlib import Path
 import subprocess
-import shutil
 import tempfile
 import unittest
 
@@ -21,10 +20,6 @@ class ReleaseIntegrationTests(unittest.TestCase):
             changes = root / ".changes"
             changes.mkdir()
             (changes / "feature.json").write_text('{"semver":"minor","summary":"feature","type":"feature"}\n')
-            source_root = Path(__file__).parents[1]
-            (root / "src").mkdir()
-            shutil.copy(source_root / "src/sdlc.py", root / "src/sdlc.py")
-            shutil.copytree(source_root / "actions/repository-policy", root / "actions/repository-policy")
             self._git(temp, "init", "-q")
             self._git(temp, "config", "user.name", "integration")
             self._git(temp, "config", "user.email", "integration@example.com")

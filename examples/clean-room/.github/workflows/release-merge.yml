@@ -1,0 +1,19 @@
+name: SDLC release merge
+
+on:
+  workflow_run:
+    workflows: [SDLC release gate]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: read
+  pull-requests: read
+
+jobs:
+  merge:
+    uses: blogle/sdlc/.github/workflows/release-merge.yml@v1.2.3
+    with:
+      sdlc_ref: github:blogle/sdlc/v1.2.3
+    secrets: inherit

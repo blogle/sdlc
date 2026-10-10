@@ -303,6 +303,29 @@ def main():
     snapshot.add_argument("--source-sha", required=True)
     snapshot.add_argument("--date")
     snapshot.add_argument("--json", action="store_true")
+    for action in ("gate", "merge"):
+        operation = release_commands.add_parser(action)
+        operation.add_argument("--repo", required=True)
+        operation.add_argument("--pr", type=int, required=True)
+        operation.add_argument("--release-bot", required=True)
+        operation.add_argument("--app-slug", default="")
+    release_commands.choices["merge"].add_argument("--expected-head")
+    publish = release_commands.add_parser("publish")
+    publish.add_argument("merged_sha")
+    reconcile = release_commands.add_parser("reconcile")
+    reconcile.add_argument("--repo")
+    receipts = release_commands.add_parser("receipts")
+    receipts.add_argument("--ledger", required=True)
+    receipts.add_argument("--receipts", required=True)
+    receipts.add_argument("--version", required=True)
+    receipts.add_argument("--merged-sha", required=True)
+    receipts.add_argument("--source-sha", required=True)
+    ledger = release_commands.add_parser("ledger")
+    ledger.add_argument("action", choices=["artifact", "published"])
+    ledger.add_argument("--ledger", required=True)
+    ledger.add_argument("--commit")
+    ledger.add_argument("--name")
+    ledger.add_argument("--digest")
     policy = commands.add_parser("policy")
     policy.add_argument("action", choices=["plan", "apply", "check"])
     policy.add_argument("--repo", help="GitHub OWNER/NAME (defaults to this checkout's origin)")
@@ -318,6 +341,29 @@ def main():
                 print(f"generated release candidate {manifest['version']} from {manifest['source_main_sha']}")
             else:
                 print("no changelog fragments; no release")
+        elif args.command == "release" and args.release_action in ("gate", "merge"):
+            import release_gate
+            return release_gate._gate_command(args) if args.release_action == "gate" else release_gate._merge_command(args)
+        elif args.command == "release" and args.release_action == "publish":
+            import release_publisher
+            identity = release_publisher.validate_checkout(args.merged_sha)
+            print(json.dumps(identity.__dict__, sort_keys=True, default=list))
+        elif args.command == "release" and args.release_action == "reconcile":
+            import release_reconcile
+            return release_reconcile.reconcile(args.repo)
+        elif args.command == "release" and args.release_action == "receipts":
+            import release_publisher
+            release_publisher.record_receipts(
+                Path(args.ledger), Path(args.receipts), args.version, args.merged_sha, args.source_sha
+            )
+        elif args.command == "release" and args.release_action == "ledger":
+            import release_publisher
+            if args.action == "artifact":
+                if not args.commit or not args.name or not args.digest:
+                    raise ValueError("ledger artifact requires --commit, --name, and --digest")
+                release_publisher.record_artifact(Path(args.ledger), args.commit, args.name, args.digest)
+            else:
+                release_publisher.mark_published(Path(args.ledger))
         else:
             policy_command(args.action, args.repo)
     except (ValueError, subprocess.CalledProcessError) as exc:

@@ -171,6 +171,42 @@ class ArtifactLedger:
                 os.unlink(temporary)
 
 
+def record_receipts(ledger_path: Path, receipts_path: Path, version: str, merged_sha: str, source_sha: str) -> None:
+    """Record consumer-owned immutable artifact receipts for this identity."""
+    data = json.loads(receipts_path.read_text())
+    artifacts = data.get("artifacts") if isinstance(data, dict) else None
+    if not isinstance(data, dict) or data.get("schema") != 1 or not isinstance(artifacts, list) or not artifacts:
+        raise IdentityError("publication receipts must be schema 1 with at least one artifact")
+    ledger = json.loads(ledger_path.read_text())
+    if any(ledger.get(key) != value for key, value in {"version": version, "merged_sha": merged_sha, "source_main_sha": source_sha}.items()):
+        raise IdentityError("publication receipts do not match the release identity")
+    identity = ReleaseIdentity(version, merged_sha, source_sha, ledger["tree_sha"], ledger["changelog_sha256"], tuple(map(tuple, ledger["fragments"])))
+    target = ArtifactLedger.load_or_create(ledger_path, identity)
+    for artifact in artifacts:
+        if not isinstance(artifact, dict) or not isinstance(artifact.get("name"), str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", str(artifact.get("digest", ""))):
+            raise IdentityError("publication receipt artifact requires name and sha256 digest")
+        if artifact.get("version") != version or artifact.get("merged_sha") != merged_sha or artifact.get("source_main_sha") != source_sha:
+            raise IdentityError("publication receipt artifact identity does not match the release")
+        target.record_artifact(artifact["name"], artifact["digest"][len("sha256:"):])
+    target.save()
+
+
+def record_artifact(ledger_path: Path, commit: str, name: str, digest: str) -> None:
+    identity = validate_checkout(commit)
+    ledger = ArtifactLedger.load_or_create(ledger_path, identity)
+    ledger.record_artifact(name, digest)
+    ledger.mark_tagged()
+    ledger.save()
+
+
+def mark_published(ledger_path: Path) -> None:
+    data = json.loads(ledger_path.read_text())
+    identity = ReleaseIdentity(data["version"], data["merged_sha"], data["source_main_sha"], data["tree_sha"], data["changelog_sha256"], tuple(map(tuple, data["fragments"])))
+    ledger = ArtifactLedger.load_or_create(ledger_path, identity)
+    ledger.mark_published()
+    ledger.save()
+
+
 def verify_tag(tag_sha: str, merged_sha: str) -> None:
     if _sha(tag_sha, "tag target") != _sha(merged_sha, "merged commit"):
         raise IdentityError("existing tag points at a different commit")

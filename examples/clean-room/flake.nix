@@ -1,7 +1,7 @@
 {
   description = "Clean-room consumer using the released SDLC flake API";
   inputs = {
-    sdlc.url = "github:blogle/sdlc/v1.0.0";
+    sdlc.url = "github:blogle/sdlc/v1.2.3";
     nixpkgs.follows = "sdlc/nixpkgs";
   };
   outputs = { self, nixpkgs, sdlc }:

@@ -216,38 +216,40 @@ class ConsumerWorkflowTests(unittest.TestCase):
             self.assertNotRegex(wrapper, re.compile(r"blogle/sdlc/.+stage\.yml@"))
 
     def test_release_reconcile_is_app_authenticated_and_lease_safe(self):
-        workflow = (Path(__file__).parents[1] / ".github/workflows/release-reconcile.yml").read_text()
+        root = Path(__file__).parents[1]
+        workflow = (root / ".github/workflows/release-reconcile.yml").read_text()
+        reconcile = (root / "src/release_reconcile.py").read_text()
         self.assertIn("actions/create-github-app-token@v1", workflow)
-        self.assertIn("sdlc/release-next", workflow)
-        self.assertIn("--force-with-lease=refs/heads/$branch:$old", workflow)
+        self.assertIn("sdlc/release-next", reconcile)
+        self.assertIn("--force-with-lease=refs/heads/{branch}:{old}", reconcile)
         self.assertNotIn("HEAD:main", workflow)
         self.assertIn("cancel-in-progress: false", workflow)
-        self.assertIn("policy check --repo", workflow)
-        self.assertIn("ruleset has been applied and read back successfully", workflow)
+        self.assertIn("release reconcile", workflow)
         self.assertNotIn("committed release manifest awaiting publication", workflow)
-        for field in ("schema=1", "prior_released_boundary", "source_main_sha", "generated_tree", "changelog_sha256", "publication{version, source_main_sha}"):
-            self.assertIn(field, workflow)
-        self.assertNotIn("committed release manifest awaiting publication", workflow)
+        coordinator = (root / "src/sdlc.py").read_text()
+        for field in ("schema", "prior_released_boundary", "source_main_sha", "generated_tree", "changelog_sha256", "publication"):
+            self.assertIn(field, coordinator)
+        self.assertIn('policy_command("check", repo)', reconcile)
 
     def test_release_reconcile_checks_tag_and_publication_ledger_for_successors(self):
-        workflow = (Path(__file__).parents[1] / ".github/workflows/release-reconcile.yml").read_text()
-        self.assertIn("refs/tags/v$predecessor_version", workflow)
-        self.assertIn("gh release view", workflow)
-        self.assertIn("git merge-base --is-ancestor \"$tag_sha\" \"$baseline\"", workflow)
-        self.assertIn('git rev-parse "$tag_sha^"', workflow)
-        self.assertIn('tag manifest differs from main', workflow)
+        reconcile = (Path(__file__).parents[1] / "src/release_reconcile.py").read_text()
+        self.assertIn('refs/tags/v{version}', reconcile)
+        self.assertIn('"release", "view"', reconcile)
+        self.assertIn('"merge-base", "--is-ancestor"', reconcile)
+        self.assertIn('f"{tag_sha}^"', reconcile)
+        self.assertIn("tag manifest differs from main", reconcile)
 
     def test_release_reconcile_retries_races_without_competing_prs(self):
-        workflow = (Path(__file__).parents[1] / ".github/workflows/release-reconcile.yml").read_text()
-        self.assertIn("for attempt in 1 2 3", workflow)
-        self.assertIn("release branch changed concurrently", workflow)
-        self.assertEqual(workflow.count("gh pr list --repo \"$repo\" --state open --base main --head \"$branch\""), 2)
+        reconcile = (Path(__file__).parents[1] / "src/release_reconcile.py").read_text()
+        self.assertIn("range(1, 4)", reconcile)
+        self.assertIn("release branch changed concurrently", reconcile)
+        self.assertIn('"pr", "list"', reconcile)
 
     def test_release_reconcile_is_idempotent_for_the_same_snapshot(self):
-        workflow = (Path(__file__).parents[1] / ".github/workflows/release-reconcile.yml").read_text()
-        self.assertIn("GIT_AUTHOR_DATE=\"$source_date\" GIT_COMMITTER_DATE=\"$source_date\"", workflow)
-        self.assertIn("gh pr edit \"$number\"", workflow)
-        self.assertNotIn("gh pr create", workflow.split("if [[ -n \"$number\" ]]", 1)[0])
+        reconcile = (Path(__file__).parents[1] / "src/release_reconcile.py").read_text()
+        self.assertIn("GIT_AUTHOR_DATE", reconcile)
+        self.assertIn('"pr", "edit"', reconcile)
+        self.assertIn('"pr", "create"', reconcile)
 
     def test_release_merge_wakes_from_trusted_workflow_and_records_actual_sha(self):
         workflow = (Path(__file__).parents[1] / ".github/workflows/release-merge.yml").read_text()

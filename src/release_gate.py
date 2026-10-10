@@ -11,20 +11,19 @@ import argparse
 import base64
 from dataclasses import dataclass
 import hashlib
-import importlib.util
-import io
 import json
 import os
 from pathlib import Path
 import subprocess
 import tempfile
-from contextlib import redirect_stdout
 from typing import Any, Callable, Iterable, Mapping
 
 try:
-    from sdlc import verify_release_tree
+    import sdlc as coordinator
 except ModuleNotFoundError:
-    from .sdlc import verify_release_tree
+    from . import sdlc as coordinator
+
+verify_release_tree = coordinator.verify_release_tree
 
 
 RELEASE_BRANCH = "sdlc/release-next"
@@ -203,37 +202,21 @@ def _manifest_at(repo: str, sha: str) -> Mapping[str, Any]:
         raise GateError("release manifest is missing or invalid JSON") from exc
 
 
-def _load_snapshot_generator(source_dir: Path) -> Callable[[str], Mapping[str, Any]]:
-    module_path = source_dir / "src/sdlc.py"
-    if not module_path.exists():
-        raise GateError("coordinator changelog snapshot interface is unavailable")
-    spec = importlib.util.spec_from_file_location("coordinator_sdlc", module_path)
-    if spec is None or spec.loader is None:
-        raise GateError("cannot load coordinator changelog snapshot interface")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    generator = getattr(module, "release_snapshot", None)
-    if not callable(generator):
-        raise GateError("coordinator does not expose sdlc.release_snapshot")
-
-    def generate(source_sha: str) -> Mapping[str, Any]:
-        module.ROOT = source_dir
-        with redirect_stdout(io.StringIO()):
-            result = generator(source_sha)
-        if not isinstance(result, dict):
-            raise GateError("coordinator snapshot produced no release manifest")
-        return result
-
-    return generate
-
-
 def replay_snapshot(source_sha: str, *, git: Callable[..., str | bytes] = _git) -> Mapping[str, Any]:
-    """Re-run the coordinator snapshot from the exact source commit."""
+    """Re-run the pinned coordinator snapshot from the exact source commit."""
     with tempfile.TemporaryDirectory(prefix="release-gate-") as temp:
         source_dir = Path(temp) / "source"
         git("worktree", "add", "--detach", str(source_dir), source_sha)
         try:
-            return _load_snapshot_generator(source_dir)(source_sha)
+            old_root = coordinator.ROOT
+            coordinator.ROOT = source_dir
+            try:
+                result = coordinator.release_snapshot(source_sha)
+            finally:
+                coordinator.ROOT = old_root
+            if not isinstance(result, dict):
+                raise GateError("coordinator snapshot produced no release manifest")
+            return result
         finally:
             try:
                 git("worktree", "remove", "--force", str(source_dir))
@@ -389,7 +372,8 @@ def _merge_command(args: argparse.Namespace) -> int:
     login, slug = _authenticated_app(args.release_bot, args.app_slug, args.repo)
     if login != args.release_bot:
         raise GateError("authenticated App does not match release bot")
-    api = GithubMergeApi(args.repo, "main", slug)
+    repository = _gh_json(f"repos/{args.repo}")
+    api = GithubMergeApi(args.repo, repository["default_branch"], slug)
     expected = args.expected_head or pr.head_sha
     current_main = api.main_sha()
     verify_candidate(current_main, expected, _manifest_at(args.repo, expected))
