@@ -191,6 +191,9 @@ class PublisherTests(unittest.TestCase):
         self.assertIn('nix run "$SDLC_FLAKE"#sdlc -- release publish', workflow)
         self.assertIn('nix run "$SDLC_FLAKE"#sdlc -- release receipts', workflow)
         self.assertNotIn("python3 src/release_publisher.py", workflow)
+        persist = workflow.split("- name: Persist artifact bytes without overwriting", 1)[1].split("- name: Save publication audit ledger", 1)[0]
+        self.assertIn("SDLC_FLAKE:", persist)
+        self.assertIn('nix run "$SDLC_FLAKE"#sdlc -- release ledger artifact', persist)
         self.assertLess(workflow.index("Prepare one immutable source artifact"), workflow.index("Create or verify exact annotated version tag"))
         self.assertLess(workflow.index("git config user.name 'sdlc-release[bot]'"), workflow.index('git tag -a "$tag"'))
         self.assertLess(workflow.index("git config user.email 'sdlc-release[bot]@users.noreply.github.com'"), workflow.index('git tag -a "$tag"'))

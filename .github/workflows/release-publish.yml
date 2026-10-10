@@ -116,6 +116,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.release-app.outputs.token }}
           MERGED_SHA: ${{ inputs.merged_sha }}
+          SDLC_FLAKE: ${{ inputs.sdlc_ref != '' && inputs.sdlc_ref || github.workspace }}
         run: |
           set -euo pipefail
           source .sdlc/artifact.env
