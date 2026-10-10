@@ -1,0 +1,17 @@
+{
+  "head": {
+    "sha": "head",
+    "ref": "sdlc/release-next",
+    "user": {
+      "login": "blogle",
+      "type": "User"
+    },
+    "repo": {
+      "full_name": "blogle/sdlc"
+    }
+  },
+  "user": {
+    "login": "sdlc-release[bot]",
+    "type": "Bot"
+  }
+}

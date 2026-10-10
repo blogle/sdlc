@@ -24,6 +24,23 @@ API_SPEC.loader.exec_module(ruleset_api)
 
 
 class ChangelogTests(unittest.TestCase):
+    def _git_repo(self, temp, fragments):
+        root = Path(temp)
+        (root / ".changes").mkdir(parents=True)
+        if not fragments:
+            (root / ".changes" / ".keep").write_text("")
+        for name, item in fragments.items():
+            (root / ".changes" / f"{name}.json").write_text(json.dumps(item, sort_keys=True) + "\n")
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.name", "test"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
+        subprocess.run(["git", "add", "."], cwd=root, check=True)
+        subprocess.run(
+            ["git", "commit", "-qm", "source"], cwd=root, check=True,
+            env={**sdlc.os.environ, "GIT_AUTHOR_DATE": "2026-10-09T00:00:00Z", "GIT_COMMITTER_DATE": "2026-10-09T00:00:00Z"},
+        )
+        return subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+
     def test_zero_fragments_and_finalize_compacts(self):
         with tempfile.TemporaryDirectory() as temp:
             root = sdlc.ROOT
@@ -83,6 +100,93 @@ class ChangelogTests(unittest.TestCase):
             finally:
                 sdlc.ROOT = root
 
+    def test_snapshot_coalesces_all_fragments_and_uses_strongest_semver(self):
+        with tempfile.TemporaryDirectory() as temp:
+            source = self._git_repo(temp, {
+                "a": {"type": "fix", "semver": "patch", "summary": "a"},
+                "b": {"type": "feature", "semver": "minor", "summary": "b"},
+                "c": {"type": "breaking", "semver": "major", "summary": "c"},
+            })
+            root = sdlc.ROOT
+            sdlc.ROOT = Path(temp)
+            try:
+                with redirect_stdout(io.StringIO()):
+                    manifest = sdlc.release_snapshot(source, date="2026-10-09")
+                self.assertEqual(manifest["schema"], 1)
+                self.assertIn("generated_tree", manifest)
+                self.assertNotIn("generated_tree_sha256", manifest)
+                self.assertEqual(manifest["publication"], {"version": manifest["version"], "source_main_sha": source})
+                self.assertEqual(manifest["version"], "1.0.0")
+                self.assertEqual([item["path"] for item in manifest["fragments"]], [".changes/a.json", ".changes/b.json", ".changes/c.json"])
+                self.assertEqual([item["blob_sha"] for item in manifest["fragments"]], [
+                    subprocess.run(["git", "rev-parse", f"{source}:.changes/{name}.json"], cwd=temp, check=True, capture_output=True, text=True).stdout.strip()
+                    for name in ("a", "b", "c")
+                ])
+                self.assertFalse(any((Path(temp) / ".changes" / f"{name}.json").exists() for name in ("a", "b", "c")))
+                self.assertEqual(manifest["changelog_sha256"], sdlc._sha256(Path(temp) / "CHANGELOG.md"))
+            finally:
+                sdlc.ROOT = root
+
+    def test_merged_snapshot_tree_is_reconstructibly_verified(self):
+        with tempfile.TemporaryDirectory() as temp:
+            source = self._git_repo(temp, {"one": {"type": "fix", "semver": "patch", "summary": "one"}})
+            root = sdlc.ROOT
+            sdlc.ROOT = Path(temp)
+            try:
+                with redirect_stdout(io.StringIO()):
+                    manifest = sdlc.release_snapshot(source, date="2026-10-09")
+                subprocess.run(["git", "add", "CHANGELOG.md", ".sdlc/release.json", ".changes"], cwd=temp, check=True)
+                subprocess.run(["git", "config", "user.name", "test"], cwd=temp, check=True)
+                subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=temp, check=True)
+                subprocess.run(["git", "commit", "-qm", "release candidate"], cwd=temp, check=True)
+                merged = subprocess.run(["git", "rev-parse", "HEAD"], cwd=temp, check=True, capture_output=True, text=True).stdout.strip()
+                self.assertTrue(sdlc.verify_release_tree(source, merged, manifest))
+            finally:
+                sdlc.ROOT = root
+
+    def test_snapshot_is_reproducible_for_identical_source_trees(self):
+        fragments = {"same": {"type": "feature", "semver": "minor", "summary": "same"}}
+        with tempfile.TemporaryDirectory() as temp:
+            first = Path(temp) / "first"
+            second = Path(temp) / "second"
+            source = self._git_repo(first, fragments)
+            self._git_repo(second, fragments)
+            outputs = []
+            for checkout in (first, second):
+                root = sdlc.ROOT
+                sdlc.ROOT = checkout
+                try:
+                    with redirect_stdout(io.StringIO()):
+                        manifest = sdlc.release_snapshot(source, date="2026-10-09")
+                    outputs.append((manifest, (checkout / "CHANGELOG.md").read_bytes()))
+                finally:
+                    sdlc.ROOT = root
+            self.assertEqual(outputs[0], outputs[1])
+
+    def test_snapshot_uses_published_manifest_as_successor_boundary(self):
+        with tempfile.TemporaryDirectory() as temp:
+            source = self._git_repo(temp, {})
+            root_path = Path(temp)
+            manifest_path = root_path / ".sdlc/release.json"
+            manifest_path.parent.mkdir()
+            manifest_path.write_text(json.dumps({"schema": 1, "version": "1.0.0", "source_main_sha": source}) + "\n")
+            subprocess.run(["git", "add", ".sdlc/release.json"], cwd=temp, check=True)
+            subprocess.run(["git", "commit", "-qm", "published release boundary"], cwd=temp, check=True)
+            (root_path / ".changes").mkdir(exist_ok=True)
+            (root_path / ".changes/next.json").write_text(json.dumps({"type": "feature", "semver": "minor", "summary": "next"}) + "\n")
+            subprocess.run(["git", "add", ".changes/next.json"], cwd=temp, check=True)
+            subprocess.run(["git", "commit", "-qm", "next source"], cwd=temp, check=True)
+            latest = subprocess.run(["git", "rev-parse", "HEAD"], cwd=temp, check=True, capture_output=True, text=True).stdout.strip()
+            old_root = sdlc.ROOT
+            sdlc.ROOT = root_path
+            try:
+                with redirect_stdout(io.StringIO()):
+                    manifest = sdlc.release_snapshot(latest, date="2026-10-10")
+                self.assertEqual(manifest["version"], "1.1.0")
+                self.assertEqual(manifest["prior_released_boundary"], source)
+            finally:
+                sdlc.ROOT = old_root
+
 
 class ConsumerWorkflowTests(unittest.TestCase):
     def test_stable_required_checks_are_local_always_gates(self):
@@ -110,6 +214,58 @@ class ConsumerWorkflowTests(unittest.TestCase):
             wrapper = (root / ".github/workflows" / name).read_text()
             self.assertIn("uses: $/.github/workflows/stage.yml", wrapper)
             self.assertNotRegex(wrapper, re.compile(r"blogle/sdlc/.+stage\.yml@"))
+
+    def test_release_reconcile_is_app_authenticated_and_lease_safe(self):
+        workflow = (Path(__file__).parents[1] / ".github/workflows/release-reconcile.yml").read_text()
+        self.assertIn("actions/create-github-app-token@v1", workflow)
+        self.assertIn("sdlc/release-next", workflow)
+        self.assertIn("--force-with-lease=refs/heads/$branch:$old", workflow)
+        self.assertNotIn("HEAD:main", workflow)
+        self.assertIn("cancel-in-progress: false", workflow)
+        self.assertIn("policy check --repo", workflow)
+        self.assertIn("ruleset has been applied and read back successfully", workflow)
+        self.assertNotIn("committed release manifest awaiting publication", workflow)
+        for field in ("schema=1", "prior_released_boundary", "source_main_sha", "generated_tree", "changelog_sha256", "publication{version, source_main_sha}"):
+            self.assertIn(field, workflow)
+        self.assertNotIn("committed release manifest awaiting publication", workflow)
+
+    def test_release_reconcile_checks_tag_and_publication_ledger_for_successors(self):
+        workflow = (Path(__file__).parents[1] / ".github/workflows/release-reconcile.yml").read_text()
+        self.assertIn("refs/tags/v$predecessor_version", workflow)
+        self.assertIn("gh release view", workflow)
+        self.assertIn("git merge-base --is-ancestor \"$tag_sha\" \"$baseline\"", workflow)
+        self.assertIn('git rev-parse "$tag_sha^"', workflow)
+        self.assertIn('tag manifest differs from main', workflow)
+
+    def test_release_reconcile_retries_races_without_competing_prs(self):
+        workflow = (Path(__file__).parents[1] / ".github/workflows/release-reconcile.yml").read_text()
+        self.assertIn("for attempt in 1 2 3", workflow)
+        self.assertIn("release branch changed concurrently", workflow)
+        self.assertEqual(workflow.count("gh pr list --repo \"$repo\" --state open --base main --head \"$branch\""), 2)
+
+    def test_release_reconcile_is_idempotent_for_the_same_snapshot(self):
+        workflow = (Path(__file__).parents[1] / ".github/workflows/release-reconcile.yml").read_text()
+        self.assertIn("GIT_AUTHOR_DATE=\"$source_date\" GIT_COMMITTER_DATE=\"$source_date\"", workflow)
+        self.assertIn("gh pr edit \"$number\"", workflow)
+        self.assertNotIn("gh pr create", workflow.split("if [[ -n \"$number\" ]]", 1)[0])
+
+    def test_release_merge_wakes_from_trusted_workflow_and_records_actual_sha(self):
+        workflow = (Path(__file__).parents[1] / ".github/workflows/release-merge.yml").read_text()
+        self.assertIn("workflow_run:", workflow)
+        self.assertNotIn("check_run:", workflow)
+        self.assertIn(".merge_commit_sha", workflow)
+        self.assertIn("gh workflow run release.yml", workflow)
+
+    def test_release_gate_revalidates_after_successful_ci_completion(self):
+        workflow = (Path(__file__).parents[1] / ".github/workflows/release-gate.yml").read_text()
+        self.assertIn("workflow_run:", workflow)
+        self.assertIn("workflows: [SDLC CI]", workflow)
+        self.assertIn("github.event.workflow_run.conclusion == 'success'", workflow)
+        self.assertIn(".workflow_run.pull_requests[]?.number", workflow)
+        self.assertIn("pulls?state=open&head=${GITHUB_REPOSITORY%%/*}:sdlc/release-next", workflow)
+        self.assertIn(".head.sha", workflow)
+        self.assertIn("sdlc / pr-fast", Path(__file__).parents[1].joinpath("src/release_gate.py").read_text())
+        self.assertNotIn("check_run:", workflow)
 
 
 class RepositoryPolicyTests(unittest.TestCase):
