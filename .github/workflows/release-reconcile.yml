@@ -53,6 +53,23 @@ jobs:
           for attempt in 1 2 3; do
             git fetch --prune --tags origin main "$branch" || true
             baseline="$(git rev-parse origin/main)"
+            plan_dir="$(mktemp -d)"
+            trap 'rm -rf "$plan_dir"' EXIT
+            git worktree add --detach "$plan_dir" "$baseline" >/dev/null
+            if ! plan_json="$(cd "$plan_dir" && nix run "$GITHUB_WORKSPACE"#sdlc -- changelog plan --json)"; then
+              git worktree remove --force "$plan_dir" >/dev/null
+              fail 'fragment validation failed; no release PR was changed'
+            fi
+            if [[ "$(jq -r '.release' <<<"$plan_json")" != true ]]; then
+              if number="$(gh pr list --repo "$repo" --state open --base main --head "$branch" --json number --jq '.[0].number' 2>/dev/null)" && [[ -n "$number" ]]; then
+                gh pr close "$number" --repo "$repo" --comment 'No unreleased fragments remain; candidate retired.'
+              fi
+              git worktree remove --force "$plan_dir" >/dev/null
+              exit 0
+            fi
+            # A successor is blocked until its predecessor is fully published.
+            # A release merge with no remaining fragments is a successful no-op
+            # while its own publication is still completing.
             if git cat-file -e "origin/main:.sdlc/release.json" 2>/dev/null; then
               predecessor="$(git show "origin/main:.sdlc/release.json")"
               predecessor_version="$(jq -r '.version // empty' <<<"$predecessor")"
@@ -71,20 +88,6 @@ jobs:
               [[ "$(jq -r '.isPrerelease' <<<"$release_state")" == false ]] || fail "release v$predecessor_version is prerelease"
               asset_digest="$(jq -r --arg asset "$asset_name" '.assets[] | select(.name == $asset) | .digest // empty' <<<"$release_state")"
               [[ "$asset_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "release v$predecessor_version lacks its immutable published asset identity"
-            fi
-            plan_dir="$(mktemp -d)"
-            trap 'rm -rf "$plan_dir"' EXIT
-            git worktree add --detach "$plan_dir" "$baseline" >/dev/null
-            if ! plan_json="$(cd "$plan_dir" && nix run "$GITHUB_WORKSPACE"#sdlc -- changelog plan --json)"; then
-              git worktree remove --force "$plan_dir" >/dev/null
-              fail 'fragment validation failed; no release PR was changed'
-            fi
-            if [[ "$(jq -r '.release' <<<"$plan_json")" != true ]]; then
-              if number="$(gh pr list --repo "$repo" --state open --base main --head "$branch" --json number --jq '.[0].number' 2>/dev/null)" && [[ -n "$number" ]]; then
-                gh pr close "$number" --repo "$repo" --comment 'No unreleased fragments remain; candidate retired.'
-              fi
-              git worktree remove --force "$plan_dir" >/dev/null
-              exit 0
             fi
             if ! (cd "$plan_dir" && nix run "$GITHUB_WORKSPACE"#sdlc -- release snapshot --source-sha "$baseline"); then
               git worktree remove --force "$plan_dir" >/dev/null
