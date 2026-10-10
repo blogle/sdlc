@@ -47,7 +47,7 @@ jobs:
           RELEASE_APP_SLUG: ${{ steps.release-app.outputs.app-slug }}
         run: |
           set -euo pipefail
-          prs="$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=$GITHUB_REPOSITORY:sdlc/release-next" --jq '.[].number')"
+          prs="$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=${GITHUB_REPOSITORY%%/*}:sdlc/release-next" --jq '.[].number')"
           for pr in $prs; do
             python3 src/release_gate.py merge --repo "$GITHUB_REPOSITORY" --pr "$pr" --release-bot "$RELEASE_BOT_LOGIN" --app-slug "$RELEASE_APP_SLUG"
             merged_sha="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq '.merge_commit_sha')"

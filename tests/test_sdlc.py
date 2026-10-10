@@ -262,7 +262,7 @@ class ConsumerWorkflowTests(unittest.TestCase):
         self.assertIn("workflows: [SDLC CI]", workflow)
         self.assertIn("github.event.workflow_run.conclusion == 'success'", workflow)
         self.assertIn(".workflow_run.pull_requests[]?.number", workflow)
-        self.assertIn("pulls?state=open&head=$GITHUB_REPOSITORY:sdlc/release-next", workflow)
+        self.assertIn("pulls?state=open&head=${GITHUB_REPOSITORY%%/*}:sdlc/release-next", workflow)
         self.assertIn(".head.sha", workflow)
         self.assertIn("sdlc / pr-fast", Path(__file__).parents[1].joinpath("src/release_gate.py").read_text())
         self.assertNotIn("check_run:", workflow)
