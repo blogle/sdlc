@@ -126,16 +126,22 @@ def verify_release_tree(source_sha, merged_sha, manifest):
     """Verify the actual merged tree against a reconstructible snapshot."""
     if manifest.get("schema") != 1 or manifest.get("source_main_sha") != source_sha:
         raise ValueError("release manifest schema or source SHA is invalid")
+    if manifest.get("publication") != {"version": manifest.get("version"), "source_main_sha": source_sha}:
+        raise ValueError("release manifest publication identity is invalid")
     if _git("rev-parse", f"{merged_sha}^") != source_sha:
         raise ValueError("merged release commit parent does not equal source_main_sha")
     fragments = manifest.get("fragments")
-    if not isinstance(fragments, list) or fragments != sorted(fragments, key=lambda item: item.get("path", "")):
+    if (not isinstance(fragments, list) or not fragments or
+            fragments != sorted(fragments, key=lambda item: item.get("path", "")) or
+            len({item.get("path") for item in fragments if isinstance(item, dict)}) != len(fragments)):
         raise ValueError("release manifest fragments must be sorted")
     bindings = []
     for item in fragments:
         if not isinstance(item, dict) or set(("path", "blob_sha")) - set(item):
             raise ValueError("release manifest fragment entries require path and blob_sha")
         path, blob = item["path"], item["blob_sha"]
+        if not isinstance(path, str) or not re.fullmatch(r"\.changes/[^/]+\.json", path):
+            raise ValueError(f"invalid release fragment path: {path!r}")
         if _git("rev-parse", f"{source_sha}:{path}") != blob:
             raise ValueError(f"source fragment blob does not match manifest: {path}")
         try:
@@ -189,7 +195,7 @@ def release_snapshot(source_sha, date=None):
         "fragments": [{key: item[key] for key in ("path", "blob_sha")} for item in bindings],
         "changelog_sha256": _sha256(changelog_path),
         "generated_tree": generated_tree_sha,
-        "publication": {"artifacts": [], "build_command": "true"},
+        "publication": {"version": version, "source_main_sha": source_sha},
     }
     manifest_path = ROOT / MANIFEST_PATH
     manifest_path.parent.mkdir(parents=True, exist_ok=True)

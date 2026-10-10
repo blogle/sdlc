@@ -1,0 +1,9 @@
+{
+  "fragment": {
+    "path": ".changes/one.json",
+    "blob_sha": "73c3b4eee51dcc41adb41acff842b6c75deab9e4",
+    "content": "{\"semver\":\"patch\",\"summary\":\"one\",\"type\":\"fix\"}\n"
+  },
+  "changelog": "# Changelog\n\n## [1.0.0]\n\n- **fix**: one\n",
+  "generated_tree": "5c61d19274d5f3a3a12046083cf4cfd7a995cd45cbc1f506b37c9ae674cebc15"
+}

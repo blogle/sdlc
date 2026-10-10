@@ -24,6 +24,16 @@ API_SPEC.loader.exec_module(ruleset_api)
 
 
 class ChangelogTests(unittest.TestCase):
+    def test_shared_golden_generated_tree_digest(self):
+        fixture = json.loads((Path(__file__).parent / "fixtures/release-tree.json").read_text())
+        self.assertEqual(
+            sdlc._generated_tree_digest_bytes(
+                fixture["changelog"].encode(),
+                [{"path": fixture["fragment"]["path"], "blob_sha": fixture["fragment"]["blob_sha"]}],
+            ),
+            fixture["generated_tree"],
+        )
+
     def _git_repo(self, temp, fragments):
         root = Path(temp)
         (root / ".changes").mkdir(parents=True)
@@ -115,7 +125,7 @@ class ChangelogTests(unittest.TestCase):
                 self.assertEqual(manifest["schema"], 1)
                 self.assertIn("generated_tree", manifest)
                 self.assertNotIn("generated_tree_sha256", manifest)
-                self.assertEqual(manifest["publication"], {"artifacts": [], "build_command": "true"})
+                self.assertEqual(manifest["publication"], {"version": "1.0.0", "source_main_sha": source})
                 self.assertEqual(manifest["version"], "1.0.0")
                 self.assertEqual([item["path"] for item in manifest["fragments"]], [".changes/a.json", ".changes/b.json", ".changes/c.json"])
                 self.assertEqual([item["blob_sha"] for item in manifest["fragments"]], [
@@ -225,7 +235,7 @@ class ConsumerWorkflowTests(unittest.TestCase):
         self.assertIn("policy check --repo", workflow)
         self.assertIn("ruleset has been applied and read back successfully", workflow)
         self.assertNotIn("committed release manifest awaiting publication", workflow)
-        for field in ("schema=1", "prior_released_boundary", "source_main_sha", "generated_tree", "changelog_sha256", "publication{artifacts, build_command}"):
+        for field in ("schema=1", "prior_released_boundary", "source_main_sha", "generated_tree", "changelog_sha256", "publication{version, source_main_sha}"):
             self.assertIn(field, workflow)
         self.assertNotIn("committed release manifest awaiting publication", workflow)
 
@@ -236,6 +246,8 @@ class ConsumerWorkflowTests(unittest.TestCase):
         self.assertIn("git merge-base --is-ancestor \"$tag_sha\" \"$baseline\"", workflow)
         self.assertIn('git rev-parse "$tag_sha^"', workflow)
         self.assertIn('tag manifest differs from main', workflow)
+        self.assertIn(".isDraft == false and .publishedAt != null", workflow)
+        self.assertIn("lacks its exact durable asset digest", workflow)
 
     def test_release_reconcile_retries_races_without_competing_prs(self):
         workflow = (Path(__file__).parents[1] / ".github/workflows/release-reconcile.yml").read_text()

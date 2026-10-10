@@ -9,10 +9,14 @@ from __future__ import annotations
 import argparse
 import base64
 from dataclasses import dataclass
-import hashlib
 import json
 import subprocess
 from typing import Any, Callable, Iterable, Mapping, Protocol
+
+try:
+    from sdlc import verify_release_tree
+except ImportError:
+    from src.sdlc import verify_release_tree
 
 
 RELEASE_BRANCH = "sdlc/release-next"
@@ -68,14 +72,10 @@ def verify_manifest(
     Calling the planner twice is intentional: a planner that produces different
     results for the same snapshot is rejected before the release can merge.
     """
-    if manifest.get("schema_version") != 1:
-        raise GateError("release manifest schema_version must be 1")
+    if manifest.get("schema") != 1:
+        raise GateError("release manifest schema must be 1")
     if manifest.get("source_main_sha") != source_sha:
         raise GateError("manifest source_main_sha does not match current main")
-    fragments = manifest.get("fragments")
-    if not isinstance(fragments, list) or not fragments:
-        raise GateError("release manifest must contain fragments")
-
     expected = planner(source_sha=source_sha, manifest=manifest)
     repeat = planner(source_sha=source_sha, manifest=manifest)
     if dict(expected) != dict(repeat):
@@ -83,32 +83,10 @@ def verify_manifest(
     if dict(expected) != dict(manifest):
         raise GateError("release manifest differs from the coordinator plan")
 
-    for item in fragments:
-        if not isinstance(item, dict) or set(("path", "blob_sha")) - set(item):
-            raise GateError("manifest fragment entries require path and blob_sha")
-        path = item["path"]
-        if not isinstance(path, str) or not path.startswith(".changes/") or not path.endswith(".json"):
-            raise GateError(f"invalid fragment path {path!r}")
-        source_blob = git("rev-parse", f"{source_sha}:{path}")
-        if source_blob != item["blob_sha"]:
-            raise GateError(f"fragment blob changed at {path}")
-        try:
-            git("rev-parse", f"{head_sha}:{path}")
-        except GateError:
-            pass
-        else:
-            raise GateError(f"consumed fragment remains in release tree: {path}")
-
-    changelog_sha = hashlib.sha256(git("show", f"{head_sha}:CHANGELOG.md", raw=True)).hexdigest()
-    if manifest.get("changelog_digest") != changelog_sha:
-        raise GateError("CHANGELOG.md digest does not match manifest")
-    tree = git("rev-parse", f"{head_sha}^{{tree}}")
-    if manifest.get("generated_tree_identity") != tree:
-        raise GateError("generated tree identity does not match release head")
-    changed = set(git("diff", "--name-only", source_sha, head_sha).splitlines())
-    allowed = ALLOWED_GENERATED_PATHS | {item["path"] for item in fragments}
-    if not changed <= allowed:
-        raise GateError(f"release changes outside generated paths: {sorted(changed - allowed)}")
+    try:
+        verify_release_tree(source_sha, head_sha, manifest)
+    except (ValueError, subprocess.CalledProcessError) as exc:
+        raise GateError(f"shared release tree verification failed: {exc}") from exc
 
 
 def evaluate_release_gate(

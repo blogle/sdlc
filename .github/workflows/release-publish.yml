@@ -20,6 +20,17 @@ on:
         required: true
       SDLC_RELEASE_APP_PRIVATE_KEY:
         required: true
+  workflow_dispatch:
+    inputs:
+      merged_sha:
+        description: Actual squash-merged release commit on main
+        required: true
+        type: string
+      activate:
+        description: Explicit manual retry opt-in
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -60,6 +71,23 @@ jobs:
           test "$(git rev-parse HEAD)" = "$MERGED_SHA"
           git merge-base --is-ancestor "$MERGED_SHA" FETCH_HEAD
           python3 src/release_publisher.py "$MERGED_SHA" > identity.json
+      - name: Read durable artifact or build once from merged commit
+        env:
+          GH_TOKEN: ${{ steps.release-app.outputs.token }}
+          MERGED_SHA: ${{ inputs.merged_sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p .sdlc
+          version="$(jq -r .version .sdlc/release.json)"
+          tag="v${version}"
+          asset="sdlc-source-${version}-${MERGED_SHA}.tar.gz"
+          if gh release view "$tag" >/dev/null 2>&1 && asset_id="$(gh release view "$tag" --json assets --jq ".assets[] | select(.name == \"$asset\") | .id" || true)" && [[ -n "$asset_id" ]]; then
+            gh release download "$tag" --pattern "$asset" --dir .sdlc
+          else
+            git archive --format=tar.gz --output ".sdlc/$asset" "$MERGED_SHA"
+          fi
+          digest="$(sha256sum ".sdlc/$asset" | cut -d' ' -f1)"
+          printf 'asset=%s\ndigest=%s\n' "$asset" "$digest" > .sdlc/artifact.env
       - name: Create or verify exact annotated version tag
         env:
           MERGED_SHA: ${{ inputs.merged_sha }}
@@ -84,26 +112,24 @@ jobs:
           if ! gh release view "$tag" >/dev/null 2>&1; then
             gh release create "$tag" --verify-tag --draft --title "$tag" --notes "Release $tag from the verified merged commit $MERGED_SHA."
           fi
-      - name: Read or build one immutable source artifact
+      - name: Persist artifact bytes without overwriting
         env:
           GH_TOKEN: ${{ steps.release-app.outputs.token }}
           MERGED_SHA: ${{ inputs.merged_sha }}
         run: |
           set -euo pipefail
-          mkdir -p .sdlc
+          source .sdlc/artifact.env
           version="$(jq -r .version .sdlc/release.json)"
           tag="v${version}"
-          asset="sdlc-source-${version}-${MERGED_SHA}.tar.gz"
           asset_id="$(gh release view "$tag" --json assets --jq ".assets[] | select(.name == \"$asset\") | .id" || true)"
-          if [[ -n "$asset_id" ]]; then
-            gh release download "$tag" --pattern "$asset" --dir .sdlc
-          else
-            git archive --format=tar.gz --output ".sdlc/$asset" "$MERGED_SHA"
-            # No --clobber: a concurrent or interrupted upload must be read
-            # and verified on the next serialized retry, never replaced.
+          if [[ -z "$asset_id" ]]; then
             gh release upload "$tag" ".sdlc/$asset"
+          else
+            rm ".sdlc/$asset"
+            gh release download "$tag" --pattern "$asset" --dir .sdlc
           fi
           digest="$(sha256sum ".sdlc/$asset" | cut -d' ' -f1)"
+          [[ "$digest" == "$(awk -F= '$1 == "digest" {print $2}' .sdlc/artifact.env)" ]] || { echo "durable asset digest changed" >&2; exit 1; }
           remote_digest="$(gh release view "$tag" --json assets --jq ".assets[] | select(.name == \"$asset\") | .digest // \"\"" || true)"
           [[ -z "$remote_digest" || "$remote_digest" == "sha256:$digest" ]] || { echo "durable asset digest changed" >&2; exit 1; }
           python3 - <<PY

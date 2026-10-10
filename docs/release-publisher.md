@@ -16,26 +16,27 @@ manifest is authoritative only after its generated commit is squash-merged to
 
 ```json
 {
-  "schemaVersion": 1,
+  "schema": 1,
   "version": "1.2.3",
   "prior_released_boundary": "<prior source SHA or null>",
   "source_main_sha": "<40 lowercase hex characters>",
   "fragments": [{"path": ".changes/topic.json", "blob_sha": "<blob SHA>"}],
   "changelog_sha256": "<sha256 hex>",
-  "generated_tree_sha256": "<deterministic generated-file digest>",
+  "generated_tree": "<deterministic generated/deleted-record digest>",
   "publication": {"version": "1.2.3", "source_main_sha": "<same source SHA>"}
 }
 ```
 
 `fragments` are sorted and describe the exact blobs consumed by the generated
-commit. `generated_tree_sha256` is deliberately not a Git tree SHA: the Git
-tree contains `.sdlc/release.json`, so embedding its Git tree identity would be
-self-referential. The generator computes the digest over the sorted generated
-file set, currently `CHANGELOG.md`, as `path + NUL + bytes`; the publisher
-reconstructs that digest from the merged commit and independently verifies the
-complete source-to-merged tree diff. `publication` is metadata only and is not
-an artifact DSL. The publisher creates one standard source archive from the
-exact merged commit and stores it as a GitHub Release asset.
+commit. `generated_tree` is deliberately not a Git tree SHA: the Git tree
+contains `.sdlc/release.json`, so embedding its Git tree identity would be
+self-referential. The generator computes SHA-256 over sorted records
+`path NUL kind NUL content NUL`, recording `CHANGELOG.md/file/<bytes>` and
+each consumed fragment as `path/deleted/<source blob SHA ASCII>`. The publisher
+calls the shared `verify_release_tree` and independently checks the actual
+source-to-merged tree diff. `publication` is metadata only and is not an
+artifact DSL. The publisher creates one standard source archive from the exact
+merged commit and stores it as a GitHub Release asset.
 
 ## Publisher guarantees
 
@@ -52,12 +53,12 @@ exact merged commit and stores it as a GitHub Release asset.
   merged SHA. A conflict is a hard failure. Tagging uses the merged SHA, never
   the workflow event SHA or the replaceable release branch.
 - The workflow has non-cancelable per-repository serialization. It is a
-  reusable workflow with no `push` trigger in this PR and defaults to
-  `activate: false`, so no live release is activated before the updater and
-  release gate are deployed.
+  reusable/manual-retry workflow with no `push` trigger and defaults to
+  `activate: false`, so no live release is activated before the trusted
+  post-merge caller and release gate are deployed.
 
 The updater may add fields, but it must preserve these fields and semantics.
-The release-gate worker must use the same `schemaVersion`, digest names, and
+The release-gate worker must use the same `schema`, digest names, and
 publication shape. If the manifest is absent or differs from the actual
 merged tree, the publisher fails closed rather than guessing a source range or
 rebuilding a different release.

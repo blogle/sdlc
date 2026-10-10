@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from src.release_gate import Check, GateError, PullRequest, evaluate_release_gate, merge_release_pr, verify_manifest, verify_protection
 
@@ -63,13 +64,25 @@ class ReleaseGateTests(unittest.TestCase):
 
     def test_manifest_planner_must_be_deterministic(self):
         manifest = {
-            "schema_version": 1,
+            "schema": 1,
             "source_main_sha": "main",
             "fragments": [{"path": ".changes/one.json", "blob_sha": "blob"}],
         }
         calls = iter([manifest, {**manifest, "version": "different"}])
         with self.assertRaisesRegex(GateError, "not deterministic"):
             verify_manifest(source_sha="main", head_sha="head", manifest=manifest, git=lambda *args, **kwargs: "", planner=lambda **_: next(calls))
+
+    def test_manifest_verification_delegates_to_shared_release_tree(self):
+        manifest = {
+            "schema": 1,
+            "source_main_sha": "main",
+            "version": "1.0.0",
+            "fragments": [{"path": ".changes/one.json", "blob_sha": "blob"}],
+            "publication": {"version": "1.0.0", "source_main_sha": "main"},
+        }
+        with patch("src.release_gate.verify_release_tree") as verifier:
+            verify_manifest(source_sha="main", head_sha="head", manifest=manifest, git=lambda *args, **kwargs: "", planner=lambda **_: manifest)
+        verifier.assert_called_once_with("main", "head", manifest)
 
     def test_merge_uses_expected_head_and_rejects_base_race(self):
         api = FakeApi("new-main", self.release_pr(), [Check("sdlc / pr-fast", "success", "head"), Check("sdlc / release-gate", "success", "head")])
