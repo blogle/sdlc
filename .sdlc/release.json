@@ -1,18 +1,18 @@
 {
-  "changelog_sha256": "378e5aea8da45e4e2d7ce731be68899fa7371d13854b6e3e244c5c416ffc82bc",
+  "changelog_sha256": "327f8ef23a713f9d70914031b85e930c0a4ba626a649a00f59518d922933ddc4",
   "fragments": [
     {
-      "blob_sha": "714545ffcd5e63d36d706f752e47832990cff1db",
-      "path": ".changes/hestia-cache-reuse.json"
+      "blob_sha": "acd16ccd398aff0dd936d3c6d2ed378c3bd303d3",
+      "path": ".changes/portable-release-coordinator.json"
     }
   ],
-  "generated_tree": "bc17322532f048bbdd66802b1cc58b00a87e4626792735fa5a056a47f9ed1cc3",
-  "prior_released_boundary": "46ae53047adf8dff0f412def6a1de2e2e24f45d9",
+  "generated_tree": "2f546969850ffb06f3c73cd0fb867321d1239feccc7b80848dd1fc34ebf28893",
+  "prior_released_boundary": "fc725cb04eaab0d830303a542f42d5e96f18a14a",
   "publication": {
-    "source_main_sha": "fc725cb04eaab0d830303a542f42d5e96f18a14a",
-    "version": "1.2.2"
+    "source_main_sha": "19f288586edfdb55658c7cc53162570f84874564",
+    "version": "1.2.3"
   },
   "schema": 1,
-  "source_main_sha": "fc725cb04eaab0d830303a542f42d5e96f18a14a",
-  "version": "1.2.2"
+  "source_main_sha": "19f288586edfdb55658c7cc53162570f84874564",
+  "version": "1.2.3"
 }
