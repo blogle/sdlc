@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.2.3] - 2026-10-10
+
+- **fix**: package the portable release coordinator and repair hosted publication workflow setup
+
 ## [1.2.2] - 2026-10-10
 
 - **fix**: Reduce redundant Hestia CI rebuilding through shared cache warming, upstream filtering, and cache maintenance
