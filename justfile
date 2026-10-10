@@ -52,11 +52,16 @@ clean-room:
     trap 'rm -rf "$tmp"' EXIT
     cp examples/clean-room/flake.nix "$tmp/flake.nix"
     cp examples/clean-room/ci.nix "$tmp/ci.nix"
+    cp examples/clean-room/justfile "$tmp/justfile"
     cp -R examples/clean-room/.github "$tmp/.github"
     nix flake lock --override-input sdlc "github:blogle/sdlc/$ref" "$tmp"
     nix flake check "$tmp"
     nix run "$tmp#nix-eval-jobs" -- --flake "$tmp#hydraJobs.x86_64-linux.ci-pr-fast" --force-recurse --meta | python3 -c 'import json,sys; jobs=[json.loads(line) for line in sys.stdin if line.strip()]; assert len(jobs) == 2, jobs'
     nix run "$tmp#nix-eval-jobs" -- --flake "$tmp#hydraJobs.x86_64-linux.ci-candidate" --force-recurse --meta | python3 -c 'import json,sys; jobs=[json.loads(line) for line in sys.stdin if line.strip()]; assert len(jobs) == 2, jobs'
+    (cd "$tmp" && SDLC_RELEASE_VERSION=1.2.3 SDLC_RELEASE_MERGED_SHA=$(printf 'a%.0s' {1..40}) SDLC_RELEASE_SOURCE_SHA=$(printf 'b%.0s' {1..40}) SDLC_RELEASE_RECEIPTS=.sdlc/publication-receipts.json just --justfile "$tmp/justfile" release-publish 1.2.3)
+    test "$(jq '.artifacts | length' "$tmp/.sdlc/publication-receipts.json")" = 2
+    test "$(jq -r '[.artifacts[].name] | sort | join(",")' "$tmp/.sdlc/publication-receipts.json")" = anvil,sandbox
+    test "$(jq -r '.artifacts[] | .version' "$tmp/.sdlc/publication-receipts.json" | sort -u)" = 1.2.3
 
 changelog *args:
     sdlc changelog {{args}}
