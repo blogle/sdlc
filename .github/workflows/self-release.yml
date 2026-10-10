@@ -1,0 +1,21 @@
+name: SDLC self-release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Dogfood the same protected-main reconciliation path as consumers. The
+# reusable workflow owns the one reconciliation; this caller never pushes
+# main, creates a release PR, tags, or publishes directly.
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  reconcile:
+    uses: ./.github/workflows/release.yml
+    with:
+      merged_sha: ""
+      activate: false
+    secrets: inherit
