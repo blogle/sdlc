@@ -1,5 +1,0 @@
-{
-  "type": "fix",
-  "semver": "patch",
-  "summary": "Reduce redundant Hestia CI rebuilding through shared cache warming, upstream filtering, and cache maintenance"
-}
