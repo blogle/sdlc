@@ -1,5 +1,0 @@
-{
-  "type": "test",
-  "semver": "patch",
-  "summary": "Verify successor changelog history and multi-fragment output"
-}

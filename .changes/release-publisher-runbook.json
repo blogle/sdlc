@@ -1,5 +1,0 @@
-{
-  "type": "docs",
-  "semver": "patch",
-  "summary": "Document the live rolling-release publisher and exact-SHA recovery procedure"
-}

@@ -1,18 +1,26 @@
 {
-  "changelog_sha256": "620f04fc33b87b4287dfdbf756477f9a844bf5a34b70a70e70f2f090df8da876",
+  "changelog_sha256": "24538ab1291133f5eb1486880390aef61c06b314f21212ded26457f464036c2b",
   "fragments": [
     {
-      "blob_sha": "89ca215a23803111a3a6883000b77ad3d01d4814",
-      "path": ".changes/mergify-auto-progression.json"
+      "blob_sha": "0e73f0c7a36c6369487cda9523bed7eb52a4915c",
+      "path": ".changes/changelog-successor-regression.json"
+    },
+    {
+      "blob_sha": "72ac27c8c1e90e5c90164f5094b21047ecc656c1",
+      "path": ".changes/release-fragment-authoring.json"
+    },
+    {
+      "blob_sha": "b3a2e0629d8851d7c50849e245b58000acc65c96",
+      "path": ".changes/release-publisher-runbook.json"
     }
   ],
-  "generated_tree": "0b9a34200eb95431c9a904eb8aab9bbdca192167a255057b0c96bbc4ad347b0e",
-  "prior_released_boundary": null,
+  "generated_tree": "1efb59a7e7b4409e52886f8740c4748153120c3426ad0c4c0cbcee151b326148",
+  "prior_released_boundary": "be79bf361e632086fee5a42d48ca64a9d0f84327",
   "publication": {
-    "source_main_sha": "be79bf361e632086fee5a42d48ca64a9d0f84327",
-    "version": "1.2.0"
+    "source_main_sha": "46ae53047adf8dff0f412def6a1de2e2e24f45d9",
+    "version": "1.2.1"
   },
   "schema": 1,
-  "source_main_sha": "be79bf361e632086fee5a42d48ca64a9d0f84327",
-  "version": "1.2.0"
+  "source_main_sha": "46ae53047adf8dff0f412def6a1de2e2e24f45d9",
+  "version": "1.2.1"
 }
