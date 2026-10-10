@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.2.2] - 2026-10-10
+
+- **fix**: Reduce redundant Hestia CI rebuilding through shared cache warming, upstream filtering, and cache maintenance
+
 ## [1.2.1] - 2026-10-10
 
 - **test**: Verify successor changelog history and multi-fragment output
