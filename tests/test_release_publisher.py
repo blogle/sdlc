@@ -164,6 +164,11 @@ class PublisherTests(unittest.TestCase):
         self.assertIn("GH_TOKEN: ${{ steps.release-app.outputs.token }}", workflow)
         self.assertLess(workflow.index("Prepare one immutable source artifact"), workflow.index("Create or verify exact annotated version tag"))
 
+    def test_workflow_ruleset_validation_exits_only_on_invalid_ruleset(self):
+        workflow = (Path(__file__).parents[1] / ".github/workflows/release-publish.yml").read_text()
+        self.assertIn('sys.exit("canonical active ruleset missing; refusing publication") if len(matches) != 1 else None', workflow)
+        self.assertNotIn('raise SystemExit("canonical active ruleset missing; refusing publication") if len(matches) != 1 else None', workflow)
+
 
 if __name__ == "__main__":
     unittest.main()
