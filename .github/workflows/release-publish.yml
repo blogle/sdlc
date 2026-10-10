@@ -88,6 +88,8 @@ jobs:
           if git show-ref --verify --quiet "refs/tags/$tag"; then
             test "$(git rev-list -n1 "$tag")" = "$MERGED_SHA" || { echo "conflicting tag $tag" >&2; exit 1; }
           else
+            git config user.name 'sdlc-release[bot]'
+            git config user.email 'sdlc-release[bot]@users.noreply.github.com'
             git tag -a "$tag" "$MERGED_SHA" -m "Release $tag source=$MERGED_SHA"
             git push origin "refs/tags/$tag"
           fi
