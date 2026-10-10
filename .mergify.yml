@@ -2,6 +2,7 @@ pull_request_rules:
   - name: automatically queue validated candidates
     conditions:
       - base ~= ^(main|master)$
+      - head != sdlc/release-next
       - check-success = "sdlc / pr-fast"
       - or:
           - and:
@@ -19,6 +20,7 @@ queue_rules:
   - name: validated candidates
     queue_conditions:
       - base ~= ^(main|master)$
+      - head != sdlc/release-next
       - check-success = "sdlc / pr-fast"
       - or:
           - and:

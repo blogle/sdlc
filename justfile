@@ -18,7 +18,7 @@ check:
     renovate-config-validator --strict --no-global default.json
     nix run nixpkgs#yq-go -- eval '.' .mergify.yml >/dev/null
     nix run nixpkgs#yq-go -- eval '.' examples/minimal/.mergify.yml >/dev/null
-    nix run nixpkgs#yq-go -- eval -e '.concurrency.queue == "max" and .concurrency."cancel-in-progress" == false' .github/workflows/release.yml >/dev/null
+    nix run nixpkgs#yq-go -- eval -e '.concurrency.queue == "max" and .concurrency."cancel-in-progress" == false' .github/workflows/release-reconcile.yml >/dev/null
     nix run .#sdlc -- changelog check
     nix flake check --no-build
     nix build --no-link .#checks.x86_64-linux.test
@@ -60,3 +60,16 @@ clean-room:
 
 changelog *args:
     sdlc changelog {{args}}
+
+# Consumer publication contract. The publisher builds and records immutable
+# bytes in a version/SHA-keyed GitHub Release asset; this hook only finalizes
+# that exact tagged identity and never rebuilds.
+release-publish version:
+    test -n "{{version}}"
+    test -n "${SDLC_RELEASE_LEDGER:-}"
+    test -f "${SDLC_RELEASE_LEDGER}"
+    test "$(jq -r .version "${SDLC_RELEASE_LEDGER}")" = "{{version}}"
+    test "$(jq -r .tagged "${SDLC_RELEASE_LEDGER}")" = true
+    test "$(git rev-parse HEAD)" = "$(git rev-parse "refs/tags/v{{version}}^{commit}")"
+    gh release view "v{{version}}" >/dev/null
+    gh release edit "v{{version}}" --draft=false
