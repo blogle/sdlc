@@ -24,6 +24,9 @@ jobs:
       contents: read
       checks: read
       pull-requests: write
+      # The trusted built-in token dispatches the publisher workflow after the
+      # App independently merges the release PR. No Actions-write App grant needed.
+      actions: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -49,6 +52,8 @@ jobs:
             python3 src/release_gate.py merge --repo "$GITHUB_REPOSITORY" --pr "$pr" --release-bot "$RELEASE_BOT_LOGIN" --app-slug "$RELEASE_APP_SLUG"
             merged_sha="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq '.merge_commit_sha')"
             [[ "$merged_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "missing actual squash merged SHA" >&2; exit 1; }
-            gh workflow run release.yml --repo "$GITHUB_REPOSITORY" \
+            # workflow_dispatch is expressly permitted to be triggered using
+            # GITHUB_TOKEN. It avoids granting Actions write to the release App.
+            GH_TOKEN="${{ github.token }}" gh workflow run release.yml --repo "$GITHUB_REPOSITORY" \
               -f merged_sha="$merged_sha" -f activate="${{ vars.SDLC_RELEASE_ACTIVATE == 'true' }}"
           done
