@@ -163,6 +163,8 @@ class PublisherTests(unittest.TestCase):
         self.assertIn("gh auth setup-git", workflow)
         self.assertIn("GH_TOKEN: ${{ steps.release-app.outputs.token }}", workflow)
         self.assertLess(workflow.index("Prepare one immutable source artifact"), workflow.index("Create or verify exact annotated version tag"))
+        self.assertLess(workflow.index("git config user.name 'sdlc-release[bot]'"), workflow.index('git tag -a "$tag"'))
+        self.assertLess(workflow.index("git config user.email 'sdlc-release[bot]@users.noreply.github.com'"), workflow.index('git tag -a "$tag"'))
 
     def test_workflow_ruleset_validation_exits_only_on_invalid_ruleset(self):
         workflow = (Path(__file__).parents[1] / ".github/workflows/release-publish.yml").read_text()
