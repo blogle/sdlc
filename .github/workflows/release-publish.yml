@@ -1,0 +1,180 @@
+name: SDLC merged release publisher
+
+# Reusable-only and opt-in until the updater and release gate are coordinated.
+# The canonical ruleset is checked again in the job; it is not inferred from
+# repository configuration.
+on:
+  workflow_call:
+    inputs:
+      merged_sha:
+        description: Actual squash-merged release commit on main
+        required: true
+        type: string
+      activate:
+        description: Explicit opt-in after updater and release-gate rollout
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      SDLC_RELEASE_APP_ID:
+        required: true
+      SDLC_RELEASE_APP_PRIVATE_KEY:
+        required: true
+  workflow_dispatch:
+    inputs:
+      merged_sha:
+        description: Actual squash-merged release commit on main
+        required: true
+        type: string
+      activate:
+        description: Explicit manual retry opt-in
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sdlc-release-publish-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: ${{ inputs.activate }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@v1
+        id: release-app
+        with:
+          app-id: ${{ secrets.SDLC_RELEASE_APP_ID }}
+          private-key: ${{ secrets.SDLC_RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.merged_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          token: ${{ steps.release-app.outputs.token }}
+      - uses: DeterminateSystems/nix-installer-action@v23
+      - name: Verify canonical protection and actual merged identity
+        env:
+          GH_TOKEN: ${{ steps.release-app.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
+          MERGED_SHA: ${{ inputs.merged_sha }}
+        run: |
+          set -euo pipefail
+          rulesets="$(gh api "repos/${REPOSITORY}/rulesets" --paginate)"
+          REPOSITORY="$REPOSITORY" python3 -c 'import json,os,sys; data=json.load(sys.stdin); repo=os.environ["REPOSITORY"]; matches=[x for x in data if x.get("name") == "SDLC default branch" and x.get("source", repo) == repo and x.get("enforcement") == "active"]; raise SystemExit("canonical active ruleset missing; refusing publication") if len(matches) != 1 else None' <<<"$rulesets"
+          nix run .#sdlc -- policy check --repo "$REPOSITORY"
+          git fetch origin main --tags
+          test "$(git rev-parse HEAD)" = "$MERGED_SHA"
+          git merge-base --is-ancestor "$MERGED_SHA" FETCH_HEAD
+          python3 src/release_publisher.py "$MERGED_SHA" > identity.json
+      - name: Read durable artifact or build once from merged commit
+        env:
+          GH_TOKEN: ${{ steps.release-app.outputs.token }}
+          MERGED_SHA: ${{ inputs.merged_sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p .sdlc
+          version="$(jq -r .version .sdlc/release.json)"
+          tag="v${version}"
+          asset="sdlc-source-${version}-${MERGED_SHA}.tar.gz"
+          if gh release view "$tag" >/dev/null 2>&1 && asset_id="$(gh release view "$tag" --json assets --jq ".assets[] | select(.name == \"$asset\") | .id" || true)" && [[ -n "$asset_id" ]]; then
+            gh release download "$tag" --pattern "$asset" --dir .sdlc
+          else
+            git archive --format=tar.gz --output ".sdlc/$asset" "$MERGED_SHA"
+          fi
+          digest="$(sha256sum ".sdlc/$asset" | cut -d' ' -f1)"
+          printf 'asset=%s\ndigest=%s\n' "$asset" "$digest" > .sdlc/artifact.env
+      - name: Create or verify exact annotated version tag
+        env:
+          MERGED_SHA: ${{ inputs.merged_sha }}
+        run: |
+          set -euo pipefail
+          version="$(jq -r .version .sdlc/release.json)"
+          tag="v${version}"
+          if git show-ref --verify --quiet "refs/tags/$tag"; then
+            test "$(git rev-list -n1 "$tag")" = "$MERGED_SHA" || { echo "conflicting tag $tag" >&2; exit 1; }
+          else
+            git tag -a "$tag" "$MERGED_SHA" -m "Release $tag source=$MERGED_SHA"
+            git push origin "refs/tags/$tag"
+          fi
+      - name: Create or verify draft GitHub Release
+        env:
+          GH_TOKEN: ${{ steps.release-app.outputs.token }}
+          MERGED_SHA: ${{ inputs.merged_sha }}
+        run: |
+          set -euo pipefail
+          version="$(jq -r .version .sdlc/release.json)"
+          tag="v${version}"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --verify-tag --draft --title "$tag" --notes "Release $tag from the verified merged commit $MERGED_SHA."
+          fi
+      - name: Persist artifact bytes without overwriting
+        env:
+          GH_TOKEN: ${{ steps.release-app.outputs.token }}
+          MERGED_SHA: ${{ inputs.merged_sha }}
+        run: |
+          set -euo pipefail
+          source .sdlc/artifact.env
+          version="$(jq -r .version .sdlc/release.json)"
+          tag="v${version}"
+          asset_id="$(gh release view "$tag" --json assets --jq ".assets[] | select(.name == \"$asset\") | .id" || true)"
+          if [[ -z "$asset_id" ]]; then
+            gh release upload "$tag" ".sdlc/$asset"
+          else
+            rm ".sdlc/$asset"
+            gh release download "$tag" --pattern "$asset" --dir .sdlc
+          fi
+          digest="$(sha256sum ".sdlc/$asset" | cut -d' ' -f1)"
+          [[ "$digest" == "$(awk -F= '$1 == "digest" {print $2}' .sdlc/artifact.env)" ]] || { echo "durable asset digest changed" >&2; exit 1; }
+          remote_digest="$(gh release view "$tag" --json assets --jq ".assets[] | select(.name == \"$asset\") | .digest // \"\"" || true)"
+          [[ -z "$remote_digest" || "$remote_digest" == "sha256:$digest" ]] || { echo "durable asset digest changed" >&2; exit 1; }
+          python3 - <<PY
+          import json
+          import sys
+          sys.path.insert(0, 'src')
+          from pathlib import Path
+          from release_publisher import ArtifactLedger, validate_checkout
+          identity = validate_checkout("$MERGED_SHA")
+          ledger = ArtifactLedger.load_or_create(Path('.sdlc/release-ledger.json'), identity)
+          ledger.record_artifact("$asset", "$digest")
+          ledger.mark_tagged()
+          ledger.save()
+          PY
+      - name: Save publication audit ledger
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-ledger-${{ inputs.merged_sha }}-${{ github.run_id }}-tagged
+          path: .sdlc/release-ledger.json
+          retention-days: 90
+      - name: Publish exact tag and durable asset through consumer contract
+        env:
+          SDLC_RELEASE_LEDGER: .sdlc/release-ledger.json
+        run: |
+          set -euo pipefail
+          version="$(jq -r .version .sdlc/release.json)"
+          nix develop -c just release-publish "$version"
+      - name: Record completed publication
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import sys
+          sys.path.insert(0, 'src')
+          from pathlib import Path
+          from release_publisher import ArtifactLedger, ReleaseIdentity
+          data = json.loads(Path('.sdlc/release-ledger.json').read_text())
+          identity = ReleaseIdentity(data['version'], data['merged_sha'], data['source_main_sha'], data['tree_sha'], data['changelog_sha256'], tuple(map(tuple, data['fragments'])))
+          ledger = ArtifactLedger.load_or_create(Path('.sdlc/release-ledger.json'), identity)
+          ledger.mark_published()
+          ledger.save()
+          PY
+      - name: Save completed publication audit ledger
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-ledger-${{ inputs.merged_sha }}-${{ github.run_id }}-published
+          path: .sdlc/release-ledger.json
+          retention-days: 90
