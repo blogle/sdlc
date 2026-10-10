@@ -18,7 +18,7 @@ check:
     renovate-config-validator --strict --no-global default.json
     nix run nixpkgs#yq-go -- eval '.' .mergify.yml >/dev/null
     nix run nixpkgs#yq-go -- eval '.' examples/minimal/.mergify.yml >/dev/null
-    nix run nixpkgs#yq-go -- eval -e '.concurrency.queue == "max" and .concurrency."cancel-in-progress" == false' .github/workflows/release.yml >/dev/null
+    nix run nixpkgs#yq-go -- eval -e '.concurrency.queue == "max" and .concurrency."cancel-in-progress" == false' .github/workflows/release-reconcile.yml >/dev/null
     nix run .#sdlc -- changelog check
     nix flake check --no-build
     nix build --no-link .#checks.x86_64-linux.test

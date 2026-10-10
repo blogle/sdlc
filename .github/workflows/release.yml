@@ -12,11 +12,6 @@ on:
         type: boolean
         required: false
         default: false
-      publish_version:
-        description: Reserved for the post-merge publisher; milestone 1/2 fail closed.
-        type: string
-        required: false
-        default: ""
     secrets:
       SDLC_RELEASE_APP_ID:
         required: true
@@ -38,27 +33,16 @@ permissions:
   contents: write
   pull-requests: write
 
-concurrency:
-  group: sdlc-release-reconcile-${{ github.repository }}
-  queue: max
-  cancel-in-progress: false
-
 jobs:
   reconcile:
-    if: inputs.publish_version == '' && inputs.merged_sha == ''
+    if: inputs.merged_sha == ''
     uses: ./.github/workflows/release-reconcile.yml
     secrets: inherit
 
   publish:
-    if: inputs.merged_sha != '' && inputs.publish_version == ''
+    if: inputs.merged_sha != ''
     uses: ./.github/workflows/release-publish.yml
     with:
       merged_sha: ${{ inputs.merged_sha }}
       activate: ${{ inputs.activate }}
     secrets: inherit
-  publication-not-implemented:
-    if: inputs.publish_version != ''
-    runs-on: ubuntu-latest
-    steps:
-      - name: Fail closed for the retired publication input
-        run: printf 'publish_version is retired; provide actual merged_sha\n' >&2; exit 1

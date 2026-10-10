@@ -266,7 +266,7 @@ def verify_candidate(source_sha: str, head_sha: str, manifest: Mapping[str, Any]
 def evaluate_release_gate(*, pr: PullRequest, authenticated_login: str, app_slug: str, main_sha: str, parent_sha: str | None, checks: Iterable[Check], manifest: Mapping[str, Any] | None, release_bot_login: str, repository: str, protection: Mapping[str, Any], planner: Callable[[str], Mapping[str, Any]] = replay_snapshot) -> None:
     if pr.head_branch != RELEASE_BRANCH:
         return
-    if (authenticated_login != release_bot_login or pr.head_login != release_bot_login or pr.head_type != "Bot" or pr.author_login != release_bot_login or pr.author_type != "Bot" or pr.head_repo != repository):
+    if (authenticated_login != release_bot_login or pr.author_login != release_bot_login or pr.author_type != "Bot" or pr.head_repo != repository):
         raise GateError("release PR is not owned by the authenticated release App")
     verify_protection(protection)
     if parent_sha != main_sha:
@@ -311,7 +311,7 @@ def merge_release_pr(*, api: GithubMergeApi, pr_number: int, expected_head_sha: 
     pr = api.pull_request(pr_number)
     if pr.head_branch != RELEASE_BRANCH or pr.head_sha != expected_head_sha:
         raise GateError("release head changed before merge")
-    if pr.head_login != release_bot_login or pr.head_type != "Bot" or pr.author_login != release_bot_login or pr.author_type != "Bot":
+    if pr.author_login != release_bot_login or pr.author_type != "Bot" or pr.head_repo != api.repo:
         raise GateError("release PR is not owned by the release App")
     if api.main_sha() != current_main_sha:
         raise GateError("main advanced before merge; regenerate release candidate")

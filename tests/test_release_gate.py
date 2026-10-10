@@ -16,10 +16,11 @@ PROTECTION = {"classic": True, "contexts": ["sdlc / pr-fast"], "bypass_actors": 
 
 
 class FakeApi:
-    def __init__(self, main, pr, checks):
+    def __init__(self, main, pr, checks, app_slug="release-bot"):
         self._main, self._pr, self._checks = main, pr, checks
         self.merge_args = None
-        self.app_slug = "release-bot"
+        self.app_slug = app_slug
+        self.repo = "blogle/sdlc"
 
     def main_sha(self):
         return self._main
@@ -43,7 +44,7 @@ class FakeApi:
 
 class ReleaseGateTests(unittest.TestCase):
     def release_pr(self, head="head"):
-        return PullRequest(14, head, "sdlc/release-next", "release-bot[bot]", "Bot", "blogle/sdlc", "release-bot[bot]", "Bot")
+        return PullRequest(14, head, "sdlc/release-next", "blogle", "User", "blogle/sdlc", "release-bot[bot]", "Bot")
 
     def test_normal_pr_is_stable_success_without_freshness(self):
         evaluate_release_gate(
@@ -60,12 +61,29 @@ class ReleaseGateTests(unittest.TestCase):
             )
 
     def test_release_requires_authenticated_app_and_same_repository_branch(self):
-        pr = PullRequest(14, "head", "sdlc/release-next", "release-bot[bot]", "Bot", "attacker/sdlc", "release-bot[bot]", "Bot")
+        pr = PullRequest(14, "head", "sdlc/release-next", "blogle", "User", "attacker/sdlc", "release-bot[bot]", "Bot")
         with self.assertRaisesRegex(GateError, "authenticated release App"):
             evaluate_release_gate(
                 pr=pr, authenticated_login="release-bot[bot]", app_slug="release-bot", main_sha="main", parent_sha="main",
                 checks=(), manifest={}, release_bot_login="release-bot[bot]", repository="blogle/sdlc", protection=PROTECTION,
             )
+
+    def test_same_repository_head_owner_is_not_required_to_be_the_app(self):
+        response = json.loads((Path(__file__).parent / "fixtures/release-pr.json").read_text())
+        with patch.object(release_gate, "_gh_json", return_value=response):
+            pr = release_gate._pull_request("blogle/sdlc", 14)
+        self.assertEqual(pr.head_login, "blogle")
+        self.assertEqual(pr.head_type, "User")
+        self.assertEqual(pr.author_login, "sdlc-release[bot]")
+        self.assertEqual(pr.author_type, "Bot")
+        api = FakeApi("main", pr, [Check("sdlc / pr-fast", "success", "head"), Check("sdlc / release-gate", "success", "head", "sdlc-release")], "sdlc-release")
+        merge_release_pr(api=api, pr_number=14, expected_head_sha="head", current_main_sha="main", release_bot_login="sdlc-release[bot]")
+
+    def test_same_repository_release_pr_by_human_is_rejected(self):
+        pr = PullRequest(14, "head", "sdlc/release-next", "blogle", "User", "blogle/sdlc", "blogle", "User")
+        api = FakeApi("main", pr, [])
+        with self.assertRaisesRegex(GateError, "release App"):
+            merge_release_pr(api=api, pr_number=14, expected_head_sha="head", current_main_sha="main", release_bot_login="sdlc-release[bot]")
 
     def test_installation_auth_uses_supported_provenance_endpoints_only(self):
         with patch.object(release_gate, "_gh_json", side_effect=lambda endpoint: {

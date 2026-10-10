@@ -1,8 +1,5 @@
 name: SDLC rolling release reconcile
 on:
-  push:
-    branches: [main]
-  workflow_dispatch:
   workflow_call:
     secrets:
       SDLC_RELEASE_APP_ID:
@@ -12,6 +9,7 @@ on:
 
 concurrency:
   group: sdlc-release-reconcile-${{ github.repository }}
+  queue: max
   cancel-in-progress: false
 
 jobs:
