@@ -180,6 +180,8 @@ class PublisherTests(unittest.TestCase):
         self.assertIn("gh release download", workflow)
         self.assertIn("gh release upload", workflow)
         self.assertIn("git archive --format=tar.gz", workflow)
+        self.assertIn('cmp -- ".sdlc/$asset.expected" ".sdlc/$asset"', workflow)
+        self.assertIn("durable source asset bytes changed", workflow)
         self.assertIn("sdlc-source-${version}-${MERGED_SHA}.tar.gz", workflow)
         self.assertIn("isDraft", workflow)
         self.assertIn("published immutable asset digest is missing", workflow)
