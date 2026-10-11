@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.0] - 2026-10-11
+
+- **feature**: add idempotent release onboarding and activation preflight
+- **fix**: centralize thin consumer status, policy, and publication workflow adapters
+
 ## [1.2.4] - 2026-10-11
 
 - **fix**: stabilize release gate check-run retries without weakening authorization
