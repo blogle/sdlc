@@ -78,6 +78,11 @@ jobs:
             head_sha="$(jq -r '.head.sha' <<<"$pr_json")"
             [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]] || continue
             git fetch --no-tags origin "$head_sha"
+            for ((attempt = 1; attempt <= 12; attempt++)); do
+              check_state="$(gh api "repos/$GITHUB_REPOSITORY/commits/$head_sha/check-runs?per_page=100" --jq '[.check_runs[] | select(.name == "sdlc / pr-fast" and .head_sha == "'"$head_sha"'")] | sort_by(.started_at) | last | [.status // "", .conclusion // ""] | @tsv')"
+              [[ "${check_state%%$'\t'*}" == completed ]] && break
+              sleep 10
+            done
             set +e
             nix run "$SDLC_FLAKE"#sdlc -- release gate --repo "$GITHUB_REPOSITORY" --pr "$pr_number" --release-bot "$RELEASE_BOT_LOGIN" --app-slug "$RELEASE_APP_SLUG"
             result=$?
@@ -130,6 +135,11 @@ jobs:
           for pr in $prs; do
             head_sha="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq '.head.sha')"
             git fetch --no-tags origin "$head_sha"
+            for ((attempt = 1; attempt <= 12; attempt++)); do
+              check_state="$(gh api "repos/$GITHUB_REPOSITORY/commits/$head_sha/check-runs?per_page=100" --jq '[.check_runs[] | select(.name == "sdlc / pr-fast" and .head_sha == "'"$head_sha"'")] | sort_by(.started_at) | last | [.status // "", .conclusion // ""] | @tsv')"
+              [[ "${check_state%%$'\t'*}" == completed ]] && break
+              sleep 10
+            done
             set +e
             nix run "$SDLC_FLAKE"#sdlc -- release gate --repo "$GITHUB_REPOSITORY" --pr "$pr" --release-bot "$RELEASE_BOT_LOGIN" --app-slug "$RELEASE_APP_SLUG"
             result=$?

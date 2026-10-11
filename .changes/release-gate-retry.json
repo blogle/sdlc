@@ -1,0 +1,1 @@
+{"semver":"patch","summary":"stabilize release gate check-run retries without weakening authorization","type":"fix"}

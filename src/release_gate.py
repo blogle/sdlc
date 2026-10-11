@@ -113,7 +113,9 @@ def _checks(repo: str, sha: str) -> list[Check]:
     ):
         raise GateError(f"ambiguous paginated GitHub check data for {sha}")
     items = [item for page in pages for item in page["check_runs"]]
-    if any(not isinstance(item, dict) or not isinstance(item.get("id"), int) or not isinstance(item.get("completed_at"), str) or not item["completed_at"] for item in items):
+    if any(not isinstance(item, dict) or not isinstance(item.get("id"), int) for item in items):
+        raise GateError(f"ambiguous GitHub check metadata for {sha}")
+    if any(item.get("status") == "completed" and (not isinstance(item.get("completed_at"), str) or not item["completed_at"]) for item in items):
         raise GateError(f"ambiguous GitHub check metadata for {sha}")
     ids = [item["id"] for item in items]
     if len(ids) != len(set(ids)):
