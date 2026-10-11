@@ -148,9 +148,11 @@ def _required_check(checks: Iterable[Check], name: str, sha: str, app_slug: str 
 
 
 def verify_protection(protection: Mapping[str, Any], required_checks: Iterable[str] = REQUIRED_CHECKS) -> None:
-    active = [item for item in protection.get("rulesets", ()) if item.get("enforcement") == "active"]
+    active = [item for item in protection.get("rulesets", ()) if item.get("enforcement") == "active" and item.get("name") == "SDLC default branch"]
     if not active and not protection.get("classic"):
         raise GateError("no applicable branch protection or active ruleset is configured")
+    if active and "bypass_actors" not in protection:
+        raise GateError("canonical ruleset bypass actors are not visible; refusing release merge")
     if protection.get("strict") is True:
         raise GateError("global strict freshness is enabled; release gate will not change repository policy")
     if protection.get("bypass_actors"):
@@ -169,16 +171,25 @@ def _protection(repo: str, branch: str) -> Mapping[str, Any]:
     contexts = set(classic.get("required_status_checks", {}).get("contexts", ()))
     strict = classic.get("required_status_checks", {}).get("strict")
     bypass = []
+    applicable = []
     for summary in rulesets:
-        bypass.extend(summary.get("bypass_actors") or ())
         detail = summary if summary.get("rules") else _gh_json(f"repos/{repo}/rulesets/{summary['id']}")
+        if detail.get("enforcement") != "active" or detail.get("name") != "SDLC default branch":
+            continue
+        includes = detail.get("conditions", {}).get("ref_name", {}).get("include", ())
+        if "~DEFAULT_BRANCH" not in includes and f"refs/heads/{branch}" not in includes:
+            continue
+        if "bypass_actors" not in detail:
+            raise GateError("canonical ruleset bypass actors are not visible; refusing release merge")
+        applicable.append(detail)
+        bypass.extend(detail["bypass_actors"])
         for rule in detail.get("rules", ()):
             if rule.get("type") != "required_status_checks":
                 continue
             params = rule.get("parameters", {})
             contexts.update(item.get("context") for item in params.get("required_status_checks", ()))
             strict = strict or params.get("strict_required_status_checks_policy", False)
-    return {"classic": bool(classic), "rulesets": rulesets, "contexts": contexts, "strict": strict, "bypass_actors": bypass}
+    return {"classic": bool(classic), "rulesets": applicable, "contexts": contexts, "strict": strict, "bypass_actors": bypass}
 
 
 def _authenticated_app(release_bot_login: str, app_slug: str, repository: str) -> tuple[str, str]:

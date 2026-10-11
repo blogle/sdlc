@@ -172,6 +172,21 @@ class ReleaseGateTests(unittest.TestCase):
         with self.assertRaisesRegex(GateError, "no applicable"):
             verify_protection({"rulesets": [], "classic": False, "contexts": [], "bypass_actors": []})
 
+    def test_unrelated_active_ruleset_does_not_satisfy_release_protection(self):
+        with self.assertRaisesRegex(GateError, "no applicable"):
+            verify_protection({"rulesets": [{"name": "unrelated", "enforcement": "active"}], "classic": False, "contexts": ["sdlc / pr-fast"], "bypass_actors": []})
+
+    def test_redacted_canonical_bypass_actors_fail_closed(self):
+        def response(endpoint):
+            if endpoint == "repos/blogle/sdlc/rulesets?includes_parents=true":
+                return [{"id": 7, "name": "SDLC default branch", "enforcement": "active"}]
+            if endpoint == "repos/blogle/sdlc/branches/main/protection":
+                raise GateError("no classic protection")
+            return {"id": 7, "name": "SDLC default branch", "enforcement": "active", "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"]}}, "rules": []}
+
+        with patch.object(release_gate, "_gh_json", side_effect=response), self.assertRaisesRegex(GateError, "bypass actors"):
+            release_gate._protection("blogle/sdlc", "main")
+
     def test_manifest_uses_canonical_coordinator_schema_and_replays_twice(self):
         changelog = b"# Changelog\n\n## [1.0.0]\n"
         manifest = {

@@ -50,6 +50,15 @@ class OnboardTests(unittest.TestCase):
         set_variable.assert_not_called()
         policy.assert_not_called()
 
+    def test_installation_token_is_not_put_in_gh_argv_or_error_text(self):
+        token = "installation-token-secret"
+        completed = onboard.subprocess.CompletedProcess([], 0, '{"full_name":"owner/repo"}', "")
+        with patch.object(onboard.subprocess, "run", return_value=completed) as run:
+            self.assertEqual(onboard._gh_api("repos/owner/repo", token=token), {"full_name": "owner/repo"})
+        command = run.call_args.args[0]
+        self.assertNotIn(token, command)
+        self.assertEqual(run.call_args.kwargs["env"]["GH_TOKEN"], token)
+
 
 if __name__ == "__main__":
     unittest.main()
