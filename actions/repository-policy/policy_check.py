@@ -68,6 +68,15 @@ def read_live_rulesets(repository):
     return rulesets
 
 
+def require_active_canonical_ruleset(live_rulesets, repository):
+    _, owned = canonical_rulesets(live_rulesets, "SDLC default branch", repository)
+    if len(owned) != 1 or owned[0].get("enforcement") != "active":
+        raise ValueError(
+            f"active canonical ruleset is required; run `nix develop -c sdlc policy plan --repo {repository}` "
+            f"then apply the reviewed plan before retrying"
+        )
+
+
 def main():
     repository = os.environ["GITHUB_REPOSITORY"]
     default_branch = os.environ["DEFAULT_BRANCH"]
@@ -98,6 +107,7 @@ def main():
         default_branch,
         event == "pull_request",
     )
+    require_active_canonical_ruleset(live, repository)
 
 
 if __name__ == "__main__":

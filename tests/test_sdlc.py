@@ -352,6 +352,14 @@ class RepositoryPolicyTests(unittest.TestCase):
         self.assertIn("test \"${{ needs.policy.result }}\" = success", caller)
         self.assertNotIn("SDLC_POLICY_APP", caller)
 
+    def test_status_gate_centralizes_stable_context_and_queue_routing(self):
+        action = (Path(__file__).parents[1] / "actions/status-gate/action.yml").read_text()
+        self.assertIn('test "$RESULT" = skipped', action)
+        self.assertIn('mergify/merge-queue/*', action)
+        candidate = (Path(__file__).parents[1] / ".github/workflows/candidate.yml").read_text()
+        self.assertIn("github.event_name == 'merge_group'", candidate)
+        self.assertIn("startsWith(github.head_ref, 'mergify/merge-queue/')", candidate)
+
     def test_external_consumer_check_needs_no_sdlc_scripts_in_caller_checkout(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -371,7 +379,8 @@ class RepositoryPolicyTests(unittest.TestCase):
                  patch.object(policy_check.Path, "cwd", return_value=root), \
                  patch.object(policy_check.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "", "missing base config")), \
                  patch.object(policy_check, "read_live_rulesets", return_value=[]), \
-                 redirect_stdout(io.StringIO()) as output:
+                 redirect_stdout(io.StringIO()) as output, \
+                 self.assertRaisesRegex(ValueError, "active canonical ruleset is required"):
                 policy_check.main()
             self.assertIn("FIRST-ONBOARDING", output.getvalue())
 
@@ -403,6 +412,15 @@ class RepositoryPolicyTests(unittest.TestCase):
         already_live = [dict(repository_policy.render_policy({"require_policy_check": False}, "main"), source="owner/repo")]
         with self.assertRaisesRegex(ValueError, "not first-time onboarding"):
             policy_check.evaluate_policy_check({"require_policy_check": False}, None, already_live, True, "owner/repo", "main", True)
+
+    def test_policy_runtime_requires_one_active_owned_canonical_ruleset(self):
+        desired = repository_policy.render_policy({}, "main")
+        active = dict(desired, source="owner/repo", enforcement="active")
+        policy_check.require_active_canonical_ruleset([active], "owner/repo")
+        with self.assertRaisesRegex(ValueError, "active canonical ruleset is required"):
+            policy_check.require_active_canonical_ruleset([], "owner/repo")
+        with self.assertRaisesRegex(ValueError, "active canonical ruleset is required"):
+            policy_check.require_active_canonical_ruleset([dict(active, enforcement="disabled")], "owner/repo")
 
     def test_existing_onboarded_base_cannot_delete_or_lose_declaration(self):
         with self.assertRaisesRegex(ValueError, "policy declaration was removed"):
