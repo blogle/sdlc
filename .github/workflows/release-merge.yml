@@ -84,7 +84,7 @@ jobs:
               if [[ -n "$recovery" ]]; then
                 read -r pr head_sha merged_sha <<< "$recovery"
                 git fetch --no-tags origin "$head_sha" "$merged_sha"
-                nix run "$SDLC_FLAKE"#sdlc -- release gate --repo "$GITHUB_REPOSITORY" --pr "$pr" --release-bot "$RELEASE_BOT_LOGIN" --app-slug "$RELEASE_APP_SLUG"
+                nix run "$SDLC_FLAKE"#sdlc -- release gate --repo "$GITHUB_REPOSITORY" --pr "$pr" --release-bot "$RELEASE_BOT_LOGIN" --app-slug "$RELEASE_APP_SLUG" --historical-merged-sha "$merged_sha"
                 [[ "$merged_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "missing recovered squash merged SHA" >&2; exit 1; }
                 printf 'merged_sha=%s\n' "$merged_sha" >> "$GITHUB_OUTPUT"
               fi

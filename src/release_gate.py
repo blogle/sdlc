@@ -352,6 +352,20 @@ def _gate_command(args: argparse.Namespace) -> int:
     repo = _gh_json(f"repos/{args.repo}")
     main = _gh_json(f"repos/{args.repo}/commits/{repo['default_branch']}")
     commit = _gh_json(f"repos/{args.repo}/commits/{pr.head_sha}")
+    if args.historical_merged_sha:
+        manifest = _manifest_at(args.repo, pr.head_sha)
+        source_sha = manifest.get("source_main_sha") if manifest else None
+        if not source_sha or (commit.get("parents") or [{}])[0].get("sha") != source_sha:
+            raise GateError("historical release head parent does not match manifest source_main_sha")
+        merged = _gh_json(f"repos/{args.repo}/commits/{args.historical_merged_sha}")
+        parents = merged.get("parents") or []
+        if len(parents) != 1 or parents[0].get("sha") != source_sha:
+            raise GateError("historical squash merge does not match manifest source_main_sha")
+        verify_protection(_protection(args.repo, repo["default_branch"]))
+        _required_check(_checks(args.repo, pr.head_sha), "sdlc / pr-fast", pr.head_sha)
+        _required_check(_checks(args.repo, pr.head_sha), RELEASE_CHECK, pr.head_sha, slug)
+        verify_candidate(source_sha, args.historical_merged_sha, manifest)
+        return 0
     evaluate_release_gate(
         pr=pr,
         authenticated_login=login,
@@ -394,6 +408,7 @@ def main() -> int:
         command.add_argument("--pr", type=int, required=True)
         command.add_argument("--release-bot", required=True)
         command.add_argument("--app-slug", default="")
+    commands.choices["gate"].add_argument("--historical-merged-sha", default="")
     commands.choices["merge"].add_argument("--expected-head")
     args = parser.parse_args()
     try:
