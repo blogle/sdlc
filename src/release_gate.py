@@ -173,7 +173,7 @@ def _protection(repo: str, branch: str) -> Mapping[str, Any]:
     bypass = []
     applicable = []
     for summary in rulesets:
-        detail = summary if summary.get("rules") else _gh_json(f"repos/{repo}/rulesets/{summary['id']}")
+        detail = _gh_json(f"repos/{repo}/rulesets/{summary['id']}") if summary.get("id") else summary
         if detail.get("enforcement") != "active" or detail.get("name") != "SDLC default branch":
             continue
         includes = detail.get("conditions", {}).get("ref_name", {}).get("include", ())

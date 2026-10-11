@@ -187,6 +187,22 @@ class ReleaseGateTests(unittest.TestCase):
         with patch.object(release_gate, "_gh_json", side_effect=response), self.assertRaisesRegex(GateError, "bypass actors"):
             release_gate._protection("blogle/sdlc", "main")
 
+    def test_ruleset_summary_is_not_used_as_full_protection_detail(self):
+        calls = []
+
+        def response(endpoint):
+            calls.append(endpoint)
+            if endpoint == "repos/blogle/sdlc/rulesets?includes_parents=true":
+                return [{"id": 7, "name": "SDLC default branch", "enforcement": "active", "rules": [{"type": "required_status_checks"}]}]
+            if endpoint == "repos/blogle/sdlc/branches/main/protection":
+                raise GateError("no classic protection")
+            return {"id": 7, "name": "SDLC default branch", "enforcement": "active", "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"]}}, "bypass_actors": [], "rules": []}
+
+        with patch.object(release_gate, "_gh_json", side_effect=response):
+            protection = release_gate._protection("blogle/sdlc", "main")
+        self.assertIn("repos/blogle/sdlc/rulesets/7", calls)
+        self.assertEqual(protection["bypass_actors"], [])
+
     def test_manifest_uses_canonical_coordinator_schema_and_replays_twice(self):
         changelog = b"# Changelog\n\n## [1.0.0]\n"
         manifest = {
