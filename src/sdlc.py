@@ -309,6 +309,7 @@ def main():
         operation.add_argument("--pr", type=int, required=True)
         operation.add_argument("--release-bot", required=True)
         operation.add_argument("--app-slug", default="")
+    release_commands.choices["gate"].add_argument("--historical-merged-sha", default="")
     release_commands.choices["merge"].add_argument("--expected-head")
     for action in ("enable", "disable", "status"):
         operation = release_commands.add_parser(action)
