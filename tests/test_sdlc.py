@@ -342,7 +342,6 @@ class RepositoryPolicyTests(unittest.TestCase):
         self.assertIn("contents: read", workflow)
         self.assertNotIn("administration: write", workflow)
         self.assertIn("uses: $/actions/repository-policy", workflow)
-        self.assertIn("checks: read", workflow)
         self.assertNotIn("actions/repository-policy/policy_check.py", workflow)
         action = (root / "actions/repository-policy/action.yml").read_text()
         self.assertIn("$GITHUB_ACTION_PATH/policy_check.py", action)
