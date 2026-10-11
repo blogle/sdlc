@@ -63,6 +63,7 @@ jobs:
           SDLC_RULESET_TOKEN: ${{ github.token }}
           RELEASE_BOT_LOGIN: ${{ vars.SDLC_RELEASE_BOT_LOGIN }}
           RELEASE_APP_SLUG: ${{ steps.release-app.outputs.app-slug }}
+          SDLC_RULESET_ATTESTATION: ${{ vars.SDLC_RULESET_ATTESTATION }}
           SDLC_FLAKE: ${{ inputs.sdlc_ref != '' && inputs.sdlc_ref || github.workspace }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
