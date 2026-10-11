@@ -15,7 +15,6 @@ on:
 
 concurrency:
   group: sdlc-release-reconcile-${{ github.repository }}
-  queue: max
   cancel-in-progress: false
 
 jobs:

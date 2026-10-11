@@ -159,7 +159,7 @@ On policy PRs the proposed JSON is schema-validated, while live drift is evaluat
 
 ## Release and artifacts
 
-The rolling updater coalesces all current unreleased fragments into one deterministic `sdlc/release-next` PR. It uses native GitHub Actions concurrency (`queue: max`, `cancel-in-progress: false`), a GitHub App token, and `--force-with-lease`; it never pushes `main`. The canonical manifest contract is in [`docs/release-manifest.md`](docs/release-manifest.md). A merged manifest remains on `main`; successor allocation checks its exact tag and completed publication ledger rather than treating manifest existence as pending publication.
+The rolling updater coalesces all current unreleased fragments into one deterministic `sdlc/release-next` PR. It uses native GitHub Actions concurrency (`cancel-in-progress: false`), a GitHub App token, and `--force-with-lease`; it never pushes `main`. The canonical manifest contract is in [`docs/release-manifest.md`](docs/release-manifest.md). A merged manifest remains on `main`; successor allocation checks its exact tag and completed publication ledger rather than treating manifest existence as pending publication.
 
 Release reconciliation is fail-closed until the canonical ruleset, App credentials, release gate, and publisher are all provisioned. `.github/workflows/release.yml` delegates to the rolling updater and rejects `publish_version` until the later publisher milestone; it never pushes `main`. The self-release caller in PR #13 must be rebased against this contract and remains intentionally unmerged. Labels do not bypass rulesets, and an Actions `GITHUB_TOKEN`-created release PR is not an unattended replacement. The fixture's publication hook remains consumer-owned `just release-publish <version>`.
 
