@@ -57,6 +57,7 @@ jobs:
       - name: Verify and publish head-specific gate
         env:
           GH_TOKEN: ${{ steps.release-app.outputs.token }}
+          SDLC_RULESET_TOKEN: ${{ github.token }}
           RELEASE_BOT_LOGIN: ${{ vars.SDLC_RELEASE_BOT_LOGIN }}
           RELEASE_APP_SLUG: ${{ steps.release-app.outputs.app-slug }}
           SDLC_FLAKE: ${{ inputs.sdlc_ref != '' && inputs.sdlc_ref || github.workspace }}
@@ -125,6 +126,7 @@ jobs:
       - name: Revalidate every open release head
         env:
           GH_TOKEN: ${{ steps.release-app.outputs.token }}
+          SDLC_RULESET_TOKEN: ${{ github.token }}
           RELEASE_BOT_LOGIN: ${{ vars.SDLC_RELEASE_BOT_LOGIN }}
           RELEASE_APP_SLUG: ${{ steps.release-app.outputs.app-slug }}
           SDLC_FLAKE: ${{ inputs.sdlc_ref != '' && inputs.sdlc_ref || github.workspace }}

@@ -69,8 +69,13 @@ def _git(*args: str, cwd: str | Path | None = None, raw: bool = False) -> str | 
 
 
 def _gh_json(endpoint: str) -> Any:
+    env = os.environ.copy()
+    if "rulesets" in endpoint or "/protection" in endpoint:
+        ruleset_token = env.get("SDLC_RULESET_TOKEN")
+        if ruleset_token:
+            env["GH_TOKEN"] = ruleset_token
     try:
-        result = subprocess.run(["gh", "api", endpoint], check=True, capture_output=True, text=True)
+        result = subprocess.run(["gh", "api", endpoint], check=True, capture_output=True, text=True, env=env)
     except subprocess.CalledProcessError as exc:
         raise GateError(f"live GitHub API data unavailable for {endpoint}") from exc
     try:
@@ -179,10 +184,11 @@ def _protection(repo: str, branch: str) -> Mapping[str, Any]:
         includes = detail.get("conditions", {}).get("ref_name", {}).get("include", ())
         if "~DEFAULT_BRANCH" not in includes and f"refs/heads/{branch}" not in includes:
             continue
-        if "bypass_actors" not in detail:
+        actors = detail.get("bypass_actors")
+        if not isinstance(actors, list):
             raise GateError("canonical ruleset bypass actors are not visible; refusing release merge")
         applicable.append(detail)
-        bypass.extend(detail["bypass_actors"])
+        bypass.extend(actors)
         for rule in detail.get("rules", ()):
             if rule.get("type") != "required_status_checks":
                 continue
