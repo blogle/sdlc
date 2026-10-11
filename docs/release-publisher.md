@@ -14,7 +14,12 @@ it to `false`, while `sdlc release enable --repo OWNER/NAME` is the explicit,
 fail-closed operator action after preflight. `sdlc release disable` is the
 emergency stop. The status command is read-only and never displays secret
 values. App installation access and permissions can be verified/provisioned
-from secure local credentials without printing private material.
+from secure local credentials without printing private material. These are
+admin primitives for Nexus or an authorized gateway, not a request for coding
+agents to run GitHub administration. Nexus currently lacks Actions variable and
+secret read/write operations; fully hands-off fleet onboarding therefore waits
+for that narrow gateway surface. Private keys must not enter coding-agent
+contexts, and no activation is implied for Anvil.
 
 ## Automatic workflow
 
