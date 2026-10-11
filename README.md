@@ -95,10 +95,9 @@ The consumer calls the platform reusable workflows at the same release tag as it
 ```yaml
 jobs:
   pr-fast:
-    uses: blogle/sdlc/.github/workflows/pr-fast.yml@v1.0.0
+    uses: blogle/sdlc/.github/workflows/pr-fast.yml@v1.2.5
   candidate:
-    if: github.event_name == 'merge_group' || startsWith(github.event.pull_request.head.ref, 'mergify/merge-queue/')
-    uses: blogle/sdlc/.github/workflows/candidate.yml@v1.0.0
+    uses: blogle/sdlc/.github/workflows/candidate.yml@v1.2.5
   # Stable required-check contexts must be emitted by ordinary caller jobs.
   sdlc-pr-fast:
     name: sdlc / pr-fast
@@ -106,17 +105,35 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - run: test "${{ needs.pr-fast.result }}" = success
+      - uses: blogle/sdlc/actions/status-gate@v1.2.5
+        with:
+          result: ${{ needs.pr-fast.result }}
+          stage: pr-fast
   sdlc-candidate:
     name: sdlc / candidate
     needs: candidate
-    if: always() && (github.event_name == 'merge_group' || startsWith(github.event.pull_request.head.ref, 'mergify/merge-queue/'))
+    if: always()
     runs-on: ubuntu-latest
     steps:
-      - run: test "${{ needs.candidate.result }}" = success
+      - uses: blogle/sdlc/actions/status-gate@v1.2.5
+        with:
+          result: ${{ needs.candidate.result }}
+          stage: candidate
+  policy:
+    uses: blogle/sdlc/.github/workflows/policy-check.yml@v1.2.5
+  sdlc-policy:
+    name: sdlc / policy
+    needs: policy
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: blogle/sdlc/actions/status-gate@v1.2.5
+        with:
+          result: ${{ needs.policy.result }}
+          stage: policy
 ```
 
-Nested reusable-workflow check names include caller/callee prefixes and are not stable required-check contexts. The two ordinary local jobs above always run and succeed only when the corresponding reusable job succeeds. Keep the candidate gate condition identical to the reusable candidate job so it runs for merge groups and Mergify synthetic PRs only. Canonical Mergify continues to require `sdlc / pr-fast` and `sdlc / candidate`.
+Nested reusable-workflow check names include caller/callee prefixes and are not stable required-check contexts. The three ordinary local jobs above are the only consumer-local stubs required by GitHub; `actions/status-gate` owns result validation and Mergify event routing. The shared candidate workflow skips ordinary PRs and runs merge groups and `mergify/merge-queue/*` synthetic PRs. Canonical Mergify continues to require `sdlc / pr-fast` and `sdlc / candidate`.
 
 The reusable workflows checkout the caller and invoke **Hestia's native matrix action** on that consumer's `hydraJobs` stage attrset. Hestia evaluates with the consumer's lockfile-pinned `nix-eval-jobs`, honors native `meta.hestia.group`/`meta.hestia.os`, fans out derivation builds, and owns the GitHub Actions cache. SDLC adds no matrix schema or scheduler. Hestia cache entries are repository-scoped and evictable; a miss only costs performance. It is not a durable artifact store, not a candidate provenance mechanism, and does not promise Nix outputs will be reusable by another repo or developer machine. No cache name or cache secret is used. External Nix binary caches are an optional future optimization and are not a v1 protocol interface.
 
