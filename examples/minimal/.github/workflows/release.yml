@@ -16,6 +16,7 @@ on:
         default: false
 permissions:
   contents: write
+  packages: write
   pull-requests: write
 jobs:
   reconcile:

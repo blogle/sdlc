@@ -1,0 +1,2 @@
+# Share SDLC's live Mergify policy with the same GitHub owner.
+extends: sdlc

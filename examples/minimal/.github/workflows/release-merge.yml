@@ -9,7 +9,7 @@ on:
 permissions:
   contents: read
   checks: read
-  pull-requests: read
+  pull-requests: write
 
 jobs:
   merge:
