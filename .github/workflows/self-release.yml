@@ -45,8 +45,7 @@ jobs:
   reconcile:
     needs: publisher-completion
     if: needs.publisher-completion.outputs.reconcile == 'true'
-    uses: ./.github/workflows/release.yml
+    uses: ./.github/workflows/release-reconcile.yml
     with:
-      merged_sha: ""
-      activate: false
+      sdlc_ref: ""
     secrets: inherit
