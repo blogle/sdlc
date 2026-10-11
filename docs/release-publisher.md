@@ -7,9 +7,14 @@ This is the publisher-side contract for the rolling-release architecture in
 merges, required `sdlc / pr-fast`, non-strict freshness, and no bypass actors.
 
 The release GitHub App is `sdlc-release[bot]`. Actions reads its credentials
-from `SDLC_RELEASE_APP_ID` and `SDLC_RELEASE_APP_PRIVATE_KEY`; the expected
-identity is `vars.SDLC_RELEASE_BOT_LOGIN`. Publication is explicitly enabled
-for this repository with `vars.SDLC_RELEASE_ACTIVATE=true`.
+from `SDLC_RELEASE_APP_ID` and `SDLC_RELEASE_APP_PRIVATE_KEY`, and verifies
+the App slug against `vars.SDLC_RELEASE_BOT_LOGIN`. Publication is controlled
+by `vars.SDLC_RELEASE_ACTIVATE`; `sdlc onboard --repo OWNER/NAME` initializes
+it to `false`, while `sdlc release enable --repo OWNER/NAME` is the explicit,
+fail-closed operator action after preflight. `sdlc release disable` is the
+emergency stop. The status command is read-only and never displays secret
+values. App installation access and permissions can be verified/provisioned
+from secure local credentials without printing private material.
 
 ## Automatic workflow
 
