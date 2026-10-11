@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -27,11 +28,14 @@ def _jwt(app_id: str, key_file: Path) -> str:
 
 
 def _gh_api(endpoint: str, *, token: str, method: str = "GET") -> dict:
+    env = os.environ.copy()
+    env["GH_TOKEN"] = token
     result = subprocess.run(
-        ["gh", "api", endpoint, "--method", method, "--header", f"Authorization: Bearer {token}"],
+        ["gh", "api", endpoint, "--method", method],
         check=True,
         capture_output=True,
         text=True,
+        env=env,
     )
     return json.loads(result.stdout)
 

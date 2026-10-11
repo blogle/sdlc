@@ -78,12 +78,15 @@ jobs:
           mkdir -p .sdlc
           version="$(jq -r .version .sdlc/release.json)"
           asset="sdlc-source-${version}-${MERGED_SHA}.tar.gz"
-          if gh release view "v${version}" --json assets >/dev/null 2>&1 && \
-             gh release view "v${version}" --json assets --jq ".assets[] | select(.name == \"$asset\") | .id" | grep -q .; then
-            gh release download "v${version}" --pattern "$asset" --dir .sdlc
-          else
-            git archive --format=tar.gz --output ".sdlc/$asset" "$MERGED_SHA"
-          fi
+           git archive --format=tar.gz --output ".sdlc/$asset.expected" "$MERGED_SHA"
+           if gh release view "v${version}" --json assets >/dev/null 2>&1 && \
+              gh release view "v${version}" --json assets --jq ".assets[] | select(.name == \"$asset\") | .id" | grep -q .; then
+             gh release download "v${version}" --pattern "$asset" --dir .sdlc
+             cmp -- ".sdlc/$asset.expected" ".sdlc/$asset" || { echo "durable source asset bytes changed" >&2; exit 1; }
+             rm -f ".sdlc/$asset.expected"
+           else
+             mv ".sdlc/$asset.expected" ".sdlc/$asset"
+           fi
           printf 'asset=%s\n' "$asset" > .sdlc/artifact.env
       - name: Create or verify exact annotated version tag
         env:
