@@ -51,11 +51,13 @@ class SelfReleaseDogfoodTests(unittest.TestCase):
     def test_publication_completion_wakes_reconciliation(self):
         workflow = (ROOT / ".github/workflows/self-release.yml").read_text()
         self.assertIn("workflow_run:", workflow)
-        self.assertIn("workflows: [SDLC rolling release reconcile]", workflow)
+        self.assertIn("workflows: [SDLC rolling release reconcile, SDLC release merge]", workflow)
         self.assertIn("types: [completed]", workflow)
         self.assertIn("WORKFLOW_EVENT: ${{ github.event.workflow_run.event }}", workflow)
+        self.assertIn("WORKFLOW_NAME: ${{ github.event.workflow_run.name }}", workflow)
         self.assertIn("WORKFLOW_BRANCH: ${{ github.event.workflow_run.head_branch }}", workflow)
         self.assertIn("publisher_conclusion", workflow)
+        self.assertIn('startswith("publish actual merged release /")', workflow)
 
     def test_publication_failure_keeps_reconciliation_fail_closed(self):
         workflow = (ROOT / ".github/workflows/self-release.yml").read_text()
@@ -67,6 +69,7 @@ class SelfReleaseDogfoodTests(unittest.TestCase):
 
     def test_reconcile_wakeup_cannot_loop_or_accept_irrelevant_workflows(self):
         workflow = (ROOT / ".github/workflows/self-release.yml").read_text()
+        self.assertIn("WORKFLOW_NAME\" == \"SDLC release merge\"", workflow)
         self.assertIn("WORKFLOW_EVENT\" == workflow_dispatch", workflow)
         self.assertIn("WORKFLOW_BRANCH\" == main", workflow)
         self.assertIn("if: needs.publisher-completion.outputs.reconcile == 'true'", workflow)
@@ -78,6 +81,12 @@ class SelfReleaseDogfoodTests(unittest.TestCase):
         self.assertIn("cancel-in-progress: false", workflow)
         self.assertIn('"pr", "edit"', reconcile)
         self.assertIn("--force-with-lease=refs/heads/{branch}:{old}", reconcile)
+
+    def test_release_merge_recovery_skips_completed_publication(self):
+        workflow = (ROOT / ".github/workflows/release-merge.yml").read_text()
+        self.assertIn("already durably published; recovery is a no-op", workflow)
+        self.assertIn("sort_by(.merged_at) | reverse", workflow)
+        self.assertIn("--historical-merged-sha", workflow)
 
 
 if __name__ == "__main__":

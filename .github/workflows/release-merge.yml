@@ -77,16 +77,26 @@ jobs:
                 printf 'merged_sha=%s\n' "$merged_sha" >> "$GITHUB_OUTPUT"
               done
             else
-              # Recover a release PR merged before a transient merger failure;
-              # re-run the exact-head gate before handing its merged SHA to the
-              # publisher. This is idempotent and never merges a closed PR.
-              recovery="$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=closed&base=$DEFAULT_BRANCH&head=${GITHUB_REPOSITORY%%/*}:sdlc/release-next&per_page=20" --jq '[.[] | select(.merged_at != null)] | .[0] | [.number, .head.sha, .merge_commit_sha] | @tsv')"
+              # Recover a release PR merged before a transient merger failure,
+              # unless its exact immutable release is already published. This
+              # makes successful base-refresh events a no-op after completion.
+              recovery="$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=closed&base=$DEFAULT_BRANCH&head=${GITHUB_REPOSITORY%%/*}:sdlc/release-next&per_page=100" --jq '[.[] | select(.merged_at != null)] | sort_by(.merged_at) | reverse | .[0] | [.number, .head.sha, .merge_commit_sha] | @tsv')"
               if [[ -n "$recovery" ]]; then
                 read -r pr head_sha merged_sha <<< "$recovery"
                 git fetch --no-tags origin "$head_sha" "$merged_sha"
-                nix run "$SDLC_FLAKE"#sdlc -- release gate --repo "$GITHUB_REPOSITORY" --pr "$pr" --release-bot "$RELEASE_BOT_LOGIN" --app-slug "$RELEASE_APP_SLUG" --historical-merged-sha "$merged_sha"
-                [[ "$merged_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "missing recovered squash merged SHA" >&2; exit 1; }
-                printf 'merged_sha=%s\n' "$merged_sha" >> "$GITHUB_OUTPUT"
+                manifest="$(gh api "repos/$GITHUB_REPOSITORY/contents/.sdlc/release.json?ref=$merged_sha" --jq '.content' | base64 --decode)"
+                version="$(jq -r '.version' <<<"$manifest")"
+                asset="sdlc-source-${version}-${merged_sha}.tar.gz"
+                published="$(gh release view "v$version" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,assets 2>/dev/null || true)"
+                if jq -e --arg asset "$asset" '.isDraft == false and .isPrerelease == false and any(.assets[]?; .name == $asset and (.digest // "" | test("^sha256:[0-9a-f]{64}$")))' <<<"$published" >/dev/null; then
+                  echo "release v$version is already durably published; recovery is a no-op"
+                else
+                  # Re-run the exact historical gate before handing its merged
+                  # SHA to the publisher. This never merges a closed PR.
+                  nix run "$SDLC_FLAKE"#sdlc -- release gate --repo "$GITHUB_REPOSITORY" --pr "$pr" --release-bot "$RELEASE_BOT_LOGIN" --app-slug "$RELEASE_APP_SLUG" --historical-merged-sha "$merged_sha"
+                  [[ "$merged_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "missing recovered squash merged SHA" >&2; exit 1; }
+                  printf 'merged_sha=%s\n' "$merged_sha" >> "$GITHUB_OUTPUT"
+                fi
               fi
             fi
 
