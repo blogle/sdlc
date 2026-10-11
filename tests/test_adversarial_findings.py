@@ -1,4 +1,5 @@
 from pathlib import Path
+import shutil
 import subprocess
 import unittest
 
@@ -16,6 +17,8 @@ class AdversarialFindingTests(unittest.TestCase):
         )
 
     def test_contract_accepts_real_derivations_only(self):
+        if shutil.which("nix") is None:
+            self.skipTest("nix is unavailable inside the isolated Nix test builder")
         expression = """
           let
             flake = builtins.getFlake (toString ./.);
@@ -33,6 +36,8 @@ class AdversarialFindingTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_contract_rejects_fake_derivation_and_unknown_keys(self):
+        if shutil.which("nix") is None:
+            self.skipTest("nix is unavailable inside the isolated Nix test builder")
         fake = """
           let
             lib = (builtins.getFlake (toString ./. )).lib;
