@@ -256,7 +256,11 @@ class ConsumerWorkflowTests(unittest.TestCase):
         self.assertIn("workflow_run:", workflow)
         self.assertNotIn("check_run:", workflow)
         self.assertIn(".merge_commit_sha", workflow)
-        self.assertIn("gh workflow run release.yml", workflow)
+        self.assertIn("uses: ./.github/workflows/release.yml", workflow)
+        self.assertIn("needs.merge.outputs.merged_sha", workflow)
+        self.assertNotIn("gh workflow run release.yml", workflow)
+        self.assertIn("state=closed&base=$DEFAULT_BRANCH", workflow)
+        self.assertIn("release gate --repo", workflow)
         self.assertIn("DeterminateSystems/nix-installer-action@v23", workflow)
         self.assertLess(workflow.index("DeterminateSystems/nix-installer-action@v23"), workflow.index('nix run "$SDLC_FLAKE"#sdlc -- release merge'))
 
