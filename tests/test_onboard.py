@@ -10,7 +10,7 @@ class OnboardTests(unittest.TestCase):
             patch.object(onboard, "_user_api", return_value={"default_branch": "main"}),
             patch.object(onboard, "_installation", return_value=({"app_slug": "sdlc-release"}, b"private-key")),
             patch.object(onboard, "_workflow_readiness", return_value={"successful_ci": True}),
-            patch.object(onboard, "_policy", return_value={"plan": "no-op", "policy_verified": True}),
+            patch.object(onboard, "_policy", return_value={"plan": "no-op", "policy_verified": True, "attestation": {"schema": 1, "repository": "owner/repo", "ruleset_id": 7, "updated_at": "now", "bypass_actors": []}}),
         )
 
     def test_dry_run_is_prepare_only(self):
@@ -26,7 +26,7 @@ class OnboardTests(unittest.TestCase):
             onboard.onboard("owner/repo", "123", "/secure/app.pem")
         self.assertEqual(
             [call.args for call in set_variable.call_args_list],
-            [("owner/repo", "SDLC_RELEASE_ACTIVATE", "false"), ("owner/repo", "SDLC_RELEASE_BOT_LOGIN", "sdlc-release[bot]"), ("owner/repo", "SDLC_RELEASE_ACTIVATE", "true")],
+            [("owner/repo", "SDLC_RELEASE_ACTIVATE", "false"), ("owner/repo", "SDLC_RELEASE_BOT_LOGIN", "sdlc-release[bot]"), ("owner/repo", "SDLC_RULESET_ATTESTATION", '{"bypass_actors":[],"repository":"owner/repo","ruleset_id":7,"schema":1,"updated_at":"now"}'), ("owner/repo", "SDLC_RELEASE_ACTIVATE", "true")],
         )
         self.assertEqual(run.call_count, 2)
         self.assertEqual(run.call_args_list[-1].kwargs["input"], b"private-key")

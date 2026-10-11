@@ -32,6 +32,7 @@ REQUIRED_CHECKS = ("sdlc / pr-fast",)
 MANIFEST_PATH = ".sdlc/release.json"
 FRAGMENT_PREFIX = ".changes/"
 FRAGMENT_SUFFIX = ".json"
+RULESET_ATTESTATION_VARIABLE = "SDLC_RULESET_ATTESTATION"
 
 
 class GateError(RuntimeError):
@@ -156,8 +157,15 @@ def verify_protection(protection: Mapping[str, Any], required_checks: Iterable[s
     active = [item for item in protection.get("rulesets", ()) if item.get("enforcement") == "active" and item.get("name") == "SDLC default branch"]
     if not active and not protection.get("classic"):
         raise GateError("no applicable branch protection or active ruleset is configured")
-    if active and "bypass_actors" not in protection:
-        raise GateError("canonical ruleset bypass actors are not visible; refusing release merge")
+    if active:
+        attestation = protection.get("ruleset_attestation")
+        if len(active) != 1 or not isinstance(attestation, Mapping):
+            raise GateError("canonical ruleset bypass actors are not visible; refusing release merge")
+        ruleset = active[0]
+        if attestation.get("ruleset_id") != ruleset.get("id") or attestation.get("updated_at") != ruleset.get("updated_at"):
+            raise GateError("canonical ruleset attestation does not match its current identity")
+        if attestation.get("bypass_actors") != []:
+            raise GateError("release merge requires zero protection bypass actors")
     if protection.get("strict") is True:
         raise GateError("global strict freshness is enabled; release gate will not change repository policy")
     if protection.get("bypass_actors"):
@@ -177,6 +185,13 @@ def _protection(repo: str, branch: str) -> Mapping[str, Any]:
     strict = classic.get("required_status_checks", {}).get("strict")
     bypass = []
     applicable = []
+    attestation_raw = os.environ.get(RULESET_ATTESTATION_VARIABLE)
+    try:
+        attestation = json.loads(attestation_raw) if attestation_raw else None
+    except json.JSONDecodeError as exc:
+        raise GateError("canonical ruleset bypass actors are not visible; refusing release merge") from exc
+    if attestation is not None and not isinstance(attestation, dict):
+        raise GateError("canonical ruleset bypass actors are not visible; refusing release merge")
     for summary in rulesets:
         detail = _gh_json(f"repos/{repo}/rulesets/{summary['id']}") if summary.get("id") else summary
         if detail.get("enforcement") != "active" or detail.get("name") != "SDLC default branch":
@@ -187,6 +202,10 @@ def _protection(repo: str, branch: str) -> Mapping[str, Any]:
         actors = detail.get("bypass_actors")
         if not isinstance(actors, list):
             raise GateError("canonical ruleset bypass actors are not visible; refusing release merge")
+        if attestation is None or attestation.get("repository") != repo or attestation.get("schema") != 1 or attestation.get("bypass_actors") != []:
+            raise GateError("canonical ruleset bypass actors are not visible; refusing release merge")
+        if attestation.get("ruleset_id") != detail.get("id") or attestation.get("updated_at") != detail.get("updated_at"):
+            raise GateError("canonical ruleset attestation does not match its current identity")
         applicable.append(detail)
         bypass.extend(actors)
         for rule in detail.get("rules", ()):
@@ -195,7 +214,7 @@ def _protection(repo: str, branch: str) -> Mapping[str, Any]:
             params = rule.get("parameters", {})
             contexts.update(item.get("context") for item in params.get("required_status_checks", ()))
             strict = strict or params.get("strict_required_status_checks_policy", False)
-    return {"classic": bool(classic), "rulesets": applicable, "contexts": contexts, "strict": strict, "bypass_actors": bypass}
+    return {"classic": bool(classic), "rulesets": applicable, "contexts": contexts, "strict": strict, "bypass_actors": bypass, "ruleset_attestation": attestation}
 
 
 def _authenticated_app(release_bot_login: str, app_slug: str, repository: str) -> tuple[str, str]:

@@ -163,6 +163,8 @@ The rolling updater coalesces all current unreleased fragments into one determin
 
 Release reconciliation is fail-closed until the canonical ruleset, App credentials, release gate, and publisher are all provisioned. `.github/workflows/release.yml` delegates to the rolling updater and rejects `publish_version` until the later publisher milestone; it never pushes `main`. The self-release caller in PR #13 must be rebased against this contract and remains intentionally unmerged. Labels do not bypass rulesets, and an Actions `GITHUB_TOKEN`-created release PR is not an unattended replacement. The fixture's publication hook remains consumer-owned `just release-publish <version>`.
 
+The release App intentionally does not receive ruleset write access. Because GitHub redacts `bypass_actors` from read-only ruleset responses, authenticated bootstrap writes `SDLC_RULESET_ATTESTATION` as a repository variable only after an admin read proves the canonical ruleset has zero bypass actors. The release gate and merge worker require that attestation, bind it to the ruleset ID and current `updated_at`, and fail closed on missing, changed, duplicate, or rolled-back policy. Re-run the admin bootstrap after any intentional canonical ruleset edit; do not hand-edit the variable or grant the release App ruleset access.
+
 For a deployable OCI image/package, candidate validation should publish an immutable identity (for example an OCI digest) to the project's existing registry. Record/pass that identity through consumer-owned workflow/artifact metadata. Release-publish promotes or re-tags that exact digest; it does not rebuild. Hestia is only a Nix cache, not artifact provenance. SDLC defines no registry abstraction.
 
 ## Changelog fragments
