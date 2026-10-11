@@ -18,6 +18,7 @@ check:
     renovate-config-validator --strict --no-global default.json
     nix run nixpkgs#yq-go -- eval '.' .mergify.yml >/dev/null
     nix run nixpkgs#yq-go -- eval '.' examples/minimal/.mergify.yml >/dev/null
+    nix run nixpkgs#yq-go -- eval '.' examples/clean-room/.mergify.yml >/dev/null
     nix run nixpkgs#yq-go -- eval -e '.concurrency."cancel-in-progress" == false and (.concurrency | has("queue") | not)' .github/workflows/release-reconcile.yml >/dev/null
     nix run .#sdlc -- changelog check
     nix flake check --no-build
@@ -53,6 +54,7 @@ clean-room:
     cp examples/clean-room/flake.nix "$tmp/flake.nix"
     cp examples/clean-room/ci.nix "$tmp/ci.nix"
     cp examples/clean-room/justfile "$tmp/justfile"
+    cp examples/clean-room/.mergify.yml "$tmp/.mergify.yml"
     cp -R examples/clean-room/.github "$tmp/.github"
     nix flake lock --override-input sdlc "github:blogle/sdlc/$ref" "$tmp"
     nix flake check "$tmp"

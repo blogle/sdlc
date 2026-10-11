@@ -96,27 +96,43 @@ def _workflow_readiness(repo: str, branch: str) -> dict:
     for item in files:
         if item.get("type") == "file" and item.get("name", "").endswith((".yml", ".yaml")):
             content = _user_api(f"repos/{repo}/contents/{item['path']}?ref={branch}").get("content", "")
-            text.append(base64.b64decode(content).decode())
-    combined = "\n".join(text)
-    required = {
-        "sdlc / pr-fast": "stable sdlc / pr-fast job",
-        "sdlc / candidate": "stable sdlc / candidate job",
-        "sdlc / policy": "stable sdlc / policy job",
-        "release-publish": "consumer release-publish hook wiring",
-        "packages: write": "trusted package publication permission",
-        "SDLC_RELEASE_APP_ID": "release App secret wiring",
-        "SDLC_RELEASE_ACTIVATE": "release activation wiring",
-    }
-    missing = [description for marker, description in required.items() if marker not in combined]
+            text.append((item["path"], base64.b64decode(content).decode()))
+
+    def has_job(workflow_text: str, name: str) -> bool:
+        # Job names are the stable public contract; do not accept comments,
+        # arbitrary prose, or a similarly named step as readiness evidence.
+        return any(line.strip() == f"name: {name}" for line in workflow_text.splitlines())
+
+    ci_text = next((content for path, content in text if path.endswith("/ci.yml") or path.endswith("/ci.yaml")), "")
+    release_text = next((content for path, content in text if path.endswith("/release.yml") or path.endswith("/release.yaml")), "")
+    missing = []
+    for name in ("sdlc / pr-fast", "sdlc / candidate", "sdlc / policy"):
+        if not has_job(ci_text, name):
+            missing.append(f"stable {name} job")
+    if "secrets: inherit" not in release_text:
+        missing.append("release App secret inheritance")
+    if "packages: write" not in release_text:
+        missing.append("trusted package publication permission")
+    if "activate:" not in release_text:
+        missing.append("release activation wiring")
     if missing:
         raise ValueError("required consumer workflow wiring is not committed: " + ", ".join(missing))
-    runs = _user_api(f"repos/{repo}/actions/runs?branch={branch}&per_page=50").get("workflow_runs", [])
-    if not any(run.get("name") == "SDLC CI" and run.get("conclusion") == "success" for run in runs):
-        raise ValueError("no successful SDLC CI run is reporting yet; keep activation false and retry after CI completes")
+    branch_data = _user_api(f"repos/{repo}/branches/{branch}")
+    head_sha = branch_data.get("commit", {}).get("sha")
+    if not isinstance(head_sha, str) or not head_sha:
+        raise ValueError("could not determine the current default-branch commit; keep activation false and retry")
+    runs = _user_api(f"repos/{repo}/actions/runs?branch={branch}&head_sha={head_sha}&status=completed&per_page=50").get("workflow_runs", [])
+    if not any(
+        run.get("name") == "SDLC CI"
+        and run.get("head_sha") == head_sha
+        and run.get("conclusion") == "success"
+        for run in runs
+    ):
+        raise ValueError("no successful SDLC CI run exists for the current default-branch commit; keep activation false and retry after CI completes")
     justfile = _user_api(f"repos/{repo}/contents/justfile?ref={branch}")
     if "release-publish" not in base64.b64decode(justfile.get("content", "")).decode():
         raise ValueError("consumer justfile has no release-publish hook; activation remains false")
-    return {"workflow_files": len(text), "successful_ci": True, "artifact_hook": True, "packages_write": True}
+    return {"workflow_files": len(text), "head_sha": head_sha, "successful_ci": True, "artifact_hook": True, "packages_write": True}
 
 
 def _policy(repo: str, branch: str, *, apply: bool) -> dict:
