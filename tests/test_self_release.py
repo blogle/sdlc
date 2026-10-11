@@ -25,6 +25,7 @@ class SelfReleaseDogfoodTests(unittest.TestCase):
         self.assertNotIn("publish_version", workflow)
         self.assertIn("if: inputs.merged_sha == ''", workflow)
         self.assertIn("if: inputs.merged_sha != ''", workflow)
+        self.assertIn("packages: write", workflow)
 
     def test_only_leaf_reconciler_owns_recovery_serialization(self):
         caller = (ROOT / ".github/workflows/release.yml").read_text()
