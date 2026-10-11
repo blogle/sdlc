@@ -116,6 +116,21 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertIn("--paginate", run.call_args.args[0])
         self.assertIn("--slurp", run.call_args.args[0])
 
+    def test_check_api_allows_unrelated_in_progress_checks(self):
+        response = json.dumps([{"check_runs": [
+            {"name": "sdlc / pr-fast", "status": "completed", "conclusion": "success", "head_sha": "head", "id": 7, "completed_at": "2026-10-10T01:00:00Z", "app": {"slug": "ci"}},
+            {"name": "unrelated", "status": "in_progress", "conclusion": None, "head_sha": "head", "id": 8, "completed_at": None, "app": {"slug": "other"}},
+        ]}])
+        with patch.object(release_gate.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, response, "")):
+            checks = release_gate._checks("blogle/sdlc", "head")
+        release_gate._required_check(checks, "sdlc / pr-fast", "head", "ci")
+
+    def test_check_api_rejects_completed_check_without_completion_time(self):
+        response = json.dumps([{"check_runs": [{"name": "sdlc / pr-fast", "status": "completed", "conclusion": "success", "head_sha": "head", "id": 7, "completed_at": None}]}])
+        with patch.object(release_gate.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, response, "")):
+            with self.assertRaisesRegex(GateError, "ambiguous GitHub check metadata"):
+                release_gate._checks("blogle/sdlc", "head")
+
     def test_raw_git_output_preserves_newline_terminated_changelog_bytes(self):
         with tempfile.TemporaryDirectory() as temp:
             subprocess.run(["git", "init", "-q"], cwd=temp, check=True)
@@ -222,6 +237,8 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertNotIn("GITHUB_EVENT_PULL_REQUEST_HEAD_SHA", workflow)
         self.assertNotIn("if: github.event.pull_request.head.ref == 'sdlc/release-next'", workflow)
         self.assertIn("steps.release-app.outputs.app-slug", workflow)
+        self.assertIn("check-runs?per_page=100", workflow)
+        self.assertIn("sleep 10", workflow)
 
 
 if __name__ == "__main__":
