@@ -98,7 +98,7 @@ def main():
     if event != "pull_request":
         base_config = proposed
     live = read_live_rulesets(repository)
-    evaluate_policy_check(
+    outcome = evaluate_policy_check(
         proposed,
         base_config,
         live,
@@ -107,7 +107,11 @@ def main():
         default_branch,
         event == "pull_request",
     )
-    require_active_canonical_ruleset(live, repository)
+    # A first-onboarding PR is the one deliberate exception: it proves that
+    # the declaration and read-only caller are ready before a ruleset exists.
+    # Every later check must observe the active canonical ruleset.
+    if outcome != "first-onboarding":
+        require_active_canonical_ruleset(live, repository)
 
 
 if __name__ == "__main__":

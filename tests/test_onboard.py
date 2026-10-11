@@ -1,4 +1,5 @@
 import unittest
+import base64
 from unittest.mock import patch
 
 import src.onboard as onboard
@@ -58,6 +59,52 @@ class OnboardTests(unittest.TestCase):
         command = run.call_args.args[0]
         self.assertNotIn(token, command)
         self.assertEqual(run.call_args.kwargs["env"]["GH_TOKEN"], token)
+
+    def test_readiness_requires_success_for_current_branch_head(self):
+        workflow = """
+name: SDLC CI
+jobs:
+  fast:
+    name: sdlc / pr-fast
+  candidate:
+    name: sdlc / candidate
+  policy:
+    name: sdlc / policy
+"""
+        release = """
+permissions:
+  packages: write
+jobs:
+  release:
+    secrets: inherit
+    with:
+      activate: false
+"""
+        encoded = lambda value: base64.b64encode(value.encode()).decode()
+        responses = {
+            "contents/.github/workflows": [{"type": "file", "name": "ci.yml", "path": ".github/workflows/ci.yml"}, {"type": "file", "name": "release.yml", "path": ".github/workflows/release.yml"}],
+            "contents/.github/workflows/ci.yml": {"content": encoded(workflow)},
+            "contents/.github/workflows/release.yml": {"content": encoded(release)},
+            "branches/main": {"commit": {"sha": "current"}},
+            "actions/runs": {"workflow_runs": [{"name": "SDLC CI", "head_sha": "stale", "conclusion": "success"}]},
+            "contents/justfile": {"content": encoded("release-publish")},
+        }
+
+        def api(endpoint):
+            for key, value in responses.items():
+                prefix = "repos/owner/repo/" + key
+                if endpoint == prefix or endpoint.startswith(prefix + "?"):
+                    return value
+            raise AssertionError(endpoint)
+
+        with patch.object(onboard, "_user_api", side_effect=api):
+            with self.assertRaisesRegex(ValueError, "current default-branch commit"):
+                onboard._workflow_readiness("owner/repo", "main")
+
+        responses["actions/runs"] = {"workflow_runs": [{"name": "SDLC CI", "head_sha": "current", "conclusion": "success"}]}
+        with patch.object(onboard, "_user_api", side_effect=api):
+            result = onboard._workflow_readiness("owner/repo", "main")
+        self.assertEqual(result["head_sha"], "current")
 
 
 if __name__ == "__main__":

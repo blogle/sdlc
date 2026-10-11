@@ -36,7 +36,7 @@ class HestiaCacheWorkflowTests(unittest.TestCase):
             with self.subTest(example=example):
                 workflow = source(f"examples/{example}/.github/workflows/ci.yml")
                 self.assertIn("cache-warm:", workflow)
-                self.assertIn("uses: blogle/sdlc/.github/workflows/candidate.yml@v1.0.0", workflow)
+                self.assertIn("uses: blogle/sdlc/.github/workflows/candidate.yml@v1.2.3", workflow)
                 self.assertIn(
                     "github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)",
                     workflow,

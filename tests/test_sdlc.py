@@ -189,6 +189,25 @@ class ChangelogTests(unittest.TestCase):
 
 
 class ConsumerWorkflowTests(unittest.TestCase):
+    def test_examples_match_reusable_workflow_contract(self):
+        root = Path(__file__).parents[1]
+        for example in ("minimal", "clean-room"):
+            ci = (root / f"examples/{example}/.github/workflows/ci.yml").read_text()
+            self.assertIn("name: SDLC CI", ci)
+            self.assertIn("contents: read", ci)
+            self.assertIn("actions: read", ci)
+            self.assertIn("name: sdlc / pr-fast", ci)
+            self.assertIn("name: sdlc / candidate", ci)
+            self.assertIn("name: sdlc / policy", ci)
+            release = (root / f"examples/{example}/.github/workflows/release.yml").read_text()
+            self.assertIn("packages: write", release)
+            self.assertIn("secrets: inherit", release)
+            self.assertNotIn("@v1.0.0", ci + release)
+            gate = (root / f"examples/{example}/.github/workflows/release-gate.yml").read_text()
+            self.assertIn("workflows: [SDLC CI]", gate)
+            self.assertIn("checks: write", gate)
+        self.assertIn("extends: sdlc", (root / "examples/clean-room/.mergify.yml").read_text())
+
     def test_stable_required_checks_are_local_always_gates(self):
         workflow = (Path(__file__).parents[1] / "examples/minimal/.github/workflows/ci.yml").read_text()
         self.assertIn("name: sdlc / pr-fast", workflow)
@@ -384,9 +403,8 @@ class RepositoryPolicyTests(unittest.TestCase):
                  patch.object(policy_check.Path, "cwd", return_value=root), \
                  patch.object(policy_check.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "", "missing base config")), \
                  patch.object(policy_check, "read_live_rulesets", return_value=[]), \
-                 redirect_stdout(io.StringIO()) as output, \
-                 self.assertRaisesRegex(ValueError, "active canonical ruleset is required"):
-                policy_check.main()
+                 redirect_stdout(io.StringIO()) as output:
+                 policy_check.main()
             self.assertIn("FIRST-ONBOARDING", output.getvalue())
 
     def test_pr_check_validates_proposal_but_uses_base_declaration(self):
