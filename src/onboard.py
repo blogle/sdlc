@@ -14,7 +14,6 @@ sys.path.insert(0, str(POLICY_DIR))
 import repository_policy
 import ruleset_api
 
-
 def _b64(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).rstrip(b"=").decode()
 
