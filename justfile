@@ -14,11 +14,11 @@ check:
     python3 -m json.tool examples/minimal/.github/repository-policy.json >/dev/null
     python3 -m json.tool examples/clean-room/.github/repository-policy.json >/dev/null
     python3 -m json.tool .github/repository-policy.json >/dev/null
-    actionlint -ignore 'unexpected key "queue" for "concurrency" section' -ignore 'specifying action "\$/actions/repository-policy" in invalid format because ref is missing' -ignore 'reusable workflow call "\$/\.github/workflows/stage\.yml".*not following the format' .github/workflows/*.yml examples/minimal/.github/workflows/*.yml examples/clean-room/.github/workflows/*.yml
+    actionlint -ignore 'specifying action "\$/actions/repository-policy" in invalid format because ref is missing' -ignore 'reusable workflow call "\$/\.github/workflows/stage\.yml".*not following the format' .github/workflows/*.yml examples/minimal/.github/workflows/*.yml examples/clean-room/.github/workflows/*.yml
     renovate-config-validator --strict --no-global default.json
     nix run nixpkgs#yq-go -- eval '.' .mergify.yml >/dev/null
     nix run nixpkgs#yq-go -- eval '.' examples/minimal/.mergify.yml >/dev/null
-    nix run nixpkgs#yq-go -- eval -e '.concurrency.queue == "max" and .concurrency."cancel-in-progress" == false' .github/workflows/release-reconcile.yml >/dev/null
+    nix run nixpkgs#yq-go -- eval -e '.concurrency."cancel-in-progress" == false and (.concurrency | has("queue") | not)' .github/workflows/release-reconcile.yml >/dev/null
     nix run .#sdlc -- changelog check
     nix flake check --no-build
     nix build --no-link .#checks.x86_64-linux.test
