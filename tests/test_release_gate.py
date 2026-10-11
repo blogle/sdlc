@@ -172,6 +172,19 @@ class ReleaseGateTests(unittest.TestCase):
         with self.assertRaisesRegex(GateError, "no applicable"):
             verify_protection({"rulesets": [], "classic": False, "contexts": [], "bypass_actors": []})
 
+    def test_attestation_binds_zero_bypass_to_current_ruleset(self):
+        protection = {
+            "classic": False,
+            "contexts": ["sdlc / pr-fast"],
+            "bypass_actors": [],
+            "rulesets": [{"id": 7, "name": "SDLC default branch", "enforcement": "active", "updated_at": "now"}],
+            "ruleset_attestation": {"schema": 1, "repository": "blogle/sdlc", "ruleset_id": 7, "updated_at": "now", "bypass_actors": []},
+        }
+        verify_protection(protection)
+        protection["rulesets"][0]["updated_at"] = "later"
+        with self.assertRaisesRegex(GateError, "attestation"):
+            verify_protection(protection)
+
     def test_unrelated_active_ruleset_does_not_satisfy_release_protection(self):
         with self.assertRaisesRegex(GateError, "no applicable"):
             verify_protection({"rulesets": [{"name": "unrelated", "enforcement": "active"}], "classic": False, "contexts": ["sdlc / pr-fast"], "bypass_actors": []})
@@ -196,9 +209,9 @@ class ReleaseGateTests(unittest.TestCase):
                 return [{"id": 7, "name": "SDLC default branch", "enforcement": "active", "rules": [{"type": "required_status_checks"}]}]
             if endpoint == "repos/blogle/sdlc/branches/main/protection":
                 raise GateError("no classic protection")
-            return {"id": 7, "name": "SDLC default branch", "enforcement": "active", "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"]}}, "bypass_actors": [], "rules": []}
+            return {"id": 7, "name": "SDLC default branch", "enforcement": "active", "updated_at": "now", "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"]}}, "bypass_actors": [], "rules": []}
 
-        with patch.object(release_gate, "_gh_json", side_effect=response):
+        with patch.object(release_gate, "_gh_json", side_effect=response), patch.dict(release_gate.os.environ, {"SDLC_RULESET_ATTESTATION": '{"schema":1,"repository":"blogle/sdlc","ruleset_id":7,"updated_at":"now","bypass_actors":[]}'}):
             protection = release_gate._protection("blogle/sdlc", "main")
         self.assertIn("repos/blogle/sdlc/rulesets/7", calls)
         self.assertEqual(protection["bypass_actors"], [])
@@ -279,6 +292,7 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertNotIn("GITHUB_EVENT_PULL_REQUEST_HEAD_SHA", workflow)
         self.assertNotIn("if: github.event.pull_request.head.ref == 'sdlc/release-next'", workflow)
         self.assertIn("steps.release-app.outputs.app-slug", workflow)
+        self.assertIn("SDLC_RULESET_ATTESTATION: ${{ vars.SDLC_RULESET_ATTESTATION }}", workflow)
         self.assertIn("check-runs?per_page=100", workflow)
         self.assertIn("sleep 10", workflow)
 

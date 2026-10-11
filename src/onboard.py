@@ -11,6 +11,7 @@ import sys
 import time
 
 POLICY_DIR = Path(__file__).resolve().parents[1] / "actions/repository-policy"
+RULESET_ATTESTATION_VARIABLE = "SDLC_RULESET_ATTESTATION"
 sys.path.insert(0, str(POLICY_DIR))
 import repository_policy
 import ruleset_api
@@ -146,6 +147,7 @@ def _policy(repo: str, branch: str, *, apply: bool) -> dict:
         raise ValueError("duplicate canonical rulesets found; refusing to guess")
     current = owned[0] if owned else None
     plan = "create" if current is None else ("update" if repository_policy.normalize_ruleset(current, desired) != repository_policy.normalize_ruleset(desired, desired) else "no-op")
+    attestation = None
     if apply:
         if current is None:
             subprocess.run(["gh", "api", "--method", "POST", f"repos/{repo}/rulesets", "--input", "-"], input=json.dumps(desired), text=True, check=True, capture_output=True)
@@ -156,13 +158,20 @@ def _policy(repo: str, branch: str, *, apply: bool) -> dict:
         if len(owned) != 1:
             raise ValueError("policy apply did not produce exactly one canonical ruleset; activation remains false")
         repository_policy.check_live(owned[0], desired, repo)
+        if not isinstance(owned[0].get("bypass_actors"), list):
+            raise ValueError("canonical ruleset bypass actors were not visible; activation remains false")
+        if owned[0]["bypass_actors"]:
+            raise ValueError("canonical ruleset has bypass actors; activation remains false")
+        if not isinstance(owned[0].get("id"), int) or not isinstance(owned[0].get("updated_at"), str):
+            raise ValueError("canonical ruleset identity is incomplete; activation remains false")
+        attestation = {"schema": 1, "repository": repo, "ruleset_id": owned[0]["id"], "updated_at": owned[0]["updated_at"], "bypass_actors": []}
     contexts = [
         item["context"]
         for rule in desired["rules"]
         if rule["type"] == "required_status_checks"
         for item in rule["parameters"]["required_status_checks"]
     ]
-    return {"plan": plan, "required_contexts": sorted(contexts), "policy_verified": apply}
+    return {"plan": plan, "required_contexts": sorted(contexts), "policy_verified": apply, "attestation": attestation}
 
 
 def onboard(repo: str, app_id: str | None = None, private_key_file: str | None = None, *, dry_run: bool = False) -> None:
@@ -184,6 +193,7 @@ def onboard(repo: str, app_id: str | None = None, private_key_file: str | None =
     subprocess.run(["gh", "secret", "set", "SDLC_RELEASE_APP_ID", "--repo", repo, "--body", app_id], check=True)
     subprocess.run(["gh", "secret", "set", "SDLC_RELEASE_APP_PRIVATE_KEY", "--repo", repo], input=key, check=True)
     policy = _policy(repo, branch, apply=True)
+    _set_variable(repo, RULESET_ATTESTATION_VARIABLE, json.dumps(policy["attestation"], sort_keys=True, separators=(",", ":")))
     _set_variable(repo, "SDLC_RELEASE_ACTIVATE", "true")
     print(json.dumps({"repo": repo, "mode": "cutover", "activation": True, "readiness": readiness, "policy": policy}, indent=2, sort_keys=True))
 
