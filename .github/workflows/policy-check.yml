@@ -3,7 +3,6 @@ on:
   workflow_call:
 permissions:
   contents: read
-  checks: read
 jobs:
   check:
     runs-on: ubuntu-latest
