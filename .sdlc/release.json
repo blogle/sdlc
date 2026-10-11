@@ -1,18 +1,22 @@
 {
-  "changelog_sha256": "d1b2096c0020b76c9801d51312d2642be9c2869d552a37d9baec54e6bee597a2",
+  "changelog_sha256": "47c23b9bddc1ef5dd04c601d6e518f0f760c394b0d105ab584eda1dc9dc510a9",
   "fragments": [
     {
-      "blob_sha": "4d7f1946d292552a10e15c2b667fea68c9b4915e",
-      "path": ".changes/release-gate-retry.json"
+      "blob_sha": "e1c9e51ed055ecd1036fd26d9a628babf62c6cb0",
+      "path": ".changes/release-bootstrap.json"
+    },
+    {
+      "blob_sha": "b85909b37b4a4d3f69c8e467693d074fa9883eea",
+      "path": ".changes/thin-consumer-api.json"
     }
   ],
-  "generated_tree": "9b0396b300c2ae907a412a17fe7e826367fafa9e49063e8baccc4be6f616c71f",
-  "prior_released_boundary": "19f288586edfdb55658c7cc53162570f84874564",
+  "generated_tree": "0d5109473166ad826cc993d7cc3f29dfb2e555fc920b1fcb1a3db35b9f16f7a1",
+  "prior_released_boundary": "e042fb5365ab3a4f27c0f0e4e29c8e82aece8cf4",
   "publication": {
-    "source_main_sha": "e042fb5365ab3a4f27c0f0e4e29c8e82aece8cf4",
-    "version": "1.2.4"
+    "source_main_sha": "0be598d4a41ae499252d8df362f1f7db6379c82b",
+    "version": "1.3.0"
   },
   "schema": 1,
-  "source_main_sha": "e042fb5365ab3a4f27c0f0e4e29c8e82aece8cf4",
-  "version": "1.2.4"
+  "source_main_sha": "0be598d4a41ae499252d8df362f1f7db6379c82b",
+  "version": "1.3.0"
 }
