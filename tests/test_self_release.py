@@ -58,6 +58,7 @@ class SelfReleaseDogfoodTests(unittest.TestCase):
         self.assertIn("WORKFLOW_BRANCH: ${{ github.event.workflow_run.head_branch }}", workflow)
         self.assertIn("publisher_conclusion", workflow)
         self.assertIn('startswith("publish actual merged release /")', workflow)
+        self.assertIn(".[][] | objects | select", workflow)
 
     def test_publication_failure_keeps_reconciliation_fail_closed(self):
         workflow = (ROOT / ".github/workflows/self-release.yml").read_text()

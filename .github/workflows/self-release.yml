@@ -47,7 +47,7 @@ jobs:
            fi
           [[ "$WORKFLOW_BRANCH" == main ]] || { echo 'reconcile=false' >> "$GITHUB_OUTPUT"; exit 0; }
           jobs="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$WORKFLOW_RUN_ID/jobs")"
-           publisher_conclusion="$(jq -r '[.[][] | select(.name == "publish" or (.name | startswith("publish actual merged release /"))) | .conclusion] | if length == 1 then .[0] else "ambiguous" end' <<<"$jobs")"
+           publisher_conclusion="$(jq -r '[.[][] | objects | select(.name == "publish" or (.name | startswith("publish actual merged release /"))) | .conclusion] | if length == 1 then .[0] else "ambiguous" end' <<<"$jobs")"
           [[ "$publisher_conclusion" != skipped && "$publisher_conclusion" != ambiguous ]] || { echo 'reconcile=false' >> "$GITHUB_OUTPUT"; exit 0; }
           echo 'reconcile=true' >> "$GITHUB_OUTPUT"
   reconcile:
