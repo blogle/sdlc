@@ -21,7 +21,9 @@ class HestiaCacheWorkflowTests(unittest.TestCase):
         )
         # Derivation closures must be filtered in the evaluating job only.
         self.assertEqual(workflow.count("filter-drv-closures: true"), 1)
-        self.assertIn('"$HESTIA_BIN" prefetch ${{ matrix.installables }}', workflow)
+        self.assertIn('INSTALLABLES: ${{ matrix.installables }}', workflow)
+        self.assertIn('"$HESTIA_BIN" prefetch "${installables[@]}"', workflow)
+        self.assertNotIn('run: nix build -L ${{ matrix.installables }}', workflow)
         self.assertIn("wait-manifest-version: ${{ needs.evaluate.outputs.manifest-version }}", workflow)
 
     def test_sdlc_populates_default_branch_cache(self):

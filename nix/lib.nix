@@ -6,8 +6,10 @@ let
       validStage = stage:
         builtins.isAttrs stage
         && builtins.attrNames stage != [ ]
-        && builtins.all (name: builtins.isAttrs stage.${name} && stage.${name} ? drvPath) (builtins.attrNames stage);
-      valid = (contract.schemaVersion or null) == 1
+        && builtins.all (name: builtins.isAttrs stage.${name} && (stage.${name}.type or null) == "derivation") (builtins.attrNames stage);
+      valid = builtins.isAttrs contract
+        && builtins.attrNames contract == [ "schemaVersion" "stages" ]
+        && (contract.schemaVersion or null) == 1
         && builtins.isAttrs stages
         && builtins.attrNames stages == builtins.sort builtins.lessThan stageNames
         && builtins.all (name: validStage stages.${name}) stageNames;

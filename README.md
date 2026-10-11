@@ -55,13 +55,6 @@ ci-candidate:
 The consumer exposes the helper's Hestia-native job groups from its flake:
 
 ```nix
-packages = forAllSystems (system:
-  let pkgs = nixpkgs.legacyPackages.${system};
-  in {
-    sdlc = sdlc.packages.${system}.sdlc;
-    nix-eval-jobs = pkgs.nix-eval-jobs;
-  });
-
 hydraJobs = forAllSystems (system:
   (sdlc.lib.mkConsumer {
     contract = import ./ci.nix { inherit self system; };
