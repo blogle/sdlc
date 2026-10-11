@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.4.0] - 2026-10-11
+
+- **feature**: make onboarding a safe one-command policy and release cutover
+- **feature**: add idempotent release onboarding and activation preflight
+- **fix**: centralize thin consumer status, policy, and publication workflow adapters
+
 ## [1.3.0] - 2026-10-11
 
 - **feature**: add idempotent release onboarding and activation preflight
