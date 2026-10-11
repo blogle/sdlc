@@ -310,6 +310,9 @@ def main():
         operation.add_argument("--release-bot", required=True)
         operation.add_argument("--app-slug", default="")
     release_commands.choices["merge"].add_argument("--expected-head")
+    for action in ("enable", "disable", "status"):
+        operation = release_commands.add_parser(action)
+        operation.add_argument("--repo", required=True)
     publish = release_commands.add_parser("publish")
     publish.add_argument("merged_sha")
     reconcile = release_commands.add_parser("reconcile")
@@ -329,6 +332,11 @@ def main():
     policy = commands.add_parser("policy")
     policy.add_argument("action", choices=["plan", "apply", "check"])
     policy.add_argument("--repo", help="GitHub OWNER/NAME (defaults to this checkout's origin)")
+    onboard = commands.add_parser("onboard")
+    onboard.add_argument("--repo", required=True, help="GitHub OWNER/NAME")
+    onboard.add_argument("--app-id")
+    onboard.add_argument("--private-key-file")
+    onboard.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     try:
         if args.command == "changelog":
@@ -364,6 +372,12 @@ def main():
                 release_publisher.record_artifact(Path(args.ledger), args.commit, args.name, args.digest)
             else:
                 release_publisher.mark_published(Path(args.ledger))
+        elif args.command == "onboard":
+            import onboard as bootstrap
+            bootstrap.onboard(args.repo, args.app_id, args.private_key_file, dry_run=args.dry_run)
+        elif args.command == "release" and args.release_action in ("enable", "disable", "status"):
+            import onboard as bootstrap
+            getattr(bootstrap, f"release_{args.release_action}")(args.repo)
         else:
             policy_command(args.action, args.repo)
     except (ValueError, subprocess.CalledProcessError) as exc:
