@@ -1,0 +1,26 @@
+name: SDLC stable status gate
+description: Preserve a stable consumer check context while delegating result and queue semantics to SDLC
+inputs:
+  result:
+    description: Result of the shared reusable workflow job
+    required: true
+  stage:
+    description: SDLC stage whose event routing should be enforced
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Require the shared stage result
+      shell: bash
+      env:
+        RESULT: ${{ inputs.result }}
+        STAGE: ${{ inputs.stage }}
+        EVENT_NAME: ${{ github.event_name }}
+        HEAD_REF: ${{ github.head_ref }}
+      run: |
+        set -euo pipefail
+        if [[ "$STAGE" == candidate && "$EVENT_NAME" != merge_group && "$HEAD_REF" != mergify/merge-queue/* ]]; then
+          test "$RESULT" = skipped
+        else
+          test "$RESULT" = success
+        fi

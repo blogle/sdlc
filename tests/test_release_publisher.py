@@ -188,6 +188,7 @@ class PublisherTests(unittest.TestCase):
         self.assertIn("git merge-base --is-ancestor \"$MERGED_SHA\" FETCH_HEAD", workflow)
         self.assertIn("gh auth setup-git", workflow)
         self.assertIn("GH_TOKEN: ${{ steps.release-app.outputs.token }}", workflow)
+        self.assertIn("packages: write", workflow)
         self.assertIn('nix run "$SDLC_FLAKE"#sdlc -- release publish', workflow)
         self.assertIn('nix run "$SDLC_FLAKE"#sdlc -- release receipts', workflow)
         self.assertNotIn("python3 src/release_publisher.py", workflow)
