@@ -19,7 +19,7 @@
           pkgs = nixpkgs.legacyPackages.${system};
           sdlcCli = pkgs.writeShellApplication {
             name = "sdlc";
-            runtimeInputs = [ pkgs.coreutils pkgs.git pkgs.gh pkgs.jq pkgs.nix pkgs.python3 pkgs.just ];
+            runtimeInputs = [ pkgs.coreutils pkgs.git pkgs.gh pkgs.jq pkgs.nix pkgs.openssl pkgs.python3 pkgs.just ];
             text = ''
               export SDLC_POLICY_MODULE_PATH=${./actions/repository-policy}
               export PYTHONPATH=${./src}:''${PYTHONPATH:-}

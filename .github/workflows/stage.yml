@@ -64,10 +64,17 @@ jobs:
           upstream-cache-filter: true
           upstream-cache-key-names: "cache.nixos.org-1 nix-community.cachix.org-1"
       - name: Prefetch derivation closures from Hestia
+        env:
+          INSTALLABLES: ${{ matrix.installables }}
         run: |
-          "$HESTIA_BIN" prefetch ${{ matrix.installables }}
+          read -r -a installables <<< "$INSTALLABLES"
+          "$HESTIA_BIN" prefetch "${installables[@]}"
       - name: Build exact Nix derivations
-        run: nix build -L ${{ matrix.installables }}
+        env:
+          INSTALLABLES: ${{ matrix.installables }}
+        run: |
+          read -r -a installables <<< "$INSTALLABLES"
+          nix build -L "${installables[@]}"
 
   gate:
     name: sdlc / ${{ inputs.stage }}
