@@ -1,18 +1,18 @@
 {
-  "changelog_sha256": "327f8ef23a713f9d70914031b85e930c0a4ba626a649a00f59518d922933ddc4",
+  "changelog_sha256": "d1b2096c0020b76c9801d51312d2642be9c2869d552a37d9baec54e6bee597a2",
   "fragments": [
     {
-      "blob_sha": "acd16ccd398aff0dd936d3c6d2ed378c3bd303d3",
-      "path": ".changes/portable-release-coordinator.json"
+      "blob_sha": "4d7f1946d292552a10e15c2b667fea68c9b4915e",
+      "path": ".changes/release-gate-retry.json"
     }
   ],
-  "generated_tree": "2f546969850ffb06f3c73cd0fb867321d1239feccc7b80848dd1fc34ebf28893",
-  "prior_released_boundary": "fc725cb04eaab0d830303a542f42d5e96f18a14a",
+  "generated_tree": "9b0396b300c2ae907a412a17fe7e826367fafa9e49063e8baccc4be6f616c71f",
+  "prior_released_boundary": "19f288586edfdb55658c7cc53162570f84874564",
   "publication": {
-    "source_main_sha": "19f288586edfdb55658c7cc53162570f84874564",
-    "version": "1.2.3"
+    "source_main_sha": "e042fb5365ab3a4f27c0f0e4e29c8e82aece8cf4",
+    "version": "1.2.4"
   },
   "schema": 1,
-  "source_main_sha": "19f288586edfdb55658c7cc53162570f84874564",
-  "version": "1.2.3"
+  "source_main_sha": "e042fb5365ab3a4f27c0f0e4e29c8e82aece8cf4",
+  "version": "1.2.4"
 }

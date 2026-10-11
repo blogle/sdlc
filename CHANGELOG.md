@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.2.4] - 2026-10-11
+
+- **fix**: stabilize release gate check-run retries without weakening authorization
+
 ## [1.2.3] - 2026-10-10
 
 - **fix**: package the portable release coordinator and repair hosted publication workflow setup
