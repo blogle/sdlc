@@ -30,15 +30,14 @@ permissions:
 jobs:
   merge:
     name: merge validated release PR
+    outputs:
+      merged_sha: ${{ steps.merge-release.outputs.merged_sha }}
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       checks: read
       pull-requests: write
-      # The trusted built-in token dispatches the publisher workflow after the
-      # App independently merges the release PR. No Actions-write App grant needed.
-      actions: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -58,6 +57,7 @@ jobs:
           permission-pull-requests: write
           permission-checks: read
       - name: Recheck and squash merge release PR
+        id: merge-release
         env:
           GH_TOKEN: ${{ steps.release-app.outputs.token }}
           RELEASE_BOT_LOGIN: ${{ vars.SDLC_RELEASE_BOT_LOGIN }}
@@ -67,12 +67,39 @@ jobs:
         run: |
           set -euo pipefail
             prs="$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&base=$DEFAULT_BRANCH&head=${GITHUB_REPOSITORY%%/*}:sdlc/release-next" --jq '.[].number')"
-            for pr in $prs; do
-              nix run "$SDLC_FLAKE"#sdlc -- release merge --repo "$GITHUB_REPOSITORY" --pr "$pr" --release-bot "$RELEASE_BOT_LOGIN" --app-slug "$RELEASE_APP_SLUG"
-            merged_sha="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq '.merge_commit_sha')"
-            [[ "$merged_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "missing actual squash merged SHA" >&2; exit 1; }
-            # workflow_dispatch is expressly permitted to be triggered using
-            # GITHUB_TOKEN. It avoids granting Actions write to the release App.
-            GH_TOKEN="${{ github.token }}" gh workflow run release.yml --repo "$GITHUB_REPOSITORY" \
-              -f merged_sha="$merged_sha" -f activate="${{ vars.SDLC_RELEASE_ACTIVATE == 'true' }}"
-          done
+            if [[ -n "$prs" ]]; then
+              for pr in $prs; do
+                head_sha="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq '.head.sha')"
+                git fetch --no-tags origin "$head_sha"
+                nix run "$SDLC_FLAKE"#sdlc -- release merge --repo "$GITHUB_REPOSITORY" --pr "$pr" --release-bot "$RELEASE_BOT_LOGIN" --app-slug "$RELEASE_APP_SLUG"
+                merged_sha="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq '.merge_commit_sha')"
+                [[ "$merged_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "missing actual squash merged SHA" >&2; exit 1; }
+                printf 'merged_sha=%s\n' "$merged_sha" >> "$GITHUB_OUTPUT"
+              done
+            else
+              # Recover a release PR merged before a transient merger failure;
+              # re-run the exact-head gate before handing its merged SHA to the
+              # publisher. This is idempotent and never merges a closed PR.
+              recovery="$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=closed&base=$DEFAULT_BRANCH&head=${GITHUB_REPOSITORY%%/*}:sdlc/release-next&per_page=20" --jq '[.[] | select(.merged_at != null)] | .[0] | [.number, .head.sha, .merge_commit_sha] | @tsv')"
+              if [[ -n "$recovery" ]]; then
+                read -r pr head_sha merged_sha <<< "$recovery"
+                git fetch --no-tags origin "$head_sha" "$merged_sha"
+                nix run "$SDLC_FLAKE"#sdlc -- release gate --repo "$GITHUB_REPOSITORY" --pr "$pr" --release-bot "$RELEASE_BOT_LOGIN" --app-slug "$RELEASE_APP_SLUG"
+                [[ "$merged_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "missing recovered squash merged SHA" >&2; exit 1; }
+                printf 'merged_sha=%s\n' "$merged_sha" >> "$GITHUB_OUTPUT"
+              fi
+            fi
+
+  publish:
+    name: publish actual merged release
+    needs: merge
+    if: needs.merge.result == 'success' && needs.merge.outputs.merged_sha != ''
+    permissions:
+      contents: write
+      packages: write
+      pull-requests: write
+    uses: ./.github/workflows/release.yml
+    with:
+      merged_sha: ${{ needs.merge.outputs.merged_sha }}
+      activate: ${{ vars.SDLC_RELEASE_ACTIVATE == 'true' }}
+    secrets: inherit

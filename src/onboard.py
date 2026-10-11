@@ -6,8 +6,13 @@ import base64
 import json
 from pathlib import Path
 import subprocess
+import sys
 import time
 
+POLICY_DIR = Path(__file__).resolve().parents[1] / "actions/repository-policy"
+sys.path.insert(0, str(POLICY_DIR))
+import repository_policy
+import ruleset_api
 
 def _b64(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).rstrip(b"=").decode()
@@ -71,27 +76,96 @@ def _installation(repo: str, app_id: str, private_key_file: str) -> tuple[dict, 
     return installation, key
 
 
-def onboard(repo: str, app_id: str | None = None, private_key_file: str | None = None, *, dry_run: bool = False) -> None:
-    current_activation = _variable(repo, "SDLC_RELEASE_ACTIVATE")
-    if current_activation != "true" and not dry_run:
-        _set_variable(repo, "SDLC_RELEASE_ACTIVATE", "false")
+def _credentials(app_id: str | None, private_key_file: str | None) -> tuple[str, str]:
+    app_id = app_id or input("GitHub App ID: ").strip()
+    private_key_file = private_key_file or input("Path to GitHub App private key (never logged): ").strip()
     if not app_id or not private_key_file:
-        if _variable(repo, "SDLC_RELEASE_BOT_LOGIN") is None:
-            raise ValueError("provide --app-id and --private-key-file to verify the App and set its bot variable")
-        print(f"onboarding initialized for {repo}; activate={current_activation == 'true'}")
-        return
+        raise ValueError("App ID and private-key path are required; no settings were changed")
+    return app_id, private_key_file
+
+
+def _workflow_readiness(repo: str, branch: str) -> dict:
+    files = _user_api(f"repos/{repo}/contents/.github/workflows?ref={branch}")
+    if not isinstance(files, list):
+        raise ValueError(".github/workflows is missing; commit the SDLC workflow adapters before onboarding")
+    text = []
+    for item in files:
+        if item.get("type") == "file" and item.get("name", "").endswith((".yml", ".yaml")):
+            content = _user_api(f"repos/{repo}/contents/{item['path']}?ref={branch}").get("content", "")
+            text.append(base64.b64decode(content).decode())
+    combined = "\n".join(text)
+    required = {
+        "sdlc / pr-fast": "stable sdlc / pr-fast job",
+        "sdlc / candidate": "stable sdlc / candidate job",
+        "sdlc / policy": "stable sdlc / policy job",
+        "release-publish": "consumer release-publish hook wiring",
+        "packages: write": "trusted package publication permission",
+        "SDLC_RELEASE_APP_ID": "release App secret wiring",
+        "SDLC_RELEASE_ACTIVATE": "release activation wiring",
+    }
+    missing = [description for marker, description in required.items() if marker not in combined]
+    if missing:
+        raise ValueError("required consumer workflow wiring is not committed: " + ", ".join(missing))
+    runs = _user_api(f"repos/{repo}/actions/runs?branch={branch}&per_page=50").get("workflow_runs", [])
+    if not any(run.get("name") == "SDLC CI" and run.get("conclusion") == "success" for run in runs):
+        raise ValueError("no successful SDLC CI run is reporting yet; keep activation false and retry after CI completes")
+    justfile = _user_api(f"repos/{repo}/contents/justfile?ref={branch}")
+    if "release-publish" not in base64.b64decode(justfile.get("content", "")).decode():
+        raise ValueError("consumer justfile has no release-publish hook; activation remains false")
+    return {"workflow_files": len(text), "successful_ci": True, "artifact_hook": True, "packages_write": True}
+
+
+def _policy(repo: str, branch: str, *, apply: bool) -> dict:
+    config_item = _user_api(f"repos/{repo}/contents/.github/repository-policy.json?ref={branch}")
+    config = json.loads(base64.b64decode(config_item["content"]).decode())
+    desired = repository_policy.render_policy(config, branch)
+    all_rulesets, _ = ruleset_api.read_rulesets(repo, include_parents=True, anonymous_fallback=False)
+    named = [item for item in all_rulesets if item.get("name") == repository_policy.RULESET_NAME]
+    owned = [item for item in named if item.get("source", repo) == repo]
+    if len(owned) > 1:
+        raise ValueError("duplicate canonical rulesets found; refusing to guess")
+    current = owned[0] if owned else None
+    plan = "create" if current is None else ("update" if repository_policy.normalize_ruleset(current, desired) != repository_policy.normalize_ruleset(desired, desired) else "no-op")
+    if apply:
+        if current is None:
+            subprocess.run(["gh", "api", "--method", "POST", f"repos/{repo}/rulesets", "--input", "-"], input=json.dumps(desired), text=True, check=True, capture_output=True)
+        elif plan == "update":
+            subprocess.run(["gh", "api", "--method", "PUT", f"repos/{repo}/rulesets/{current['id']}", "--input", "-"], input=json.dumps(desired), text=True, check=True, capture_output=True)
+        verified, _ = ruleset_api.read_rulesets(repo, include_parents=False, anonymous_fallback=False)
+        owned = [item for item in verified if item.get("name") == repository_policy.RULESET_NAME and item.get("source", repo) == repo]
+        if len(owned) != 1:
+            raise ValueError("policy apply did not produce exactly one canonical ruleset; activation remains false")
+        repository_policy.check_live(owned[0], desired, repo)
+    contexts = [
+        item["context"]
+        for rule in desired["rules"]
+        if rule["type"] == "required_status_checks"
+        for item in rule["parameters"]["required_status_checks"]
+    ]
+    return {"plan": plan, "required_contexts": sorted(contexts), "policy_verified": apply}
+
+
+def onboard(repo: str, app_id: str | None = None, private_key_file: str | None = None, *, dry_run: bool = False) -> None:
+    repo_data = _user_api(f"repos/{repo}")
+    branch = repo_data["default_branch"]
+    app_id, private_key_file = _credentials(app_id, private_key_file)
     installation, key = _installation(repo, app_id, private_key_file)
     app_slug = installation.get("app_slug") or installation.get("app_name")
     if not isinstance(app_slug, str) or not app_slug:
         raise ValueError("GitHub did not return the installed App slug")
     bot_login = f"{app_slug}[bot]"
+    readiness = _workflow_readiness(repo, branch)
+    policy_plan = _policy(repo, branch, apply=False)
     if dry_run:
-        print(f"verified GitHub App installation for {repo}; would set {bot_login} and activate=false")
+        print(json.dumps({"repo": repo, "mode": "prepare", "bot_login": bot_login, "activation": False, "readiness": readiness, "policy": policy_plan}, indent=2, sort_keys=True))
         return
+    _set_variable(repo, "SDLC_RELEASE_ACTIVATE", "false")
     _set_variable(repo, "SDLC_RELEASE_BOT_LOGIN", bot_login)
     subprocess.run(["gh", "secret", "set", "SDLC_RELEASE_APP_ID", "--repo", repo, "--body", app_id], check=True)
     subprocess.run(["gh", "secret", "set", "SDLC_RELEASE_APP_PRIVATE_KEY", "--repo", repo], input=key, check=True)
-    print(f"verified App installation and provisioned release variables/secrets for {repo}; activate=false")
+    policy = _policy(repo, branch, apply=True)
+    _set_variable(repo, "SDLC_RELEASE_ACTIVATE", "true")
+    print(json.dumps({"repo": repo, "mode": "cutover", "activation": True, "readiness": readiness, "policy": policy}, indent=2, sort_keys=True))
 
 
 def _preflight(repo: str) -> dict:
