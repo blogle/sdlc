@@ -307,7 +307,7 @@ class RepositoryPolicyTests(unittest.TestCase):
         self.assertNotIn("repository-policy.json", json.dumps(main))
 
     def test_ruleset_apply_creates_then_is_idempotent_and_never_reads_consumer_config(self):
-        desired = repository_policy.render_canonical_policy("main")
+        desired = repository_policy.render_canonical_policy("main", include_policy=True)
         detail = dict(desired, id=23, source="owner/repo")
         with patch.object(sdlc, "policy_context", return_value=("owner/repo", "main")), \
              patch.object(sdlc, "policy_config", side_effect=AssertionError("ruleset must not read consumer config")), \
@@ -405,11 +405,10 @@ class RepositoryPolicyTests(unittest.TestCase):
         self.assertIn("github.event_name == 'merge_group'", candidate)
         self.assertIn("startsWith(github.head_ref, 'mergify/merge-queue/')", candidate)
 
-    def test_external_consumer_check_needs_no_sdlc_scripts_in_caller_checkout(self):
+    def test_external_consumer_canonical_check_needs_no_consumer_policy_file(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             (root / ".github/workflows").mkdir(parents=True)
-            (root / ".github/repository-policy.json").write_text('{"require_policy_check": false}')
             (root / ".github/workflows/ci.yml").write_text(
                 "uses: blogle/sdlc/.github/workflows/policy-check.yml@v1.2.3\nname: sdlc / policy\n"
             )
@@ -419,14 +418,25 @@ class RepositoryPolicyTests(unittest.TestCase):
                 "DEFAULT_BRANCH": "main",
                 "EVENT_NAME": "pull_request",
                 "BASE_SHA": "base-sha",
+                "SDLC_CANONICAL_RULESET": "true",
             }
             with patch.dict(policy_check.os.environ, env, clear=False), \
                  patch.object(policy_check.Path, "cwd", return_value=root), \
                  patch.object(policy_check.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "", "missing base config")), \
                  patch.object(policy_check, "read_live_rulesets", return_value=[]), \
-                 redirect_stdout(io.StringIO()) as output:
+                 self.assertRaisesRegex(ValueError, "policy apply --repo owner/consumer"):
                  policy_check.main()
-            self.assertIn("FIRST-ONBOARDING", output.getvalue())
+
+    def test_external_consumer_canonical_check_passes_after_ruleset_apply_and_rejects_drift(self):
+        desired = repository_policy.render_canonical_policy("main", include_policy=True)
+        live = [dict(desired, id=7, source="owner/consumer")]
+        outcome = policy_check.evaluate_policy_check(None, None, live, True, "owner/consumer", "main", False, canonical=True)
+        self.assertEqual(outcome, "canonical-check")
+        drifted = dict(live[0], enforcement="disabled")
+        with self.assertRaisesRegex(ValueError, "drift detected"):
+            policy_check.evaluate_policy_check(None, None, [drifted], True, "owner/consumer", "main", False, canonical=True)
+        with self.assertRaisesRegex(ValueError, "policy apply --repo owner/consumer"):
+            policy_check.evaluate_policy_check(None, None, [dict(live[0], source="other/repo")], True, "owner/consumer", "main", False, canonical=True)
 
     def test_pr_check_validates_proposal_but_uses_base_declaration(self):
         desired = repository_policy.render_policy({}, "main")

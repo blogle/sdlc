@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-from repository_policy import check_live, render_policy
+from repository_policy import check_live, render_canonical_policy, render_policy
 from ruleset_api import read_rulesets
 
 
@@ -29,9 +29,16 @@ def has_policy_caller(root):
     return False
 
 
-def evaluate_policy_check(proposed, base_config, live_rulesets, caller_present, repository, default_branch, pull_request):
+def evaluate_policy_check(proposed, base_config, live_rulesets, caller_present, repository, default_branch, pull_request, canonical=False):
     name = "SDLC default branch"
     named, owned = canonical_rulesets(live_rulesets, name, repository)
+    if canonical and proposed is None:
+        desired = render_canonical_policy(default_branch, include_policy=True)
+        if len(owned) != 1:
+            check_live(None, desired, repository)
+        check_live(owned[0], desired, repository)
+        print(f"live SDLC-owned canonical ruleset matches for {repository}")
+        return "canonical-check"
     if proposed is None:
         if base_config is not None:
             raise ValueError(f"policy declaration was removed from this PR; restore .github/repository-policy.json, then run `nix develop -c sdlc policy apply --repo {repository}`")
@@ -81,13 +88,14 @@ def main():
     repository = os.environ["GITHUB_REPOSITORY"]
     default_branch = os.environ["DEFAULT_BRANCH"]
     event = os.environ.get("EVENT_NAME")
-    path = ".github/repository-policy.json"
+    root = Path.cwd()
+    path = root / ".github/repository-policy.json"
     # On PRs validate the proposed declaration, then compare live state to the
     # declaration committed to the target branch (the proposal is not applied yet).
     base_config = None
     if event == "pull_request":
         base = os.environ["BASE_SHA"]
-        result = subprocess.run(["git", "show", f"{base}:{path}"], text=True, capture_output=True)
+        result = subprocess.run(["git", "show", f"{base}:.github/repository-policy.json"], cwd=root, text=True, capture_output=True)
         if result.returncode == 0:
             base_config = json.loads(result.stdout)
     try:
@@ -102,10 +110,11 @@ def main():
         proposed,
         base_config,
         live,
-        has_policy_caller(Path.cwd()),
+        has_policy_caller(root),
         repository,
         default_branch,
         event == "pull_request",
+        os.environ.get("SDLC_CANONICAL_RULESET") == "true",
     )
     # A first-onboarding PR is the one deliberate exception: it proves that
     # the declaration and read-only caller are ready before a ruleset exists.

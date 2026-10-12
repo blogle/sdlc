@@ -297,8 +297,7 @@ def ruleset_command(action, repo):
     full_name, branch = policy_context(repo)
 
     def render(current):
-        checks = {item.get("context") for rule in (current or {}).get("rules", []) if rule.get("type") == "required_status_checks" for item in rule.get("parameters", {}).get("required_status_checks", [])}
-        return repository_policy.render_canonical_policy(branch, include_policy=repository_policy.POLICY_CONTEXT in checks)
+        return repository_policy.render_canonical_policy(branch, include_policy=True)
 
     _ruleset_command(action, full_name, branch, render, "ruleset")
 
