@@ -390,6 +390,7 @@ class RepositoryPolicyTests(unittest.TestCase):
         self.assertNotIn("actions/repository-policy/policy_check.py", workflow)
         action = (root / "actions/repository-policy/action.yml").read_text()
         self.assertIn("$GITHUB_ACTION_PATH/policy_check.py", action)
+        self.assertIn("SDLC_CANONICAL_RULESET: ${{ github.repository != 'blogle/sdlc' }}", action)
         self.assertFalse((root / ".github/workflows/reconcile-policy.yml").exists())
         caller = (root / "examples/minimal/.github/workflows/ci.yml").read_text()
         self.assertIn("name: sdlc / policy", caller)
