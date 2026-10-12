@@ -1,0 +1,5 @@
+{
+  "type": "feature",
+  "semver": "minor",
+  "summary": "add the SDLC-owned canonical ruleset plan, apply, and check CLI"
+}
