@@ -32,7 +32,7 @@ def has_policy_caller(root):
 def evaluate_policy_check(proposed, base_config, live_rulesets, caller_present, repository, default_branch, pull_request, canonical=False):
     name = "SDLC default branch"
     named, owned = canonical_rulesets(live_rulesets, name, repository)
-    if canonical and proposed is None:
+    if canonical:
         desired = render_canonical_policy(default_branch, include_policy=True)
         if len(owned) != 1:
             check_live(None, desired, repository)
@@ -88,23 +88,28 @@ def main():
     repository = os.environ["GITHUB_REPOSITORY"]
     default_branch = os.environ["DEFAULT_BRANCH"]
     event = os.environ.get("EVENT_NAME")
+    canonical = os.environ.get("SDLC_CANONICAL_RULESET") == "true"
     root = Path.cwd()
     path = root / ".github/repository-policy.json"
     # On PRs validate the proposed declaration, then compare live state to the
     # declaration committed to the target branch (the proposal is not applied yet).
     base_config = None
-    if event == "pull_request":
+    if not canonical and event == "pull_request":
         base = os.environ["BASE_SHA"]
         result = subprocess.run(["git", "show", f"{base}:.github/repository-policy.json"], cwd=root, text=True, capture_output=True)
         if result.returncode == 0:
             base_config = json.loads(result.stdout)
-    try:
-        with open(path, encoding="utf-8") as source:
-            proposed = json.load(source)
-    except FileNotFoundError:
+    if canonical:
         proposed = None
-    if event != "pull_request":
-        base_config = proposed
+        base_config = None
+    else:
+        try:
+            with open(path, encoding="utf-8") as source:
+                proposed = json.load(source)
+        except FileNotFoundError:
+            proposed = None
+        if event != "pull_request":
+            base_config = proposed
     live = read_live_rulesets(repository)
     outcome = evaluate_policy_check(
         proposed,
@@ -114,7 +119,7 @@ def main():
         repository,
         default_branch,
         event == "pull_request",
-        os.environ.get("SDLC_CANONICAL_RULESET") == "true",
+        canonical,
     )
     # A first-onboarding PR is the one deliberate exception: it proves that
     # the declaration and read-only caller are ready before a ruleset exists.

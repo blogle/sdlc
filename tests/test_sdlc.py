@@ -428,9 +428,10 @@ class RepositoryPolicyTests(unittest.TestCase):
                  policy_check.main()
 
     def test_external_consumer_canonical_check_passes_after_ruleset_apply_and_rejects_drift(self):
-        desired = repository_policy.render_canonical_policy("main", include_policy=True)
+        desired = policy_check.render_canonical_policy("main", include_policy=True)
         live = [dict(desired, id=7, source="owner/consumer")]
-        outcome = policy_check.evaluate_policy_check(None, None, live, True, "owner/consumer", "main", False, canonical=True)
+        malicious = {"extra_required_status_checks": [], "require_policy_check": False}
+        outcome = policy_check.evaluate_policy_check(malicious, malicious, live, True, "owner/consumer", "main", False, canonical=True)
         self.assertEqual(outcome, "canonical-check")
         drifted = dict(live[0], enforcement="disabled")
         with self.assertRaisesRegex(ValueError, "drift detected"):
