@@ -338,6 +338,18 @@ def main():
     onboard.add_argument("--app-id")
     onboard.add_argument("--private-key-file")
     onboard.add_argument("--dry-run", action="store_true")
+    fleet = commands.add_parser("fleet", help="prepare-only trusted fleet contract operations")
+    fleet.add_argument("action", choices=["plan", "reconcile", "verify"])
+    fleet.add_argument("--manifest", required=True)
+    fleet.add_argument("--policy", required=True)
+    fleet.add_argument("--attestation", required=True)
+    fleet.add_argument("--consumer-pin", required=True)
+    fleet.add_argument("--trusted-bypass-user-id", required=True, type=int)
+    fleet.add_argument("--expected-head")
+    fleet.add_argument("--phase", choices=["bootstrap", "dual", "cutover", "retire"], default="bootstrap")
+    fleet.add_argument("--exact-head", action="store_true")
+    fleet.add_argument("--current-check", action="append", default=[])
+    fleet.add_argument("--available-check", action="append", default=[])
     args = parser.parse_args()
     try:
         if args.command == "changelog":
@@ -376,6 +388,21 @@ def main():
         elif args.command == "onboard":
             import onboard as bootstrap
             bootstrap.onboard(args.repo, args.app_id, args.private_key_file, dry_run=args.dry_run)
+        elif args.command == "fleet":
+            import fleet as fleet_contract
+            return fleet_contract.main([
+                args.action,
+                "--manifest", args.manifest,
+                "--policy", args.policy,
+                "--attestation", args.attestation,
+                "--consumer-pin", args.consumer_pin,
+                "--trusted-bypass-user-id", str(args.trusted_bypass_user_id),
+                "--phase", args.phase,
+                *( ["--exact-head"] if args.exact_head else []),
+                *(["--expected-head", args.expected_head] if args.expected_head else []),
+                *sum((["--current-check", value] for value in args.current_check), []),
+                *sum((["--available-check", value] for value in args.available_check), []),
+            ])
         elif args.command == "release" and args.release_action in ("enable", "disable", "status"):
             import onboard as bootstrap
             getattr(bootstrap, f"release_{args.release_action}")(args.repo)

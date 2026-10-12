@@ -6,6 +6,7 @@ default:
 check:
     python3 -m unittest discover -s tests -v
     python3 -m py_compile src/sdlc.py
+    python3 -m py_compile src/fleet.py
     python3 -m py_compile actions/repository-policy/repository_policy.py
     python3 -m py_compile actions/repository-policy/policy_check.py
     python3 -m py_compile actions/repository-policy/ruleset_api.py

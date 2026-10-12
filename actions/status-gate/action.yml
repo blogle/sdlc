@@ -19,7 +19,7 @@ runs:
         HEAD_REF: ${{ github.head_ref }}
       run: |
         set -euo pipefail
-        if [[ "$STAGE" == candidate && "$EVENT_NAME" != merge_group && "$HEAD_REF" != mergify/merge-queue/* ]]; then
+        if [[ ( "$STAGE" == candidate || "$STAGE" == verify ) && "$EVENT_NAME" != merge_group && "$HEAD_REF" != mergify/merge-queue/* ]]; then
           test "$RESULT" = skipped
         else
           test "$RESULT" = success
