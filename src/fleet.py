@@ -98,9 +98,36 @@ def _validate_floor(floor):
     if floor.get("integration_path") != "merge_queue":
         raise FleetContractError("security floor must use the approved merge queue integration path")
     publishers = floor.get("trusted_publishers")
-    if not isinstance(publishers, dict) or any(publishers.get(name) != TRUSTED_SOURCE for name in PR_REQUIRED_CHECKS + (QUEUE_CHECK,)):
-        raise FleetContractError("security floor must bind every SDLC check to the trusted publisher")
-    return floor
+    if not isinstance(publishers, dict):
+        raise FleetContractError("security floor must bind every SDLC check to an observed publisher app")
+    legacy_unverified = True
+    for name in PR_REQUIRED_CHECKS + (QUEUE_CHECK,):
+        binding = publishers.get(name)
+        if isinstance(binding, dict):
+            if not isinstance(binding.get("app_id"), int) or binding["app_id"] <= 0 or binding.get("source") != "github-actions":
+                raise FleetContractError("security floor publisher bindings require positive GitHub Actions app IDs")
+            legacy_unverified = False
+        elif binding != TRUSTED_SOURCE:
+            raise FleetContractError("security floor publisher binding is invalid")
+    tag_pattern = floor.get("release_tag_pattern", "refs/tags/v*")
+    if tag_pattern != "refs/tags/v*":
+        raise FleetContractError("release tag protection must match immutable version tags refs/tags/v*")
+    return {**floor, "publisher_binding_verified": not legacy_unverified}
+
+
+def _validate_codeowners(policy):
+    kind = policy.get("repository_kind", "consumer")
+    codeowners = policy.get("codeowner_protection", {})
+    if not isinstance(codeowners, dict):
+        raise FleetContractError("codeowner_protection must be an object")
+    required = codeowners.get("required", False)
+    paths = codeowners.get("sensitive_paths", [])
+    if not isinstance(required, bool) or not isinstance(paths, list) or any(not isinstance(path, str) or not path.startswith("/") for path in paths):
+        raise FleetContractError("codeowner protection requires absolute sensitive paths")
+    if kind == "dotfiles" and (required is not True or not paths):
+        raise FleetContractError("dotfiles must require codeowner approval for declared sensitive paths")
+    if kind != "dotfiles" and required:
+        raise FleetContractError("only the dotfiles policy may enable sensitive codeowner protection")
 
 
 def validate_policy(policy, trusted_bypass_user_id=None):
@@ -113,6 +140,7 @@ def validate_policy(policy, trusted_bypass_user_id=None):
         raise FleetContractError("policy provenance source must be blogle/sdlc")
     _sha(provenance.get("revision"), "policy.provenance.revision")
     _validate_floor(policy.get("security_floor"))
+    _validate_codeowners(policy)
     bypass = _object(policy.get("bypass"), "policy.bypass")
     user_id = bypass.get("user_id")
     if not isinstance(user_id, int) or user_id <= 0 or trusted_bypass_user_id != user_id:
@@ -142,7 +170,13 @@ def verify_provenance(provenance, *, verifier, consumer_pin, expected_head=None)
         raise FleetContractError("provenance attestation has incomplete source identity")
     if _sha(attestation.get("commit_sha"), "attestation.commit_sha") != revision:
         raise FleetContractError("provenance attestation commit differs from pinned revision")
-    if attestation.get("reachable_from_protected") is not True or attestation.get("immutable") is not True:
+    if (
+        attestation.get("reachable_from_protected") is not True
+        or attestation.get("ancestry_verified") is not True
+        or attestation.get("protected_ref") != "refs/heads/main"
+        or attestation.get("protected_repository_id") != attestation.get("repository_id")
+        or attestation.get("immutable") is not True
+    ):
         raise FleetContractError("SDLC revision is not proven reachable from protected history")
     if expected_head is not None and revision != _sha(expected_head, "expected_head"):
         raise FleetContractError("SDLC revision does not match the verified head")
@@ -168,22 +202,27 @@ def check_policy_compatibility(policy_version, *, supported=(POLICY_SCHEMA_VERSI
     return {"policy_version": policy_version, "supported": list(supported)}
 
 
-def render_canonical_policy(default_branch, policy):
+def render_canonical_policy(default_branch, policy, *, trusted_bypass_user_id):
     """Render branch and release-tag rulesets from the upstream floor."""
+    validate_policy(policy, trusted_bypass_user_id)
     floor = _validate_floor(policy["security_floor"])
+    if not floor["publisher_binding_verified"]:
+        raise FleetContractError("canonical rendering is blocked until observed GitHub Actions publisher app IDs are configured")
+    bypass_actor = {"actor_type": "User", "actor_id": trusted_bypass_user_id, "bypass_mode": "always"}
+    require_code_owner = policy.get("repository_kind", "consumer") == "dotfiles"
     if not isinstance(default_branch, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", default_branch):
         raise FleetContractError("default branch must be a plain branch name")
     contexts = [{"context": name} for name in floor["required_checks"]]
     branch = {
         "name": "SDLC default branch",
-        "target": "branch", "enforcement": "active", "bypass_actors": [],
+        "target": "branch", "enforcement": "active", "bypass_actors": [bypass_actor],
         "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
         "rules": [
             {"type": "deletion"}, {"type": "non_fast_forward"},
             {"type": "pull_request", "parameters": {
                 "allowed_merge_methods": ["squash"],
                 "dismiss_stale_reviews_on_push": True,
-                "require_code_owner_review": False,
+                "require_code_owner_review": require_code_owner,
                 "require_last_push_approval": False,
                 "required_approving_review_count": 0,
                 "required_review_thread_resolution": False,
@@ -191,13 +230,16 @@ def render_canonical_policy(default_branch, policy):
             {"type": "required_status_checks", "parameters": {
                 "strict_required_status_checks_policy": False,
                 "do_not_enforce_on_create": False,
-                "required_status_checks": contexts,
+                "required_status_checks": [
+                    {**item, "app_id": floor["trusted_publishers"][item["context"]]["app_id"]}
+                    for item in contexts
+                ],
             }},
         ],
     }
     tags = {
-        "name": "SDLC release tags", "target": "tag", "enforcement": "active", "bypass_actors": [],
-        "conditions": {"ref_name": {"include": ["refs/tags/v*"], "exclude": []}},
+        "name": "SDLC release tags", "target": "tag", "enforcement": "active", "bypass_actors": [bypass_actor],
+        "conditions": {"ref_name": {"include": [floor.get("release_tag_pattern", "refs/tags/v*")], "exclude": []}},
         "rules": [{"type": "deletion"}, {"type": "non_fast_forward"}],
     }
     return {"branch": branch, "release_tags": tags}
@@ -283,26 +325,80 @@ def generated_callers(revision):
             for stage, name in (("pr-fast", "sdlc-check"), ("candidate", "sdlc-verify"), ("policy-check", "sdlc-policy"))}
 
 
-def migration_plan(required_checks, available_checks, *, phase="bootstrap", exact_head=False, all_consumers_upgraded=False, mergify_migrated=False):
+def verify_ruleset_readback(live, desired, *, trusted_bypass_user_id):
+    """Verify exact bypass identity and owned policy fields after a controller read."""
+    live = _object(live, "live ruleset")
+    desired = _object(desired, "desired ruleset")
+    if live.get("bypass_actors") != desired.get("bypass_actors"):
+        raise FleetContractError("live ruleset bypass actors do not match the exact trusted User")
+    actor = live.get("bypass_actors", [{}])
+    if actor != [{"actor_type": "User", "actor_id": trusted_bypass_user_id, "bypass_mode": "always"}]:
+        raise FleetContractError("live ruleset bypass must contain exactly one always-bypass personal User")
+    if live.get("name") != desired.get("name") or live.get("target") != desired.get("target"):
+        raise FleetContractError("live ruleset identity differs from canonical policy")
+    live_status = next((rule for rule in live.get("rules", []) if rule.get("type") == "required_status_checks"), None)
+    desired_status = next((rule for rule in desired.get("rules", []) if rule.get("type") == "required_status_checks"), None)
+    if live_status != desired_status:
+        raise FleetContractError("live required checks or publisher app binding differ from canonical policy")
+    return True
+
+
+def verify_check_publishers(check_runs, floor):
+    """Reject same-name check spoofing by requiring the observed Actions app ID."""
+    normalized_floor = _validate_floor(floor)
+    if not normalized_floor["publisher_binding_verified"]:
+        raise FleetContractError("check readiness is blocked until GitHub Actions publisher app IDs are observed")
+    publishers = normalized_floor["trusted_publishers"]
+    observed = {}
+    for check in check_runs:
+        context = check.get("name") or check.get("context")
+        app = check.get("app") or {}
+        if context in publishers:
+            if context in observed:
+                raise FleetContractError(f"duplicate observed publisher check: {context}")
+            if app.get("id") != publishers[context]["app_id"] or app.get("slug") != "github-actions":
+                raise FleetContractError(f"check publisher spoofed for {context}")
+            observed[context] = check
+    missing = set(PR_REQUIRED_CHECKS + (QUEUE_CHECK,)) - set(observed)
+    if missing:
+        raise FleetContractError("trusted check publisher observations are missing: " + ", ".join(sorted(missing)))
+    return observed
+
+
+def _migration_state(repository, migration_state):
+    state = _object(migration_state, "migration_state")
+    if state.get("repository") != repository or not isinstance(state.get("generation"), int) or state["generation"] < 0:
+        raise FleetContractError("migration state is not scoped to this repository")
+    if state.get("in_flight") is True:
+        raise FleetContractError("another migration is in flight; serialized per-repository migration required")
+    if state.get("phase") not in ("bootstrap", "dual", "cutover", "retire"):
+        raise FleetContractError("migration state has an unsupported phase")
+    return state
+
+
+def migration_plan(required_checks, available_checks, *, repository="", migration_state=None, phase="bootstrap", exact_head=False, all_consumers_upgraded=False, mergify_migrated=False):
     """Return a serial, alias-first migration plan with no implicit writes."""
     required = _known_checks(list(required_checks), "required_checks")
     available = set(available_checks)
     if phase not in ("bootstrap", "dual", "cutover", "retire"):
         raise FleetContractError("unknown migration phase")
+    state = _migration_state(repository, migration_state) if migration_state is not None else None
+    if state is not None and state["phase"] != phase:
+        raise FleetContractError("requested migration phase does not match serialized state")
     if phase == "bootstrap":
-        return {"phase": phase, "required_checks": [], "operations": ["publish stable wrappers"], "prepare_only": True}
+        return {"phase": phase, "required_checks": [], "operations": [{"kind": "publish_wrappers", "preconditions": {"repository": repository, "generation": state["generation"] if state else 0}}], "prepare_only": True}
     if not exact_head:
         raise FleetContractError("migration requires checks verified at the exact default-branch head")
     missing = set(PR_REQUIRED_CHECKS) - available
     if missing:
         raise FleetContractError("cannot require checks before they exist: " + ", ".join(sorted(missing)))
     if phase == "dual":
-        return {"phase": phase, "required_checks": list(PR_REQUIRED_CHECKS), "retain_aliases": True, "operations": ["require stable PR checks", "retain legacy aliases"], "prepare_only": True}
+        return {"phase": phase, "required_checks": list(PR_REQUIRED_CHECKS), "retain_aliases": True, "operations": [{"kind": "require_checks", "preconditions": {"exact_head": True, "generation": state["generation"] if state else 0}, "checks": list(PR_REQUIRED_CHECKS)}, {"kind": "retain_aliases"}], "prepare_only": True}
     if phase == "cutover" and not mergify_migrated:
         raise FleetContractError("cutover requires Mergify to use stable names first")
     if phase == "retire" and not all_consumers_upgraded:
         raise FleetContractError("retire requires every consumer adapter to be upgraded")
-    return {"phase": phase, "required_checks": list(PR_REQUIRED_CHECKS), "retain_aliases": phase != "retire", "operations": ["migrate required contexts", "remove aliases" if phase == "retire" else "retain aliases"], "prepare_only": True}
+    return {"phase": phase, "required_checks": list(PR_REQUIRED_CHECKS), "retain_aliases": phase != "retire", "operations": [{"kind": "migrate_required_contexts", "preconditions": {"exact_head": True, "mergify_migrated": True}, "checks": list(PR_REQUIRED_CHECKS)}, {"kind": "remove_aliases" if phase == "retire" else "retain_aliases", "preconditions": {"all_consumers_upgraded": all_consumers_upgraded}}], "prepare_only": True}
 
 
 def verify_identity(expected_owner_id, expected_repository_id, observed):
@@ -356,9 +452,9 @@ def reconcile_repository(desired, observed, *, client=None, apply=False):
     live = _object(client.read(observed), "live repository observation")
     operations = []
     if live.get("rulesets") != desired.get("rulesets"):
-        operations.append("propose ruleset corrective PR")
+        operations.append({"kind": "ruleset_diff", "preconditions": {"repository_id": observed.get("repository_id"), "observed_revision": live.get("revision")}, "desired": desired.get("rulesets")})
     if live.get("workflow_digest") != desired.get("workflow_digest"):
-        operations.append("propose generated caller corrective PR")
+        operations.append({"kind": "caller_diff", "preconditions": {"repository_id": observed.get("repository_id"), "observed_head": live.get("head_sha")}, "desired_digest": desired.get("workflow_digest")})
     return {"state": next_state(observed.get("state", "unknown"), "ready" if not operations else "unsafe"), "operations": operations, "prepare_only": True, "mutations": []}
 
 

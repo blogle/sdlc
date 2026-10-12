@@ -43,6 +43,15 @@ def policy():
     }
 
 
+def bound_policy():
+    result = policy()
+    result["security_floor"]["trusted_publishers"] = {
+        name: {"app_id": 4181, "source": "github-actions"}
+        for name in fleet.PR_REQUIRED_CHECKS + (fleet.QUEUE_CHECK,)
+    }
+    return result
+
+
 class FleetContractTests(unittest.TestCase):
     def test_policy_requires_trusted_single_user(self):
         valid = policy()
@@ -59,24 +68,26 @@ class FleetContractTests(unittest.TestCase):
 
     def test_alias_migration_requires_new_checks_before_requirement(self):
         result = fleet.migration_plan([], [], phase="bootstrap")
-        self.assertEqual(result["operations"], ["publish stable wrappers"])
+        self.assertEqual(result["operations"][0]["kind"], "publish_wrappers")
         result = fleet.migration_plan(["sdlc / pr-fast"], fleet.ALL_CHECK_NAMES, phase="dual", exact_head=True)
         self.assertEqual(result["required_checks"], ["sdlc-check", "sdlc-policy"])
         self.assertTrue(result["retain_aliases"])
         with self.assertRaisesRegex(ValueError, "before they exist"):
             fleet.migration_plan([], ["sdlc-check"], phase="dual", exact_head=True)
+        with self.assertRaisesRegex(ValueError, "in flight"):
+            fleet.migration_plan([], [], repository="anvil", migration_state={"repository": "anvil", "generation": 2, "phase": "bootstrap", "in_flight": True})
 
     def test_plan_is_prepare_only_and_checks_head(self):
         result = fleet.plan(
             manifest(), policy(), trusted_bypass_user_id=7,
-            verifier=type("Verifier", (), {"verify": lambda self, source, revision: {"source": source, "repository_id": 1, "commit_sha": revision, "reachable_from_protected": True, "immutable": True}})(),
+            verifier=type("Verifier", (), {"verify": lambda self, source, revision: {"source": source, "repository_id": 1, "protected_repository_id": 1, "protected_ref": "refs/heads/main", "commit_sha": revision, "reachable_from_protected": True, "ancestry_verified": True, "immutable": True}})(),
             consumer_pin=HEAD, expected_head=HEAD, phase="bootstrap",
             current_checks=["sdlc / pr-fast"], available_checks=fleet.ALL_CHECK_NAMES,
         )
         self.assertTrue(result["prepare_only"])
         self.assertEqual(result["mutations"], [])
         with self.assertRaisesRegex(ValueError, "does not match"):
-            fleet.plan(manifest(), policy(), trusted_bypass_user_id=7, verifier=type("Verifier", (), {"verify": lambda self, source, revision: {"source": source, "repository_id": 1, "commit_sha": revision, "reachable_from_protected": True, "immutable": True}})(), consumer_pin=HEAD,
+            fleet.plan(manifest(), policy(), trusted_bypass_user_id=7, verifier=type("Verifier", (), {"verify": lambda self, source, revision: {"source": source, "repository_id": 1, "protected_repository_id": 1, "protected_ref": "refs/heads/main", "commit_sha": revision, "reachable_from_protected": True, "ancestry_verified": True, "immutable": True}})(), consumer_pin=HEAD,
                        expected_head="b" * 40, available_checks=fleet.ALL_CHECK_NAMES)
 
     def test_release_identity_and_policy_version_fail_closed(self):
@@ -101,11 +112,14 @@ class FleetContractTests(unittest.TestCase):
         self.assertIn("stage: verify", callers)
 
     def test_provenance_rejects_forged_fork_and_toctou(self):
-        verifier = type("Verifier", (), {"verify": lambda self, source, revision: {"source": "evil/fork", "repository_id": 1, "commit_sha": revision, "reachable_from_protected": True, "immutable": True}})()
+        verifier = type("Verifier", (), {"verify": lambda self, source, revision: {"source": "evil/fork", "repository_id": 1, "commit_sha": revision, "reachable_from_protected": True, "ancestry_verified": True, "protected_ref": "refs/heads/main", "protected_repository_id": 1, "immutable": True}})()
         with self.assertRaisesRegex(ValueError, "incomplete source identity"):
             fleet.verify_provenance(policy()["provenance"], verifier=verifier, consumer_pin=HEAD)
-        verifier = type("Verifier", (), {"verify": lambda self, source, revision: {"source": source, "repository_id": 1, "commit_sha": "b" * 40, "reachable_from_protected": True, "immutable": True}})()
+        verifier = type("Verifier", (), {"verify": lambda self, source, revision: {"source": source, "repository_id": 1, "commit_sha": "b" * 40, "reachable_from_protected": True, "ancestry_verified": True, "protected_ref": "refs/heads/main", "protected_repository_id": 1, "immutable": True}})()
         with self.assertRaisesRegex(ValueError, "differs"):
+            fleet.verify_provenance(policy()["provenance"], verifier=verifier, consumer_pin=HEAD)
+        verifier = type("Verifier", (), {"verify": lambda self, source, revision: {"source": source, "repository_id": 1, "commit_sha": revision, "reachable_from_protected": True, "ancestry_verified": False, "protected_ref": "refs/heads/main", "protected_repository_id": 1, "immutable": True}})()
+        with self.assertRaisesRegex(ValueError, "not proven"):
             fleet.verify_provenance(policy()["provenance"], verifier=verifier, consumer_pin=HEAD)
 
     def test_floor_rejects_queue_check_as_normal_required_context(self):
@@ -116,8 +130,10 @@ class FleetContractTests(unittest.TestCase):
             fleet.validate_policy(invalid, trusted_bypass_user_id=7)
 
     def test_renderer_and_reconciler_are_injected_and_prepare_only(self):
-        rendered = fleet.render_canonical_policy("main", policy())
+        rendered = fleet.render_canonical_policy("main", bound_policy(), trusted_bypass_user_id=7)
         self.assertEqual(rendered["branch"]["conditions"]["ref_name"]["include"], ["~DEFAULT_BRANCH"])
+        self.assertEqual(rendered["branch"]["bypass_actors"], [{"actor_type": "User", "actor_id": 7, "bypass_mode": "always"}])
+        self.assertEqual(rendered["release_tags"]["conditions"]["ref_name"]["include"], ["refs/tags/v*"])
 
         class Client:
             def read(self, observed):
@@ -131,6 +147,33 @@ class FleetContractTests(unittest.TestCase):
         self.assertEqual(result["mutations"], [])
         with self.assertRaisesRegex(ValueError, "disabled"):
             fleet.reconcile_repository({}, {}, client=Client(), apply=True)
+
+    def test_ruleset_readback_rejects_app_or_role_bypass(self):
+        desired = fleet.render_canonical_policy("main", bound_policy(), trusted_bypass_user_id=7)["branch"]
+        self.assertTrue(fleet.verify_ruleset_readback(desired, desired, trusted_bypass_user_id=7))
+        forged = dict(desired)
+        forged["bypass_actors"] = [{"actor_type": "OrganizationAdmin", "actor_id": 1, "bypass_mode": "always"}]
+        with self.assertRaisesRegex(ValueError, "bypass"):
+            fleet.verify_ruleset_readback(forged, desired, trusted_bypass_user_id=7)
+
+    def test_codeowner_policy_is_sensitive_only_for_dotfiles(self):
+        ordinary = bound_policy()
+        fleet.validate_policy(ordinary, trusted_bypass_user_id=7)
+        dotfiles = bound_policy()
+        dotfiles.update({"repository_kind": "dotfiles", "codeowner_protection": {"required": True, "sensitive_paths": ["/.github/workflows/fleet.yml", "/fleet/policy.json"]}})
+        rendered = fleet.render_canonical_policy("main", dotfiles, trusted_bypass_user_id=7)
+        pull_request = next(rule for rule in rendered["branch"]["rules"] if rule["type"] == "pull_request")
+        self.assertFalse(next(rule for rule in fleet.render_canonical_policy("main", ordinary, trusted_bypass_user_id=7)["branch"]["rules"] if rule["type"] == "pull_request")["parameters"]["require_code_owner_review"])
+        self.assertTrue(pull_request["parameters"]["require_code_owner_review"])
+
+    def test_publishers_require_observed_actions_app_and_reject_spoof(self):
+        checks = [{"name": name, "app": {"id": 4181, "slug": "github-actions"}} for name in fleet.PR_REQUIRED_CHECKS + (fleet.QUEUE_CHECK,)]
+        self.assertEqual(len(fleet.verify_check_publishers(checks, bound_policy()["security_floor"])), 3)
+        checks[0]["app"] = {"id": 999, "slug": "github-actions"}
+        with self.assertRaisesRegex(ValueError, "spoofed"):
+            fleet.verify_check_publishers(checks, bound_policy()["security_floor"])
+        with self.assertRaisesRegex(ValueError, "blocked"):
+            fleet.verify_check_publishers([{ "name": name, "app": {"id": 4181, "slug": "github-actions"}} for name in fleet.PR_REQUIRED_CHECKS + (fleet.QUEUE_CHECK,)], policy()["security_floor"])
 
     def test_identity_credentials_and_state_machine_fail_closed(self):
         self.assertEqual(fleet.verify_identity(1, 2, {"owner_id": 1, "repository_id": 2, "default_branch": "main"})["default_branch"], "main")

@@ -85,6 +85,13 @@ mutation and rejects transfers or name replacement. `enabled: false` disables
 release activation without deleting protections or credentials. A separate
 explicit `suspended` state pauses automated mutation.
 
+The bypass actor is rendered only from trusted fleet configuration as exactly
+one GitHub ruleset actor: `actor_type: User`, the immutable user ID, and
+`bypass_mode: always`. App, organization-role, and agent actors are rejected.
+The SDLC renderer refuses canonical output until each required check has an
+observed GitHub Actions app ID. A source-repository string is a legacy
+declaration only; it cannot prove check provenance or readiness.
+
 ## 5. Versioned policy and upgrades
 
 The consumer default branch pins the desired SDLC revision in `flake.lock`.
@@ -149,6 +156,11 @@ disables activation and alerts; unknown/transient state retains current
 activation but never enables it; suspended state does not mutate. Offboarding
 does not flap or destructively delete protections.
 
+For dotfiles, the typed policy enables `require_code_owner_review` and names
+the sensitive controller paths. GitHub applies that requirement to PRs
+touching CODEOWNERS-matched files while ordinary non-CODEOWNED PRs do not gain
+an unnecessary human review requirement. Other consumers keep the flag off.
+
 ## 9. Self-host/bootstrap
 
 The dotfiles workflow must work when SDLC publication is broken and regardless
@@ -207,8 +219,9 @@ consumer repository, create fleet infrastructure, or alter protected settings.
 The command requires `--attestation` from the trusted dotfiles controller and
 `--consumer-pin` from the consumer's exact lockfile. It does not infer
 reachability from a claimed boolean. The injected controller client must verify
-the immutable SDLC repository/commit identity and protected ancestry, then emit
-the attestation. `reconcile_repository` accepts an injected authenticated
+the immutable SDLC repository/commit identity and exact `refs/heads/main`
+ancestry, including `ancestry_verified: true`, then emit the attestation.
+Missing ancestry proof is a hard readiness block. `reconcile_repository` accepts an injected authenticated
 read-only client and returns corrective-PR operations; `apply=True` is rejected
 until a separately reviewed post-bootstrap mutation implementation exists.
 Credential propagation and rotation are represented by readiness contracts,
