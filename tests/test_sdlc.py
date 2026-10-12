@@ -299,6 +299,27 @@ class ConsumerWorkflowTests(unittest.TestCase):
 
 
 class RepositoryPolicyTests(unittest.TestCase):
+    def test_canonical_ruleset_is_consumer_config_free_and_branch_scoped(self):
+        main = repository_policy.render_canonical_policy("main")
+        trunk = repository_policy.render_canonical_policy("trunk")
+        self.assertNotEqual(main, trunk)
+        self.assertEqual(main["rules"], trunk["rules"])
+        self.assertNotIn("repository-policy.json", json.dumps(main))
+
+    def test_ruleset_apply_creates_then_is_idempotent_and_never_reads_consumer_config(self):
+        desired = repository_policy.render_canonical_policy("main")
+        detail = dict(desired, id=23, source="owner/repo")
+        with patch.object(sdlc, "policy_context", return_value=("owner/repo", "main")), \
+             patch.object(sdlc, "policy_config", side_effect=AssertionError("ruleset must not read consumer config")), \
+             patch.object(sdlc.ruleset_api, "read_rulesets", side_effect=[([], False), ([detail], False), ([detail], False), ([detail], False)]), \
+             patch.object(sdlc.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")) as run, \
+             redirect_stdout(io.StringIO()):
+            sdlc.ruleset_command("apply", "owner/repo")
+            sdlc.ruleset_command("apply", "owner/repo")
+        writes = [call.args[0] for call in run.call_args_list if "--method" in call.args[0]]
+        self.assertEqual(len(writes), 1)
+        self.assertIn("POST", writes[0])
+
     def test_renderer_builds_complete_canonical_ruleset(self):
         ruleset = repository_policy.render_policy({"extra_required_status_checks": ["security / scan"], "require_policy_check": True}, "main")
         self.assertEqual(ruleset["name"], "SDLC default branch")

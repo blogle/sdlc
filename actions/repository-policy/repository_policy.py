@@ -11,6 +11,35 @@ PR_FAST_CONTEXT = "sdlc / pr-fast"
 POLICY_CONTEXT = "sdlc / policy"
 
 
+def render_canonical_policy(default_branch, *, include_policy=False):
+    """Render SDLC-owned protection without reading consumer configuration."""
+    contexts = [PR_FAST_CONTEXT, *([POLICY_CONTEXT] if include_policy else [])]
+    return {
+        "name": RULESET_NAME,
+        "target": "branch",
+        "enforcement": "active",
+        "bypass_actors": [],
+        "conditions": {"ref_name": {"include": [f"refs/heads/{default_branch}"], "exclude": []}},
+        "rules": [
+            {"type": "deletion"},
+            {"type": "non_fast_forward"},
+            {"type": "pull_request", "parameters": {
+                "allowed_merge_methods": ["squash"],
+                "dismiss_stale_reviews_on_push": True,
+                "require_code_owner_review": False,
+                "require_last_push_approval": False,
+                "required_approving_review_count": 0,
+                "required_review_thread_resolution": False,
+            }},
+            {"type": "required_status_checks", "parameters": {
+                "strict_required_status_checks_policy": False,
+                "do_not_enforce_on_create": False,
+                "required_status_checks": [{"context": context} for context in contexts],
+            }},
+        ],
+    }
+
+
 def normalize_ruleset(ruleset, desired=None):
     """Project API details onto the fields owned by the canonical renderer."""
     if ruleset is None:

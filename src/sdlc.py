@@ -260,21 +260,21 @@ def policy_config():
         raise ValueError(f"{path}: {exc}") from exc
 
 
-def policy_command(action, repo=None):
-    full_name, branch = policy_context(repo)
-    desired = repository_policy.render_policy(policy_config(), branch)
+def _ruleset_command(action, repo, branch, render, label):
+    full_name = repo
     all_rulesets, _ = ruleset_api.read_rulesets(full_name, include_parents=(action in ("plan", "check")))
     named = [item for item in all_rulesets if item.get("name") == repository_policy.RULESET_NAME]
     matches = [item for item in named if item.get("source", full_name) == full_name]
     if len(matches) > 1:
         raise ValueError(f"found {len(matches)} canonical rulesets named {repository_policy.RULESET_NAME!r}; resolve duplicates manually")
     current = matches[0] if matches else None
+    desired = render(current)
     if action == "plan":
         print(json.dumps({"repository": full_name, "default_branch": branch, "action": "create" if current is None else ("update" if repository_policy.normalize_ruleset(current, desired) != repository_policy.normalize_ruleset(desired, desired) else "no-op"), "desired": desired, "current": current, "inherited_canonical_rulesets": [item for item in named if item not in matches], "unmanaged_rulesets": [item for item in all_rulesets if item.get("name") != repository_policy.RULESET_NAME]}, indent=2, sort_keys=True))
         return
     if action == "check":
         repository_policy.check_live(current, desired, full_name)
-        print(f"policy matches live ruleset for {full_name}")
+        print(f"{label} matches live ruleset for {full_name}")
         return
     if action == "apply":
         if current is None:
@@ -284,8 +284,23 @@ def policy_command(action, repo=None):
         verify, _ = ruleset_api.read_rulesets(full_name, include_parents=False)
         verified = [item for item in verify if item.get("name") == repository_policy.RULESET_NAME and item.get("source", full_name) == full_name]
         if len(verified) != 1 or repository_policy.normalize_ruleset(verified[0], desired) != repository_policy.normalize_ruleset(desired, desired):
-            raise ValueError("read-after-write verification failed; rerun `nix develop -c sdlc policy plan`")
-        print(f"policy applied and verified for {full_name}")
+            raise ValueError(f"read-after-write verification failed; rerun `sdlc {label} plan --repo {full_name}`")
+        print(f"{label} applied and verified for {full_name}")
+
+
+def policy_command(action, repo=None):
+    full_name, branch = policy_context(repo)
+    _ruleset_command(action, full_name, branch, lambda _: repository_policy.render_policy(policy_config(), branch), "policy")
+
+
+def ruleset_command(action, repo):
+    full_name, branch = policy_context(repo)
+
+    def render(current):
+        checks = {item.get("context") for rule in (current or {}).get("rules", []) if rule.get("type") == "required_status_checks" for item in rule.get("parameters", {}).get("required_status_checks", [])}
+        return repository_policy.render_canonical_policy(branch, include_policy=repository_policy.POLICY_CONTEXT in checks)
+
+    _ruleset_command(action, full_name, branch, render, "ruleset")
 
 
 def main():
@@ -333,27 +348,14 @@ def main():
     policy = commands.add_parser("policy")
     policy.add_argument("action", choices=["plan", "apply", "check"])
     policy.add_argument("--repo", help="GitHub OWNER/NAME (defaults to this checkout's origin)")
+    ruleset = commands.add_parser("ruleset")
+    ruleset.add_argument("action", choices=["plan", "apply", "check"])
+    ruleset.add_argument("--repo", required=True, help="GitHub OWNER/NAME")
     onboard = commands.add_parser("onboard")
     onboard.add_argument("--repo", required=True, help="GitHub OWNER/NAME")
     onboard.add_argument("--app-id")
     onboard.add_argument("--private-key-file")
     onboard.add_argument("--dry-run", action="store_true")
-    fleet = commands.add_parser("fleet", help="prepare-only trusted fleet contract operations")
-    fleet.add_argument("action", choices=["plan", "reconcile", "verify", "policy-plan", "policy-apply", "policy-verify"])
-    fleet.add_argument("--manifest")
-    fleet.add_argument("--policy", required=True)
-    fleet.add_argument("--attestation")
-    fleet.add_argument("--consumer-pin")
-    fleet.add_argument("--trusted-bypass-user-id", required=True, type=int)
-    fleet.add_argument("--repo")
-    fleet.add_argument("--owner-id", type=int)
-    fleet.add_argument("--repository-id", type=int)
-    fleet.add_argument("--allow-writes", action="store_true")
-    fleet.add_argument("--expected-head")
-    fleet.add_argument("--phase", choices=["bootstrap", "dual", "cutover", "retire"], default="bootstrap")
-    fleet.add_argument("--exact-head", action="store_true")
-    fleet.add_argument("--current-check", action="append", default=[])
-    fleet.add_argument("--available-check", action="append", default=[])
     args = parser.parse_args()
     try:
         if args.command == "changelog":
@@ -392,29 +394,12 @@ def main():
         elif args.command == "onboard":
             import onboard as bootstrap
             bootstrap.onboard(args.repo, args.app_id, args.private_key_file, dry_run=args.dry_run)
-        elif args.command == "fleet":
-            import fleet as fleet_contract
-            return fleet_contract.main([
-                args.action,
-                "--policy", args.policy,
-                "--trusted-bypass-user-id", str(args.trusted_bypass_user_id),
-                *( ["--manifest", args.manifest] if args.manifest else []),
-                *( ["--attestation", args.attestation] if args.attestation else []),
-                *( ["--consumer-pin", args.consumer_pin] if args.consumer_pin else []),
-                *( ["--repo", args.repo] if args.repo else []),
-                *( ["--owner-id", str(args.owner_id)] if args.owner_id is not None else []),
-                *( ["--repository-id", str(args.repository_id)] if args.repository_id is not None else []),
-                *( ["--allow-writes"] if args.allow_writes else []),
-                "--phase", args.phase,
-                *( ["--exact-head"] if args.exact_head else []),
-                *(["--expected-head", args.expected_head] if args.expected_head else []),
-                *sum((["--current-check", value] for value in args.current_check), []),
-                *sum((["--available-check", value] for value in args.available_check), []),
-            ])
+        elif args.command == "ruleset":
+            ruleset_command(args.action, args.repo)
         elif args.command == "release" and args.release_action in ("enable", "disable", "status"):
             import onboard as bootstrap
             getattr(bootstrap, f"release_{args.release_action}")(args.repo)
-        else:
+        elif args.command == "policy":
             policy_command(args.action, args.repo)
     except (ValueError, subprocess.CalledProcessError) as exc:
         print(f"sdlc: {exc}", file=sys.stderr)

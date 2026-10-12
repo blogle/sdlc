@@ -2,7 +2,10 @@
 
 `blogle/sdlc` is a pinned Nix library and shared GitHub workflow source. Consumers own their Nix checks/packages, `ci.nix`, `justfile`, candidate artifact publication, and final artifact promotion. The shared repo does not run a separate build DSL or read consumer files from its checkout.
 
-The authoritative prepare-only fleet architecture, ownership boundaries, migration contract, and peer handoff are in [`docs/sdlc-fleet.md`](docs/sdlc-fleet.md). No App, credential, ruleset, or release activation is created by this implementation.
+SDLC owns the canonical repository ruleset. The `sdlc ruleset plan|apply|check`
+commands render it from the installed SDLC package and never read consumer
+repository-policy files. No App, credential, or release activation is created
+by these commands.
 
 ## Pin the shared flake
 
@@ -144,18 +147,19 @@ Create exactly one of `integration:auto` or `integration:review` on each PR. Que
 
 GitHub rulesets are the authoritative protection layer: PR-only changes, squash-only merge, stale-approval dismissal, non-strict status freshness, stable `sdlc / pr-fast`, deletion protection, and non-fast-forward protection. Mergify Workflow Automation only triggers enqueueing; Merge Queue owns candidate batching/validation and merge execution. Queue command restrictions allow sender permission `write` or `anvil-daemon[bot]` to request queueing as an escape hatch; queue conditions remain the authorization/gating source. Mergify automatically injects supported GitHub branch/ruleset protections into queue behavior.
 
-## Repository policy as IaC (legacy consumer bootstrap)
+## Canonical Repository Ruleset
 
-> **Superseded by [`docs/sdlc-fleet.md`](docs/sdlc-fleet.md).** The commands
-> below describe the existing production release architecture only. They are
-> not the fleet controller contract and must not be expanded into new fleet
-> automation until the prepare-only migration is explicitly approved.
+SDLC owns the canonical `SDLC default branch` ruleset. Consumers do not declare repository-policy JSON or ruleset definitions. The installed SDLC package renders the same policy for every repository, discovers the default branch through GitHub, and preserves existing released checks: `sdlc / pr-fast` is required; `sdlc / policy` is retained only when already present. No new check is required before it exists.
 
-Consumers declare extra required status contexts plus a small lifecycle flag `require_policy_check` in `.github/repository-policy.json` (defaults to `false`). First-time onboarding is a staged transition: (1) a PR adds the declaration with `require_policy_check: false` and installs the pinned read-only reusable workflow plus ordinary wrapper job named exactly `sdlc / policy`; when the base has no declaration and GitHub's read-only ruleset API confirms no live canonical ruleset, CI validates proposal and caller and emits a distinct `FIRST-ONBOARDING` notice. This interim green outcome **does not prove live repository protection**. If a live canonical ruleset exists despite no base declaration, onboarding fails closed as a lost declaration. (2) Merge the caller/declaration. From a maintainer workstation authenticated with `gh auth login` as a repository administrator, run `nix develop -c sdlc policy plan --repo blogle/REPO`, review the payload, `nix develop -c sdlc policy apply --repo blogle/REPO`, then `nix develop -c sdlc policy check --repo blogle/REPO`. This applies and verifies baseline rules without requiring `sdlc / policy`. (3) In a reviewed PR set `require_policy_check: true`; that PR's live drift comparison uses the base declaration, so the new requirement is not applied prematurely. After merge, run authenticated `nix develop -c sdlc policy apply --repo blogle/REPO` to add `sdlc / policy` to the required contexts. The caller is already merged and has been reliably reporting its stable status throughout; verify again with `policy check`. This precise sequence ensures the check becomes required only after successful baseline apply/check and a reviewed opt-in. Apply is idempotent, only creates/updates the exact `SDLC default branch` ruleset, and reads it back to verify. It does not touch labels, other rulesets, or credentials. `policy check` is read-only. Omitting `--repo` infers the GitHub repository from `origin` and asks GitHub for its default branch. No GitHub App or Actions write secret is used.
+Use the existing `policy` command for legacy consumer configuration. For canonical fleet application, dotfiles runs from the consumer checkout:
 
-The reusable checker checks out the caller for its declaration/base SHA, then invokes `uses: $/actions/repository-policy`; the `$` self-reference loads the composite action from the exact SDLC revision that supplied the called workflow. The script runs from `GITHUB_ACTION_PATH` while reading config from the caller's workspace, so consumers do not vendor SDLC scripts. REST reads paginate the ruleset list for IDs, then fetch full canonical details by ID; list summaries are never mistaken for complete rulesets. The canonical ruleset uses GitHub's `~DEFAULT_BRANCH` selector, documented by GitHub's ruleset API and covered for both `main` and `master`; explicit declaration `default_branch` opts into a literal branch selector. `sdlc / pr-fast` is always required; `sdlc / policy` becomes required when `require_policy_check` is true; declared extra contexts are also required. The check reads rulesets (including inherited rulesets), verifies enforcement, targets, check contexts, PR/squash and stale-review settings, deletion/force-push protections, and visible bypass actors. GitHub only returns bypass actors to users with write access to the ruleset; a read-only Actions token can therefore produce a warning that this field was redacted. All visible fields still must match, and the check explicitly says bypass configuration was not verified. Public repositories can use the anonymous REST fallback if `GITHUB_TOKEN` lacks endpoint access; for private repositories the token must be able to read rulesets, otherwise the check fails closed. Any other applicable rulesets are reported as unmanaged warnings and never mutated.
+```sh
+nix run .#sdlc -- ruleset plan --repo OWNER/NAME
+nix run .#sdlc -- ruleset apply --repo OWNER/NAME
+nix run .#sdlc -- ruleset check --repo OWNER/NAME
+```
 
-On policy PRs the proposed JSON is schema-validated, while live drift is evaluated against the committed base-branch declaration. Therefore a policy change can be reviewed without prematurely treating the desired future rules as live. After merge, run the exact `policy apply` command above. Missing or skewed canonical policy fails with the plan/apply commands. If `plan` reports duplicate rulesets named `SDLC default branch`, inspect them and manually resolve the ambiguity before retrying; apply deliberately refuses to guess. Unrelated legacy rulesets are never changed or deleted. For repositories such as dotfiles with two legacy rulesets, inspect overlap and precedence using GitHub's Rulesets page/API, then schedule a separately reviewed manual migration; do not delete them as part of SDLC apply. Existing automatic `reconcile-policy.yml` and `SDLC_POLICY_APP_*` secrets are retired and can be removed after consumers migrate. The clean-room example includes the declaration and caller wiring.
+`plan` is read-only. `apply` creates or updates only the owned canonical ruleset when it drifts, then reads it back. `check` is read-only. The command never reads `.github/repository-policy.json`; the consumer flake lock selects the SDLC implementation.
 
 ## Release and artifacts
 
@@ -185,6 +189,6 @@ The preset extends `config:recommended`, enables Renovate's beta Nix manager, gr
 
 The canonical skill is `skills/sdlc/SKILL.md`. The pinned Nix dev shell provides the official Vercel `skills` CLI; consumer `just skills` uses `skills add https://github.com/blogle/sdlc/tree/v1/skills/sdlc --skill sdlc --agent opencode --yes`, and `just skills-update` uses native `skills update -p -y`. The Mergify skills use the same official CLI from `Mergifyio/mergify-cli`; Mergify CLI packaging is separate.
 
-The existing consumer release bootstrap is one idempotent admin command, not a task for coding agents: `nix run github:blogle/sdlc/v1#sdlc -- onboard --repo OWNER/NAME`. It remains protected production behavior and is not the fleet reconciler. The new prepare-only interface is `sdlc fleet plan|reconcile|verify`; it requires a trusted dotfiles controller attestation and the exact consumer `flake.lock` pin, and rejects local self-asserted provenance. No Anvil activation is implied.
+The existing consumer release bootstrap is one idempotent admin command: `nix run github:blogle/sdlc/v1#sdlc -- onboard --repo OWNER/NAME`. Ruleset application is separate and uses the canonical `sdlc ruleset plan|apply|check` interface above.
 
 Agent loop: `nix develop`; inspect consumer `ci.nix` and `just --list`; implement Nix checks; run `just check` and `just ci-fast`; add a fragment only when warranted; open a PR with exact verification evidence and granted integration mode. `nix develop` is strongly preferred; never recommend `nix --option build-users-group "" develop`.
