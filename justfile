@@ -15,6 +15,7 @@ check:
     python3 -m json.tool examples/minimal/.github/repository-policy.json >/dev/null
     python3 -m json.tool examples/clean-room/.github/repository-policy.json >/dev/null
     python3 -m json.tool .github/repository-policy.json >/dev/null
+    python3 -m json.tool tests/fixtures/fleet-ruleset.json >/dev/null
     actionlint -ignore 'specifying action "\$/actions/repository-policy" in invalid format because ref is missing' -ignore 'reusable workflow call "\$/\.github/workflows/stage\.yml".*not following the format' .github/workflows/*.yml examples/minimal/.github/workflows/*.yml examples/clean-room/.github/workflows/*.yml
     renovate-config-validator --strict --no-global default.json
     nix run nixpkgs#yq-go -- eval '.' .mergify.yml >/dev/null

@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 import unittest
 
@@ -9,6 +10,7 @@ SPEC.loader.exec_module(fleet)
 
 
 HEAD = "a" * 40
+WORKFLOW_SHA = "b" * 40
 
 
 def manifest():
@@ -46,9 +48,10 @@ def policy():
 def bound_policy():
     result = policy()
     result["security_floor"]["trusted_publishers"] = {
-        name: {"app_id": 4181, "source": "github-actions"}
+        name: {"app_id": 4181, "source": "github-actions", "workflow_path": ".github/workflows/sdlc.yml", "workflow_sha": WORKFLOW_SHA}
         for name in fleet.PR_REQUIRED_CHECKS + (fleet.QUEUE_CHECK,)
     }
+    result["security_floor"]["workflow_attestation"] = {"protected_review": True, "workflow_path": ".github/workflows/sdlc.yml", "workflow_sha": WORKFLOW_SHA, "head_sha": HEAD}
     return result
 
 
@@ -134,6 +137,11 @@ class FleetContractTests(unittest.TestCase):
         self.assertEqual(rendered["branch"]["conditions"]["ref_name"]["include"], ["~DEFAULT_BRANCH"])
         self.assertEqual(rendered["branch"]["bypass_actors"], [{"actor_type": "User", "actor_id": 7, "bypass_mode": "always"}])
         self.assertEqual(rendered["release_tags"]["conditions"]["ref_name"]["include"], ["refs/tags/v*"])
+        statuses = next(rule for rule in rendered["branch"]["rules"] if rule["type"] == "required_status_checks")["parameters"]["required_status_checks"]
+        self.assertEqual(statuses[0]["integration_id"], 4181)
+        self.assertNotIn("app_id", statuses[0])
+        fixture = json.loads((Path(__file__).parent / "fixtures/fleet-ruleset.json").read_text())
+        self.assertEqual(fixture["rules"][2]["parameters"]["required_status_checks"][0]["integration_id"], 4181)
 
         class Client:
             def read(self, observed):
@@ -167,13 +175,26 @@ class FleetContractTests(unittest.TestCase):
         self.assertTrue(pull_request["parameters"]["require_code_owner_review"])
 
     def test_publishers_require_observed_actions_app_and_reject_spoof(self):
-        checks = [{"name": name, "app": {"id": 4181, "slug": "github-actions"}} for name in fleet.PR_REQUIRED_CHECKS + (fleet.QUEUE_CHECK,)]
+        checks = [{"name": name, "app": {"id": 4181, "slug": "github-actions"}, "workflow_path": ".github/workflows/sdlc.yml", "workflow_sha": WORKFLOW_SHA, "head_sha": HEAD, "run_id": 1} for name in fleet.PR_REQUIRED_CHECKS + (fleet.QUEUE_CHECK,)]
         self.assertEqual(len(fleet.verify_check_publishers(checks, bound_policy()["security_floor"])), 3)
         checks[0]["app"] = {"id": 999, "slug": "github-actions"}
         with self.assertRaisesRegex(ValueError, "spoofed"):
             fleet.verify_check_publishers(checks, bound_policy()["security_floor"])
         with self.assertRaisesRegex(ValueError, "blocked"):
-            fleet.verify_check_publishers([{ "name": name, "app": {"id": 4181, "slug": "github-actions"}} for name in fleet.PR_REQUIRED_CHECKS + (fleet.QUEUE_CHECK,)], policy()["security_floor"])
+            fleet.verify_check_publishers(checks, policy()["security_floor"])
+        checks[0]["app"] = {"id": 4181, "slug": "github-actions"}
+        checks[0]["workflow_path"] = ".github/workflows/other.yml"
+        with self.assertRaisesRegex(ValueError, "workflow source"):
+            fleet.verify_check_publishers(checks, bound_policy()["security_floor"])
+
+    def test_release_app_environment_contract_is_separate_from_fleet(self):
+        release = {"app_kind": "sdlc-release", "installation_verified": True, "permissions": {"contents": "write", "pull_requests": "write", "checks": "write", "actions": "write", "environments": "write"}}
+        self.assertTrue(fleet.release_credential_readiness(release)["ready"])
+        with self.assertRaisesRegex(ValueError, "Environments:write"):
+            fleet.release_credential_readiness({**release, "permissions": {**release["permissions"], "environments": "read"}})
+        self.assertTrue(fleet.verify_release_workflow_binding({"jobs": {"release": {"environment": "release", "secrets": "inherit"}}}))
+        with self.assertRaisesRegex(ValueError, "bind its protected environment"):
+            fleet.verify_release_workflow_binding({"jobs": {"release": {"secrets": "inherit"}}})
 
     def test_identity_credentials_and_state_machine_fail_closed(self):
         self.assertEqual(fleet.verify_identity(1, 2, {"owner_id": 1, "repository_id": 2, "default_branch": "main"})["default_branch"], "main")

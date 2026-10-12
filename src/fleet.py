@@ -106,6 +106,9 @@ def _validate_floor(floor):
         if isinstance(binding, dict):
             if not isinstance(binding.get("app_id"), int) or binding["app_id"] <= 0 or binding.get("source") != "github-actions":
                 raise FleetContractError("security floor publisher bindings require positive GitHub Actions app IDs")
+            if binding.get("workflow_path") != ".github/workflows/sdlc.yml":
+                raise FleetContractError("publisher binding must name the generated SDLC caller workflow")
+            _sha(binding.get("workflow_sha"), "publisher.workflow_sha")
             legacy_unverified = False
         elif binding != TRUSTED_SOURCE:
             raise FleetContractError("security floor publisher binding is invalid")
@@ -231,7 +234,7 @@ def render_canonical_policy(default_branch, policy, *, trusted_bypass_user_id):
                 "strict_required_status_checks_policy": False,
                 "do_not_enforce_on_create": False,
                 "required_status_checks": [
-                    {**item, "app_id": floor["trusted_publishers"][item["context"]]["app_id"]}
+                    {**item, "integration_id": floor["trusted_publishers"][item["context"]]["app_id"]}
                     for item in contexts
                 ],
             }},
@@ -349,6 +352,11 @@ def verify_check_publishers(check_runs, floor):
     if not normalized_floor["publisher_binding_verified"]:
         raise FleetContractError("check readiness is blocked until GitHub Actions publisher app IDs are observed")
     publishers = normalized_floor["trusted_publishers"]
+    evidence = _object(floor.get("workflow_attestation"), "workflow_attestation")
+    if evidence.get("protected_review") is not True or evidence.get("workflow_path") != ".github/workflows/sdlc.yml":
+        raise FleetContractError("check readiness requires protected generated-caller review evidence")
+    workflow_sha = _sha(evidence.get("workflow_sha"), "workflow_attestation.workflow_sha")
+    head_sha = _sha(evidence.get("head_sha"), "workflow_attestation.head_sha")
     observed = {}
     for check in check_runs:
         context = check.get("name") or check.get("context")
@@ -358,6 +366,8 @@ def verify_check_publishers(check_runs, floor):
                 raise FleetContractError(f"duplicate observed publisher check: {context}")
             if app.get("id") != publishers[context]["app_id"] or app.get("slug") != "github-actions":
                 raise FleetContractError(f"check publisher spoofed for {context}")
+            if check.get("workflow_path") != evidence["workflow_path"] or check.get("workflow_sha") != workflow_sha or check.get("head_sha") != head_sha or not isinstance(check.get("run_id"), int):
+                raise FleetContractError(f"workflow source or head spoofed for {context}")
             observed[context] = check
     missing = set(PR_REQUIRED_CHECKS + (QUEUE_CHECK,)) - set(observed)
     if missing:
@@ -421,6 +431,28 @@ def credential_readiness(observed):
     if observed.get("private_key_exposed") is True:
         raise FleetContractError("private key exposure blocks reconciliation")
     return {"ready": True, "generation": observed.get("generation")}
+
+
+def release_credential_readiness(observed):
+    """Validate release App permissions separately from fleet administration."""
+    observed = _object(observed, "release credential readiness")
+    permissions = observed.get("permissions", {})
+    required = {"contents": "write", "pull_requests": "write", "checks": "write", "actions": "write", "environments": "write"}
+    if any(permissions.get(name) != value for name, value in required.items()):
+        raise FleetContractError("release App permissions are insufficient, including Environments:write")
+    if observed.get("app_kind") != "sdlc-release" or not observed.get("installation_verified"):
+        raise FleetContractError("release App identity or installation is not verified")
+    return {"ready": True, "app_kind": "sdlc-release"}
+
+
+def verify_release_workflow_binding(workflow, *, environment="release"):
+    """Require called release jobs to bind the protected environment explicitly."""
+    workflow = _object(workflow, "release workflow")
+    jobs = _object(workflow.get("jobs"), "release workflow jobs")
+    matches = [job for job in jobs.values() if isinstance(job, dict) and job.get("environment") == environment]
+    if len(matches) != 1 or matches[0].get("secrets") != "inherit":
+        raise FleetContractError("release called-workflow job must bind its protected environment and inherit only there")
+    return True
 
 
 def next_state(current, observation):

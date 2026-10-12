@@ -90,7 +90,12 @@ one GitHub ruleset actor: `actor_type: User`, the immutable user ID, and
 `bypass_mode: always`. App, organization-role, and agent actors are rejected.
 The SDLC renderer refuses canonical output until each required check has an
 observed GitHub Actions app ID. A source-repository string is a legacy
-declaration only; it cannot prove check provenance or readiness.
+declaration only; it cannot prove check provenance or readiness. GitHub REST
+ruleset payloads use `integration_id`; the internal publisher `app_id` is
+translated to that field. Readiness additionally requires the protected,
+codeowner-reviewed generated caller file hash and a workflow-run attestation
+for the exact head. The Actions app identity alone does not authenticate the
+SDLC workflow source.
 
 ## 5. Versioned policy and upgrades
 
@@ -139,6 +144,14 @@ or revocation may remain human, while propagation, generation tracking,
 verification, and partial recovery are automated. For this implementation no
 secrets exist or are provisioned, no App is created or authorized, and no
 release is activated.
+
+Fleet and release credentials are separate. The fleet App owns only fleet
+administration operations. The release App owns consumer release operations.
+If release credentials are delivered through an environment, the release App
+requires `Environments: write` and the called release job must explicitly bind
+that environment; `secrets: inherit` alone does not grant environment-secret
+context. This contract validates both conditions without provisioning either
+credential.
 
 ## 8. Reconciliation
 
