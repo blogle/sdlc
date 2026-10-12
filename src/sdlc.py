@@ -339,12 +339,16 @@ def main():
     onboard.add_argument("--private-key-file")
     onboard.add_argument("--dry-run", action="store_true")
     fleet = commands.add_parser("fleet", help="prepare-only trusted fleet contract operations")
-    fleet.add_argument("action", choices=["plan", "reconcile", "verify"])
-    fleet.add_argument("--manifest", required=True)
+    fleet.add_argument("action", choices=["plan", "reconcile", "verify", "policy-plan", "policy-apply", "policy-verify"])
+    fleet.add_argument("--manifest")
     fleet.add_argument("--policy", required=True)
-    fleet.add_argument("--attestation", required=True)
-    fleet.add_argument("--consumer-pin", required=True)
+    fleet.add_argument("--attestation")
+    fleet.add_argument("--consumer-pin")
     fleet.add_argument("--trusted-bypass-user-id", required=True, type=int)
+    fleet.add_argument("--repo")
+    fleet.add_argument("--owner-id", type=int)
+    fleet.add_argument("--repository-id", type=int)
+    fleet.add_argument("--allow-writes", action="store_true")
     fleet.add_argument("--expected-head")
     fleet.add_argument("--phase", choices=["bootstrap", "dual", "cutover", "retire"], default="bootstrap")
     fleet.add_argument("--exact-head", action="store_true")
@@ -392,11 +396,15 @@ def main():
             import fleet as fleet_contract
             return fleet_contract.main([
                 args.action,
-                "--manifest", args.manifest,
                 "--policy", args.policy,
-                "--attestation", args.attestation,
-                "--consumer-pin", args.consumer_pin,
                 "--trusted-bypass-user-id", str(args.trusted_bypass_user_id),
+                *( ["--manifest", args.manifest] if args.manifest else []),
+                *( ["--attestation", args.attestation] if args.attestation else []),
+                *( ["--consumer-pin", args.consumer_pin] if args.consumer_pin else []),
+                *( ["--repo", args.repo] if args.repo else []),
+                *( ["--owner-id", str(args.owner_id)] if args.owner_id is not None else []),
+                *( ["--repository-id", str(args.repository_id)] if args.repository_id is not None else []),
+                *( ["--allow-writes"] if args.allow_writes else []),
                 "--phase", args.phase,
                 *( ["--exact-head"] if args.exact_head else []),
                 *(["--expected-head", args.expected_head] if args.expected_head else []),

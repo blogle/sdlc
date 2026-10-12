@@ -196,6 +196,54 @@ class FleetContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "bind its protected environment"):
             fleet.verify_release_workflow_binding({"jobs": {"release": {"secrets": "inherit"}}})
 
+    def test_anvil_policy_plan_apply_verify_and_idempotent_noop(self):
+        class FakeGitHub:
+            def __init__(self):
+                self.rulesets = []
+                self.repository = {"owner_id": 1, "repository_id": 2, "default_branch": "main", "head_sha": HEAD}
+
+            def get_repository(self, repository):
+                return dict(self.repository)
+
+            def list_rulesets(self, repository):
+                return [dict(item) for item in self.rulesets]
+
+            def create_ruleset(self, repository, payload):
+                self.rulesets.append({**payload, "id": 1, "source": repository})
+
+            def update_ruleset(self, repository, ruleset_id, payload):
+                for index, item in enumerate(self.rulesets):
+                    if item.get("id") == ruleset_id:
+                        self.rulesets[index] = {**payload, "id": ruleset_id, "source": repository}
+
+            def list_check_runs(self, repository):
+                return [{"name": name, "app": {"id": 4181, "slug": "github-actions"}, "workflow_path": ".github/workflows/sdlc.yml", "workflow_sha": WORKFLOW_SHA, "head_sha": HEAD, "run_id": 10} for name in fleet.PR_REQUIRED_CHECKS + (fleet.QUEUE_CHECK,)]
+
+        api = FakeGitHub()
+        first = fleet.plan_policy(api, "blogle/anvil", bound_policy(), owner_id=1, repository_id=2, trusted_bypass_user_id=7, expected_head=HEAD)
+        self.assertEqual([operation["action"] for operation in first["operations"]], ["create", "create"])
+        dry_run = fleet.apply_policy(api, "blogle/anvil", bound_policy(), owner_id=1, repository_id=2, trusted_bypass_user_id=7, expected_head=HEAD)
+        self.assertEqual(dry_run["mode"], "dry-run")
+        self.assertEqual(api.rulesets, [])
+        applied = fleet.apply_policy(api, "blogle/anvil", bound_policy(), owner_id=1, repository_id=2, trusted_bypass_user_id=7, expected_head=HEAD, allow_writes=True)
+        self.assertTrue(applied["ready"])
+        second = fleet.apply_policy(api, "blogle/anvil", bound_policy(), owner_id=1, repository_id=2, trusted_bypass_user_id=7, expected_head=HEAD, allow_writes=True)
+        self.assertEqual(second["applied"], [])
+        self.assertEqual([operation["action"] for operation in second["operations"]], ["noop", "noop"])
+
+    def test_policy_apply_rejects_malicious_identity_and_check_context(self):
+        class Fake:
+            def get_repository(self, repository):
+                return {"owner_id": 9, "repository_id": 2, "default_branch": "main", "head_sha": HEAD}
+            def list_rulesets(self, repository):
+                return []
+        with self.assertRaisesRegex(ValueError, "replaced"):
+            fleet.plan_policy(Fake(), "blogle/anvil", bound_policy(), owner_id=1, repository_id=2, trusted_bypass_user_id=7)
+
+        checks = [{"name": "sdlc-check", "app": {"id": 4181, "slug": "github-actions"}, "workflow_path": ".github/workflows/forged.yml", "workflow_sha": WORKFLOW_SHA, "head_sha": HEAD, "run_id": 1}]
+        with self.assertRaisesRegex(ValueError, "workflow source"):
+            fleet.verify_check_publishers(checks + [{"name": name, "app": {"id": 4181, "slug": "github-actions"}, "workflow_path": ".github/workflows/sdlc.yml", "workflow_sha": WORKFLOW_SHA, "head_sha": HEAD, "run_id": 1} for name in ("sdlc-policy", "sdlc-verify")], bound_policy()["security_floor"])
+
     def test_identity_credentials_and_state_machine_fail_closed(self):
         self.assertEqual(fleet.verify_identity(1, 2, {"owner_id": 1, "repository_id": 2, "default_branch": "main"})["default_branch"], "main")
         with self.assertRaisesRegex(ValueError, "replaced"):

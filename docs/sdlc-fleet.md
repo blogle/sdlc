@@ -240,5 +240,19 @@ until a separately reviewed post-bootstrap mutation implementation exists.
 Credential propagation and rotation are represented by readiness contracts,
 but no key material or GitHub mutation is implemented in this canary.
 
+### Minimal policy interface
+
+The trusted controller's one-repository adapter uses the versioned functions
+`plan_policy`, `apply_policy`, and `verify_policy_ready` from `src/fleet.py`.
+Each returns JSON-compatible data with `schema: 1`, `interface:
+fleet-policy-v1`, named `branch` and `release_tags` operations, repository/head
+preconditions, and `ready`. `apply_policy` defaults to a dry run. It invokes
+the injected client's `create_ruleset`/`update_ruleset` methods only when the
+caller passes `allow_writes=True`, rereads both named rulesets, and then checks
+exact stable contexts and publisher evidence. A second apply returns two
+`noop` operations. The controller must pass its immutable owner/repository IDs
+and the consumer's committed default-branch head; it must not pass a PR head
+or infer identity from a repository name.
+
 Verification is `nix develop -c just check` plus actionlint. Do not use build
 users-group overrides.

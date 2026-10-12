@@ -10,6 +10,7 @@ import argparse
 import json
 from pathlib import Path
 import re
+import subprocess
 import sys
 
 
@@ -246,6 +247,104 @@ def render_canonical_policy(default_branch, policy, *, trusted_bypass_user_id):
         "rules": [{"type": "deletion"}, {"type": "non_fast_forward"}],
     }
     return {"branch": branch, "release_tags": tags}
+
+
+def _ruleset_matches(actual, desired):
+    return all(actual.get(key) == desired.get(key) for key in ("name", "target", "enforcement", "conditions", "bypass_actors", "rules"))
+
+
+class GhRulesetClient:
+    """Small real GitHub REST adapter; writes are reachable only through apply_policy."""
+
+    def _api(self, path, *, method="GET", payload=None):
+        command = ["gh", "api", path, "--method", method]
+        input_data = None
+        if payload is not None:
+            command.extend(["--input", "-"])
+            input_data = json.dumps(payload)
+        result = subprocess.run(command, input=input_data, text=True, capture_output=True, check=True)
+        return json.loads(result.stdout)
+
+    def get_repository(self, repository):
+        data = self._api(f"repos/{repository}")
+        branch = data.get("default_branch")
+        branch_data = self._api(f"repos/{repository}/branches/{branch}")
+        return {"owner_id": data.get("owner", {}).get("id"), "repository_id": data.get("id"), "default_branch": branch, "head_sha": branch_data.get("commit", {}).get("sha")}
+
+    def list_rulesets(self, repository):
+        summaries = self._api(f"repos/{repository}/rulesets?per_page=100")
+        if not isinstance(summaries, list):
+            raise FleetContractError("GitHub returned a non-list ruleset response")
+        return [self._api(f"repos/{repository}/rulesets/{item['id']}") for item in summaries if isinstance(item.get("id"), int)]
+
+    def create_ruleset(self, repository, payload):
+        return self._api(f"repos/{repository}/rulesets", method="POST", payload=payload)
+
+    def update_ruleset(self, repository, ruleset_id, payload):
+        return self._api(f"repos/{repository}/rulesets/{ruleset_id}", method="PUT", payload=payload)
+
+    def list_check_runs(self, repository):
+        head = self.get_repository(repository)["head_sha"]
+        data = self._api(f"repos/{repository}/commits/{head}/check-runs?per_page=100")
+        return data.get("check_runs", [])
+
+
+def plan_policy(client, repository, policy, *, owner_id, repository_id, trusted_bypass_user_id, expected_head=None):
+    """Produce a versioned named-ruleset plan from one authenticated live read."""
+    if client is None or not callable(getattr(client, "get_repository", None)) or not callable(getattr(client, "list_rulesets", None)):
+        raise FleetContractError("authenticated ruleset client is required")
+    live_repo = _object(client.get_repository(repository), "live repository")
+    identity = verify_identity(owner_id, repository_id, live_repo)
+    if expected_head is not None and live_repo.get("head_sha") != _sha(expected_head, "expected_head"):
+        raise FleetContractError("repository head changed before policy planning")
+    rendered = render_canonical_policy(identity["default_branch"], policy, trusted_bypass_user_id=trusted_bypass_user_id)
+    live_rulesets = client.list_rulesets(repository)
+    if not isinstance(live_rulesets, list):
+        raise FleetContractError("ruleset client returned a non-list response")
+    operations = []
+    for key, desired in rendered.items():
+        matches = [item for item in live_rulesets if item.get("name") == desired["name"] and item.get("target") == desired["target"] and item.get("source", repository) == repository]
+        if len(matches) > 1:
+            raise FleetContractError(f"duplicate named ruleset: {desired['name']}")
+        current = matches[0] if matches else None
+        action = "noop" if current and _ruleset_matches(current, desired) else ("update" if current else "create")
+        operations.append({"resource": key, "action": action, "ruleset_id": current.get("id") if current else None, "preconditions": {"repository_id": repository_id, "default_branch": identity["default_branch"], "head_sha": live_repo.get("head_sha")}, "desired": desired})
+    return {"schema": SCHEMA_VERSION, "interface": "fleet-policy-v1", "mode": "plan", "repository": repository, "identity": identity, "operations": operations, "prepare_only": True, "ready": False, "mutations": []}
+
+
+def verify_policy_ready(client, repository, policy, *, owner_id, repository_id, trusted_bypass_user_id, expected_head=None):
+    """Read back both named rulesets and trusted check evidence without writing."""
+    planned = plan_policy(client, repository, policy, owner_id=owner_id, repository_id=repository_id, trusted_bypass_user_id=trusted_bypass_user_id, expected_head=expected_head)
+    if any(operation["action"] != "noop" for operation in planned["operations"]):
+        raise FleetContractError("canonical policy is not ready; apply the planned named resources first")
+    if not callable(getattr(client, "list_check_runs", None)):
+        raise FleetContractError("check-run read client is required for readiness")
+    verify_check_publishers(client.list_check_runs(repository), policy["security_floor"])
+    planned["mode"] = "verify"
+    planned["ready"] = True
+    return planned
+
+
+def apply_policy(client, repository, policy, *, owner_id, repository_id, trusted_bypass_user_id, expected_head=None, allow_writes=False):
+    """Apply only with an explicit trusted flag, then perform a read-after-write verify."""
+    planned = plan_policy(client, repository, policy, owner_id=owner_id, repository_id=repository_id, trusted_bypass_user_id=trusted_bypass_user_id, expected_head=expected_head)
+    if not allow_writes:
+        planned["mode"] = "dry-run"
+        return planned
+    if not callable(getattr(client, "create_ruleset", None)) or not callable(getattr(client, "update_ruleset", None)):
+        raise FleetContractError("write-capable ruleset client is required only when allow_writes is true")
+    if expected_head is not None and client.get_repository(repository).get("head_sha") != _sha(expected_head, "expected_head"):
+        raise FleetContractError("repository head changed before policy apply")
+    for operation in planned["operations"]:
+        if operation["action"] == "create":
+            client.create_ruleset(repository, operation["desired"])
+        elif operation["action"] == "update":
+            client.update_ruleset(repository, operation["ruleset_id"], operation["desired"])
+    verified = verify_policy_ready(client, repository, policy, owner_id=owner_id, repository_id=repository_id, trusted_bypass_user_id=trusted_bypass_user_id, expected_head=expected_head)
+    verified["mode"] = "apply"
+    verified["applied"] = [operation["resource"] for operation in planned["operations"] if operation["action"] != "noop"]
+    verified["prepare_only"] = False
+    return verified
 
 
 def render_caller_workflows(revision):
@@ -521,12 +620,16 @@ class FileAttestationVerifier:
 
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="sdlc fleet")
-    parser.add_argument("command", choices=("plan", "reconcile", "verify"))
-    parser.add_argument("--manifest", required=True)
+    parser.add_argument("command", choices=("plan", "reconcile", "verify", "policy-plan", "policy-apply", "policy-verify"))
+    parser.add_argument("--manifest")
     parser.add_argument("--policy", required=True)
-    parser.add_argument("--attestation", required=True)
-    parser.add_argument("--consumer-pin", required=True)
+    parser.add_argument("--attestation")
+    parser.add_argument("--consumer-pin")
     parser.add_argument("--trusted-bypass-user-id", required=True, type=int)
+    parser.add_argument("--repo")
+    parser.add_argument("--owner-id", type=int)
+    parser.add_argument("--repository-id", type=int)
+    parser.add_argument("--allow-writes", action="store_true")
     parser.add_argument("--expected-head")
     parser.add_argument("--phase", choices=("bootstrap", "dual", "cutover", "retire"), default="bootstrap")
     parser.add_argument("--exact-head", action="store_true")
@@ -534,6 +637,22 @@ def main(argv=None):
     parser.add_argument("--available-check", action="append", default=[])
     args = parser.parse_args(argv)
     try:
+        if args.command.startswith("policy-"):
+            if not args.repo or args.owner_id is None or args.repository_id is None:
+                raise FleetContractError("policy operations require --repo, --owner-id, and --repository-id")
+            client = GhRulesetClient()
+            operation = args.command.removeprefix("policy-")
+            kwargs = {"owner_id": args.owner_id, "repository_id": args.repository_id, "trusted_bypass_user_id": args.trusted_bypass_user_id, "expected_head": args.expected_head}
+            if operation == "plan":
+                result = plan_policy(client, args.repo, _read(args.policy), **kwargs)
+            elif operation == "verify":
+                result = verify_policy_ready(client, args.repo, _read(args.policy), **kwargs)
+            else:
+                result = apply_policy(client, args.repo, _read(args.policy), allow_writes=args.allow_writes, **kwargs)
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 0
+        if not args.manifest or not args.attestation or not args.consumer_pin:
+            raise FleetContractError("plan, reconcile, and verify require --manifest, --attestation, and --consumer-pin")
         result = plan(_read(args.manifest), _read(args.policy), verifier=FileAttestationVerifier(args.attestation), consumer_pin=args.consumer_pin, trusted_bypass_user_id=args.trusted_bypass_user_id, expected_head=args.expected_head, phase=args.phase, current_checks=args.current_check, available_checks=args.available_check, exact_head=args.exact_head)
         result["mode"] = args.command
         if args.command == "reconcile":
