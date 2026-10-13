@@ -45,8 +45,28 @@ permissions:
   pull-requests: write
 
 jobs:
+  gate:
+    if: github.event_name == 'pull_request_target'
+    uses: ./.github/workflows/release-gate.yml
+    with:
+      sdlc_ref: ${{ inputs.sdlc_ref }}
+    secrets: inherit
+
+  merge:
+    needs: gate
+    if: >-
+      needs.gate.result == 'success' &&
+      contains(github.event.pull_request.labels.*.name, 'release')
+    uses: ./.github/workflows/release-merge.yml
+    with:
+      sdlc_ref: ${{ inputs.sdlc_ref }}
+      gate_passed: true
+    secrets: inherit
+
   reconcile:
-    if: inputs.merged_sha == ''
+    if: >-
+      inputs.merged_sha == '' &&
+      (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     uses: ./.github/workflows/release-reconcile.yml
     with:
       sdlc_ref: ${{ inputs.sdlc_ref }}

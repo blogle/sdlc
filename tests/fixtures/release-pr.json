@@ -1,4 +1,5 @@
 {
+  "merge_commit_sha": "cccccccccccccccccccccccccccccccccccccccc",
   "head": {
     "sha": "head",
     "ref": "sdlc/release-next",

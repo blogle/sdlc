@@ -8,6 +8,11 @@ on:
         type: string
         required: false
         default: ""
+      gate_passed:
+        description: The reusable release workflow's gate job succeeded
+        type: boolean
+        required: false
+        default: false
     secrets:
       SDLC_RELEASE_APP_ID:
         required: true
@@ -32,7 +37,7 @@ jobs:
     name: merge validated release PR
     outputs:
       merged_sha: ${{ steps.merge-release.outputs.merged_sha }}
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    if: inputs.gate_passed || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -60,10 +65,8 @@ jobs:
         id: merge-release
         env:
           GH_TOKEN: ${{ steps.release-app.outputs.token }}
-          SDLC_RULESET_TOKEN: ${{ github.token }}
           RELEASE_BOT_LOGIN: ${{ vars.SDLC_RELEASE_BOT_LOGIN }}
           RELEASE_APP_SLUG: ${{ steps.release-app.outputs.app-slug }}
-          SDLC_RULESET_ATTESTATION: ${{ vars.SDLC_RULESET_ATTESTATION }}
           SDLC_FLAKE: ${{ inputs.sdlc_ref != '' && inputs.sdlc_ref || github.workspace }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |

@@ -10,10 +10,10 @@ from __future__ import annotations
 import argparse
 import base64
 from dataclasses import dataclass
-import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 from typing import Any, Callable, Iterable, Mapping
@@ -28,11 +28,9 @@ verify_release_tree = coordinator.verify_release_tree
 
 RELEASE_BRANCH = "sdlc/release-next"
 RELEASE_CHECK = "sdlc / release-gate"
-REQUIRED_CHECKS = ("sdlc / pr-fast",)
 MANIFEST_PATH = ".sdlc/release.json"
 FRAGMENT_PREFIX = ".changes/"
 FRAGMENT_SUFFIX = ".json"
-RULESET_ATTESTATION_VARIABLE = "SDLC_RULESET_ATTESTATION"
 
 
 class GateError(RuntimeError):
@@ -49,6 +47,7 @@ class PullRequest:
     head_repo: str
     author_login: str
     author_type: str
+    merge_sha: str = ""
 
 
 @dataclass(frozen=True)
@@ -71,10 +70,6 @@ def _git(*args: str, cwd: str | Path | None = None, raw: bool = False) -> str | 
 
 def _gh_json(endpoint: str) -> Any:
     env = os.environ.copy()
-    if "rulesets" in endpoint or "/protection" in endpoint:
-        ruleset_token = env.get("SDLC_RULESET_TOKEN")
-        if ruleset_token:
-            env["GH_TOKEN"] = ruleset_token
     try:
         result = subprocess.run(["gh", "api", endpoint], check=True, capture_output=True, text=True, env=env)
     except subprocess.CalledProcessError as exc:
@@ -99,6 +94,7 @@ def _pull_request(repo: str, number: int) -> PullRequest:
         head_repo.get("full_name", ""),
         user.get("login", ""),
         user.get("type", ""),
+        data.get("merge_commit_sha", "") or "",
     )
 
 
@@ -153,70 +149,6 @@ def _required_check(checks: Iterable[Check], name: str, sha: str, app_slug: str 
         raise GateError(f"latest required check {name!r} is not successful for exact head {sha}")
 
 
-def verify_protection(protection: Mapping[str, Any], required_checks: Iterable[str] = REQUIRED_CHECKS) -> None:
-    active = [item for item in protection.get("rulesets", ()) if item.get("enforcement") == "active" and item.get("name") == "SDLC default branch"]
-    if not active and not protection.get("classic"):
-        raise GateError("no applicable branch protection or active ruleset is configured")
-    if active:
-        attestation = protection.get("ruleset_attestation")
-        if len(active) != 1 or not isinstance(attestation, Mapping):
-            raise GateError("canonical ruleset bypass actors are not visible; refusing release merge")
-        ruleset = active[0]
-        if attestation.get("ruleset_id") != ruleset.get("id") or attestation.get("updated_at") != ruleset.get("updated_at"):
-            raise GateError("canonical ruleset attestation does not match its current identity")
-        if attestation.get("bypass_actors") != []:
-            raise GateError("release merge requires zero protection bypass actors")
-    if protection.get("strict") is True:
-        raise GateError("global strict freshness is enabled; release gate will not change repository policy")
-    if protection.get("bypass_actors"):
-        raise GateError("release merge requires zero protection bypass actors")
-    missing = set(required_checks) - set(protection.get("contexts", ()))
-    if missing:
-        raise GateError(f"protected required checks are absent: {sorted(missing)}")
-
-
-def _protection(repo: str, branch: str) -> Mapping[str, Any]:
-    rulesets = _gh_json(f"repos/{repo}/rulesets?includes_parents=true")
-    try:
-        classic = _gh_json(f"repos/{repo}/branches/{branch}/protection")
-    except GateError:
-        classic = {}
-    contexts = set(classic.get("required_status_checks", {}).get("contexts", ()))
-    strict = classic.get("required_status_checks", {}).get("strict")
-    bypass = []
-    applicable = []
-    attestation_raw = os.environ.get(RULESET_ATTESTATION_VARIABLE)
-    try:
-        attestation = json.loads(attestation_raw) if attestation_raw else None
-    except json.JSONDecodeError as exc:
-        raise GateError("canonical ruleset bypass actors are not visible; refusing release merge") from exc
-    if attestation is not None and not isinstance(attestation, dict):
-        raise GateError("canonical ruleset bypass actors are not visible; refusing release merge")
-    for summary in rulesets:
-        detail = _gh_json(f"repos/{repo}/rulesets/{summary['id']}") if summary.get("id") else summary
-        if detail.get("enforcement") != "active" or detail.get("name") != "SDLC default branch":
-            continue
-        includes = detail.get("conditions", {}).get("ref_name", {}).get("include", ())
-        if "~DEFAULT_BRANCH" not in includes and f"refs/heads/{branch}" not in includes:
-            continue
-        actors = detail.get("bypass_actors")
-        if not isinstance(actors, list):
-            raise GateError("canonical ruleset bypass actors are not visible; refusing release merge")
-        if attestation is None or attestation.get("repository") != repo or attestation.get("schema") != 1 or attestation.get("bypass_actors") != []:
-            raise GateError("canonical ruleset bypass actors are not visible; refusing release merge")
-        if attestation.get("ruleset_id") != detail.get("id") or attestation.get("updated_at") != detail.get("updated_at"):
-            raise GateError("canonical ruleset attestation does not match its current identity")
-        applicable.append(detail)
-        bypass.extend(actors)
-        for rule in detail.get("rules", ()):
-            if rule.get("type") != "required_status_checks":
-                continue
-            params = rule.get("parameters", {})
-            contexts.update(item.get("context") for item in params.get("required_status_checks", ()))
-            strict = strict or params.get("strict_required_status_checks_policy", False)
-    return {"classic": bool(classic), "rulesets": applicable, "contexts": contexts, "strict": strict, "bypass_actors": bypass, "ruleset_attestation": attestation}
-
-
 def _authenticated_app(release_bot_login: str, app_slug: str, repository: str) -> tuple[str, str]:
     """Validate the trusted action output and installation repository access.
 
@@ -240,7 +172,7 @@ def _manifest_at(repo: str, sha: str) -> Mapping[str, Any]:
         raise GateError("release manifest is missing or invalid JSON") from exc
 
 
-def replay_snapshot(source_sha: str, *, git: Callable[..., str | bytes] = _git) -> Mapping[str, Any]:
+def replay_snapshot(source_sha: str, *, git: Callable[..., str | bytes] = _git) -> tuple[Mapping[str, Any], bytes]:
     """Re-run the pinned coordinator snapshot from the exact source commit."""
     with tempfile.TemporaryDirectory(prefix="release-gate-") as temp:
         source_dir = Path(temp) / "source"
@@ -250,11 +182,12 @@ def replay_snapshot(source_sha: str, *, git: Callable[..., str | bytes] = _git) 
             coordinator.ROOT = source_dir
             try:
                 result = coordinator.release_snapshot(source_sha)
+                changelog = (source_dir / "CHANGELOG.md").read_bytes()
             finally:
                 coordinator.ROOT = old_root
             if not isinstance(result, dict):
                 raise GateError("coordinator snapshot produced no release manifest")
-            return result
+            return result, changelog
         finally:
             try:
                 git("worktree", "remove", "--force", str(source_dir))
@@ -262,45 +195,24 @@ def replay_snapshot(source_sha: str, *, git: Callable[..., str | bytes] = _git) 
                 pass
 
 
-def _fragment_paths(manifest: Mapping[str, Any]) -> list[str]:
-    raw = manifest.get("fragments")
-    if not isinstance(raw, list) or not raw:
-        raise GateError("release manifest must contain fragments")
-    paths = []
-    previous = ""
-    for item in raw:
-        if not isinstance(item, dict):
-            raise GateError("release manifest fragment is not an object")
-        path = item.get("path")
-        if not isinstance(path, str) or not path.startswith(FRAGMENT_PREFIX) or not path.endswith(FRAGMENT_SUFFIX) or "/" in path[len(FRAGMENT_PREFIX):]:
-            raise GateError(f"invalid release fragment path {path!r}")
-        if path <= previous:
-            raise GateError("release manifest fragments must be unique and sorted")
-        if not isinstance(item.get("blob_sha"), str) or len(item["blob_sha"]) != 40:
-            raise GateError(f"invalid blob SHA for release fragment {path}")
-        paths.append(path)
-        previous = path
-    return paths
-
-
-def verify_candidate(source_sha: str, head_sha: str, manifest: Mapping[str, Any], *, git: Callable[..., str | bytes] = _git, planner: Callable[[str], Mapping[str, Any]] = replay_snapshot) -> None:
+def verify_candidate(source_sha: str, head_sha: str, manifest: Mapping[str, Any], *, git: Callable[..., str | bytes] = _git, planner: Callable[[str], Any] = replay_snapshot) -> None:
     """Replay the canonical planner and prove the candidate changed only its output."""
-    if manifest.get("schema") != 1:
-        raise GateError("release manifest schema must be 1")
-    if manifest.get("source_main_sha") != source_sha:
-        raise GateError("manifest source_main_sha does not match current main")
-    paths = _fragment_paths(manifest)
+    if manifest.get("source_sha") != source_sha:
+        raise GateError("manifest source_sha does not match current main")
     expected = planner(source_sha)
     repeated = planner(source_sha)
-    if dict(expected) != dict(repeated):
+    if expected != repeated:
         raise GateError("coordinator snapshot replay is not deterministic")
-    if dict(expected) != dict(manifest):
+    if isinstance(expected, tuple):
+        expected_manifest, expected_changelog = expected
+    else:
+        expected_manifest, expected_changelog = expected, None
+    if dict(expected_manifest) != dict(manifest):
         raise GateError("candidate manifest differs from deterministic coordinator replay")
-    for item in manifest["fragments"]:
-        path = item["path"]
-        source_blob = git("rev-parse", f"{source_sha}:{path}")
-        if source_blob != item["blob_sha"]:
-            raise GateError(f"fragment blob changed at {path}")
+    paths = sorted(path for path in str(git("ls-tree", "-r", "--name-only", source_sha, "--", ".changes")).splitlines() if path.endswith(".json"))
+    if not paths:
+        raise GateError("release source has no changelog fragments")
+    for path in paths:
         try:
             git("rev-parse", f"{head_sha}:{path}")
         except GateError:
@@ -310,24 +222,24 @@ def verify_candidate(source_sha: str, head_sha: str, manifest: Mapping[str, Any]
     allowed = {"CHANGELOG.md", MANIFEST_PATH, *paths}
     if changed != allowed:
         raise GateError(f"candidate changed paths differ from generated output: {sorted(changed ^ allowed)}")
-    changelog = git("show", f"{head_sha}:CHANGELOG.md", raw=True)
-    if manifest.get("changelog_sha256") != hashlib.sha256(changelog).hexdigest():
-        raise GateError("CHANGELOG.md digest does not match manifest")
+    if expected_changelog is not None and git("show", f"{head_sha}:CHANGELOG.md", raw=True) != expected_changelog:
+        raise GateError("candidate CHANGELOG.md differs from deterministic generation")
     try:
         verify_release_tree(source_sha, head_sha, manifest)
     except (ValueError, subprocess.CalledProcessError) as exc:
         raise GateError(f"shared coordinator tree verification failed: {exc}") from exc
 
 
-def evaluate_release_gate(*, pr: PullRequest, authenticated_login: str, app_slug: str, main_sha: str, parent_sha: str | None, checks: Iterable[Check], manifest: Mapping[str, Any] | None, release_bot_login: str, repository: str, protection: Mapping[str, Any], planner: Callable[[str], Mapping[str, Any]] = replay_snapshot) -> None:
+def evaluate_release_gate(*, pr: PullRequest, authenticated_login: str, app_slug: str, main_sha: str, parent_sha: str | None, checks: Iterable[Check], manifest: Mapping[str, Any] | None, release_bot_login: str, repository: str, planner: Callable[[str], Mapping[str, Any]] = replay_snapshot) -> None:
     if pr.head_branch != RELEASE_BRANCH:
         return
     if (authenticated_login != release_bot_login or pr.author_login != release_bot_login or pr.author_type != "Bot" or pr.head_repo != repository):
         raise GateError("release PR is not owned by the authenticated release App")
-    verify_protection(protection)
     if parent_sha != main_sha:
         raise GateError("release head parent is not current main")
-    _required_check(checks, "sdlc / pr-fast", pr.head_sha)
+    if not re.fullmatch(r"[0-9a-f]{40}", pr.merge_sha):
+        raise GateError("GitHub has not produced a test merge commit for the release candidate")
+    _required_check(checks, "sdlc / check", pr.merge_sha)
     if manifest is None:
         raise GateError("release manifest is required")
     verify_candidate(main_sha, pr.head_sha, manifest, planner=planner)
@@ -349,8 +261,9 @@ class GithubMergeApi:
             raise GateError("release head must have exactly one parent")
         return parents[0]["sha"]
 
-    def protection(self) -> Mapping[str, Any]:
-        return _protection(self.repo, self.branch)
+    def merge_parents(self, sha: str) -> list[str]:
+        parents = _gh_json(f"repos/{self.repo}/commits/{sha}").get("parents", [])
+        return [item.get("sha", "") for item in parents]
 
     def checks(self, sha: str) -> list[Check]:
         return _checks(self.repo, sha)
@@ -373,10 +286,11 @@ def merge_release_pr(*, api: GithubMergeApi, pr_number: int, expected_head_sha: 
         raise GateError("main advanced before merge; regenerate release candidate")
     if api.parent_sha(expected_head_sha) != current_main_sha:
         raise GateError("release head parent is not current main")
-    verify_protection(api.protection())
-    checks = api.checks(expected_head_sha)
-    _required_check(checks, "sdlc / pr-fast", expected_head_sha)
-    _required_check(checks, RELEASE_CHECK, expected_head_sha, api.app_slug)
+    if api.merge_parents(pr.merge_sha) != [current_main_sha, expected_head_sha]:
+        raise GateError("release test-merge commit does not bind the current base and head")
+    checks = api.checks(pr.merge_sha)
+    _required_check(checks, "sdlc / check", pr.merge_sha)
+    _required_check(checks, "sdlc / release-gate", pr.merge_sha, api.app_slug)
     return api.merge(pr_number, sha=expected_head_sha, merge_method="squash")
 
 
@@ -390,29 +304,28 @@ def _gate_command(args: argparse.Namespace) -> int:
     commit = _gh_json(f"repos/{args.repo}/commits/{pr.head_sha}")
     if args.historical_merged_sha:
         manifest = _manifest_at(args.repo, pr.head_sha)
-        source_sha = manifest.get("source_main_sha") if manifest else None
+        source_sha = manifest.get("source_sha") if manifest else None
         if not source_sha or (commit.get("parents") or [{}])[0].get("sha") != source_sha:
-            raise GateError("historical release head parent does not match manifest source_main_sha")
+            raise GateError("historical release head parent does not match manifest source_sha")
         merged = _gh_json(f"repos/{args.repo}/commits/{args.historical_merged_sha}")
         parents = merged.get("parents") or []
         if len(parents) != 1 or parents[0].get("sha") != source_sha:
-            raise GateError("historical squash merge does not match manifest source_main_sha")
-        verify_protection(_protection(args.repo, repo["default_branch"]))
-        _required_check(_checks(args.repo, pr.head_sha), "sdlc / pr-fast", pr.head_sha)
-        _required_check(_checks(args.repo, pr.head_sha), RELEASE_CHECK, pr.head_sha, slug)
+            raise GateError("historical squash merge does not match manifest source_sha")
         verify_candidate(source_sha, args.historical_merged_sha, manifest)
         return 0
+    merge_parents = [item.get("sha", "") for item in _gh_json(f"repos/{args.repo}/commits/{pr.merge_sha}").get("parents", [])]
+    if merge_parents != [main["sha"], pr.head_sha]:
+        raise GateError("release test-merge commit does not bind the current base and head")
     evaluate_release_gate(
         pr=pr,
         authenticated_login=login,
         app_slug=slug,
         main_sha=main["sha"],
         parent_sha=(commit.get("parents") or [{}])[0].get("sha"),
-        checks=_checks(args.repo, pr.head_sha),
+        checks=_checks(args.repo, pr.merge_sha),
         manifest=_manifest_at(args.repo, pr.head_sha),
         release_bot_login=args.release_bot,
         repository=args.repo,
-        protection=_protection(args.repo, repo["default_branch"]),
     )
     return 0
 

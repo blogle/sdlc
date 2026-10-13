@@ -23,7 +23,7 @@ class SelfReleaseDogfoodTests(unittest.TestCase):
     def test_reusable_orchestration_has_no_retired_publish_input(self):
         workflow = (ROOT / ".github/workflows/release.yml").read_text()
         self.assertNotIn("publish_version", workflow)
-        self.assertIn("if: inputs.merged_sha == ''", workflow)
+        self.assertIn("inputs.merged_sha == ''", workflow)
         self.assertIn("if: inputs.merged_sha != ''", workflow)
         self.assertIn("packages: write", workflow)
 
@@ -35,7 +35,7 @@ class SelfReleaseDogfoodTests(unittest.TestCase):
         self.assertIn("sdlc-release-reconcile-${{ github.repository }}", leaf)
         self.assertIn("cancel-in-progress: false", leaf)
         self.assertNotIn("cancel-in-progress: true", leaf)
-        self.assertIn("sdlc-release-publish-${{ github.repository }}", publisher)
+        self.assertIn("sdlc-publish-${{ github.repository }}-${{ inputs.merged_sha }}", publisher)
 
     def test_release_merge_without_fragments_is_a_successful_noop_before_publication(self):
         reconcile = (ROOT / "src/release_reconcile.py").read_text()
@@ -46,7 +46,7 @@ class SelfReleaseDogfoodTests(unittest.TestCase):
     def test_successor_fragments_stay_blocked_until_predecessor_is_published(self):
         reconcile = (ROOT / "src/release_reconcile.py").read_text()
         self.assertLess(reconcile.index("_verify_predecessor(repo"), reconcile.index("sdlc.release_snapshot"))
-        self.assertIn("publication predecessor is unreconciled", reconcile)
+        self.assertIn("publication is incomplete", reconcile)
 
     def test_publication_completion_wakes_reconciliation(self):
         workflow = (ROOT / ".github/workflows/self-release.yml").read_text()

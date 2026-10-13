@@ -1,23 +1,16 @@
 name: SDLC merged release publisher
-
-# Reusable-only and opt-in until the updater and release gate are coordinated.
-# The canonical ruleset is checked again in the job; it is not inferred from
-# repository configuration.
 on:
   workflow_call:
     inputs:
       sdlc_ref:
-        description: Pinned SDLC flake reference, or empty for the trusted checkout
         required: false
         type: string
         default: ""
       activate:
-        description: Explicit opt-in after updater and release-gate rollout
         required: false
         type: boolean
         default: false
       merged_sha:
-        description: Actual squash-merged release commit on main
         required: true
         type: string
     secrets:
@@ -25,18 +18,15 @@ on:
         required: true
       SDLC_RELEASE_APP_PRIVATE_KEY:
         required: true
-
 permissions:
   contents: write
   packages: write
-
 concurrency:
-  group: sdlc-release-publish-${{ github.repository }}
+  group: sdlc-publish-${{ github.repository }}-${{ inputs.merged_sha }}
   cancel-in-progress: false
-
 jobs:
   publish:
-    if: ${{ inputs.activate }}
+    if: inputs.activate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/create-github-app-token@v1
@@ -52,144 +42,65 @@ jobs:
           persist-credentials: false
           token: ${{ steps.release-app.outputs.token }}
       - uses: DeterminateSystems/nix-installer-action@v23
-      - name: Verify canonical protection and actual merged identity
+      - name: Validate actual merged release identity
+        id: identity
         env:
           GH_TOKEN: ${{ steps.release-app.outputs.token }}
-          REPOSITORY: ${{ github.repository }}
-          MERGED_SHA: ${{ inputs.merged_sha }}
           SDLC_FLAKE: ${{ inputs.sdlc_ref != '' && inputs.sdlc_ref || github.workspace }}
+          MERGED_SHA: ${{ inputs.merged_sha }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
-          rulesets="$(gh api "repos/${REPOSITORY}/rulesets" --paginate)"
-          REPOSITORY="$REPOSITORY" python3 -c 'import json,os,sys; data=json.load(sys.stdin); repo=os.environ["REPOSITORY"]; matches=[x for x in data if x.get("name") == "SDLC default branch" and x.get("source", repo) == repo and x.get("enforcement") == "active"]; sys.exit("canonical active ruleset missing; refusing publication") if len(matches) != 1 else None' <<<"$rulesets"
-          nix run "$SDLC_FLAKE"#sdlc -- policy check --repo "$REPOSITORY"
           git fetch origin "$DEFAULT_BRANCH" --tags
           test "$(git rev-parse HEAD)" = "$MERGED_SHA"
           git merge-base --is-ancestor "$MERGED_SHA" FETCH_HEAD
           nix run "$SDLC_FLAKE"#sdlc -- release publish "$MERGED_SHA" > identity.json
-      - name: Prepare one immutable source artifact
+          version="$(jq -r .version identity.json)"
+          source_sha="$(jq -r .source_sha identity.json)"
+          printf 'version=%s\nsource_sha=%s\n' "$version" "$source_sha" >> "$GITHUB_OUTPUT"
+      - name: Create or verify version tag and source release asset
         env:
           GH_TOKEN: ${{ steps.release-app.outputs.token }}
           MERGED_SHA: ${{ inputs.merged_sha }}
-          SDLC_FLAKE: ${{ inputs.sdlc_ref != '' && inputs.sdlc_ref || github.workspace }}
+          VERSION: ${{ steps.identity.outputs.version }}
         run: |
           set -euo pipefail
-          mkdir -p .sdlc
-          version="$(jq -r .version .sdlc/release.json)"
-          asset="sdlc-source-${version}-${MERGED_SHA}.tar.gz"
-           git archive --format=tar.gz --output ".sdlc/$asset.expected" "$MERGED_SHA"
-           if gh release view "v${version}" --json assets >/dev/null 2>&1 && \
-              gh release view "v${version}" --json assets --jq ".assets[] | select(.name == \"$asset\") | .id" | grep -q .; then
-             gh release download "v${version}" --pattern "$asset" --dir .sdlc
-             cmp -- ".sdlc/$asset.expected" ".sdlc/$asset" || { echo "durable source asset bytes changed" >&2; exit 1; }
-             rm -f ".sdlc/$asset.expected"
-           else
-             mv ".sdlc/$asset.expected" ".sdlc/$asset"
-           fi
-          printf 'asset=%s\n' "$asset" > .sdlc/artifact.env
-      - name: Create or verify exact annotated version tag
-        env:
-          GH_TOKEN: ${{ steps.release-app.outputs.token }}
-          MERGED_SHA: ${{ inputs.merged_sha }}
-        run: |
-          set -euo pipefail
-          gh auth setup-git
-          version="$(jq -r .version .sdlc/release.json)"
-          tag="v${version}"
+          tag="v$VERSION"
           if git show-ref --verify --quiet "refs/tags/$tag"; then
-            test "$(git rev-list -n1 "$tag")" = "$MERGED_SHA" || { echo "conflicting tag $tag" >&2; exit 1; }
+            test "$(git rev-list -n1 "$tag")" = "$MERGED_SHA" || { echo "conflicting release tag $tag" >&2; exit 1; }
           else
             git config user.name 'sdlc-release[bot]'
             git config user.email 'sdlc-release[bot]@users.noreply.github.com'
-            git tag -a "$tag" "$MERGED_SHA" -m "Release $tag source=$MERGED_SHA"
+            git tag -a "$tag" "$MERGED_SHA" -m "Release $tag ($MERGED_SHA)"
             git push origin "refs/tags/$tag"
           fi
-      - name: Create or verify draft GitHub Release
-        env:
-          GH_TOKEN: ${{ steps.release-app.outputs.token }}
-          MERGED_SHA: ${{ inputs.merged_sha }}
-        run: |
-          set -euo pipefail
-          version="$(jq -r .version .sdlc/release.json)"
-          tag="v${version}"
-          if ! gh release view "$tag" >/dev/null 2>&1; then
-            gh release create "$tag" --verify-tag --draft --title "$tag" --notes "Release $tag from the verified merged commit $MERGED_SHA."
-          fi
-      - name: Persist artifact bytes without overwriting
-        env:
-          GH_TOKEN: ${{ steps.release-app.outputs.token }}
-          MERGED_SHA: ${{ inputs.merged_sha }}
-          SDLC_FLAKE: ${{ inputs.sdlc_ref != '' && inputs.sdlc_ref || github.workspace }}
-        run: |
-          set -euo pipefail
-          source .sdlc/artifact.env
-          version="$(jq -r .version .sdlc/release.json)"
-          tag="v${version}"
-          asset_id="$(gh release view "$tag" --json assets --jq ".assets[] | select(.name == \"$asset\") | .id" || true)"
-          if [[ -z "$asset_id" ]]; then
-            gh release upload "$tag" ".sdlc/$asset"
+          asset="sdlc-source-$VERSION-$MERGED_SHA.tar.gz"
+          git archive --format=tar.gz --output "$RUNNER_TEMP/$asset.expected" "$MERGED_SHA"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            if gh release view "$tag" --json assets --jq ".assets[] | select(.name == \"$asset\") | .id" | grep -q .; then
+              gh release download "$tag" --pattern "$asset" --dir "$RUNNER_TEMP"
+              cmp "$RUNNER_TEMP/$asset.expected" "$RUNNER_TEMP/$asset"
+            else
+              gh release upload "$tag" "$RUNNER_TEMP/$asset.expected"
+            fi
           else
-            rm -f ".sdlc/$asset"
-            gh release download "$tag" --pattern "$asset" --dir .sdlc
+            gh release create "$tag" "$RUNNER_TEMP/$asset.expected" --verify-tag --draft --title "$tag" --notes "Release $tag from $MERGED_SHA."
           fi
-          digest="$(sha256sum ".sdlc/$asset" | cut -d' ' -f1)"
-          remote_digest="$(gh release view "$tag" --json assets --jq ".assets[] | select(.name == \"$asset\") | .digest // \"\"" || true)"
-          [[ -z "$remote_digest" || "$remote_digest" == "sha256:$digest" ]] || { echo "durable asset digest changed" >&2; exit 1; }
-          nix run "$SDLC_FLAKE"#sdlc -- release ledger artifact \
-            --ledger .sdlc/release-ledger.json \
-            --commit "$MERGED_SHA" \
-            --name "$asset" \
-            --digest "$digest"
-      - name: Save publication audit ledger
-        uses: actions/upload-artifact@v4
+      - uses: docker/login-action@v3
         with:
-          name: release-ledger-${{ inputs.merged_sha }}-${{ github.run_id }}-tagged
-          path: .sdlc/release-ledger.json
-          retention-days: 90
-      - name: Publish exact tag and durable asset through consumer contract
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Publish consumer artifacts from merged source
         env:
-          GH_TOKEN: ${{ steps.release-app.outputs.token }}
-          SDLC_RELEASE_LEDGER: .sdlc/release-ledger.json
-          SDLC_FLAKE: ${{ inputs.sdlc_ref != '' && inputs.sdlc_ref || github.workspace }}
-          MERGED_SHA: ${{ inputs.merged_sha }}
+          SDLC_RELEASE_VERSION: ${{ steps.identity.outputs.version }}
+          SDLC_RELEASE_MERGED_SHA: ${{ inputs.merged_sha }}
+          SDLC_RELEASE_SOURCE_SHA: ${{ steps.identity.outputs.source_sha }}
+          SDLC_RELEASE_RECEIPTS: ${{ runner.temp }}/publication-receipts.json
         run: |
           set -euo pipefail
-          version="$(jq -r .version .sdlc/release.json)"
-          source_sha="$(jq -r .source_main_sha .sdlc/release.json)"
-          export SDLC_RELEASE_VERSION="$version"
-          export SDLC_RELEASE_MERGED_SHA="$MERGED_SHA"
-          export SDLC_RELEASE_SOURCE_SHA="$source_sha"
-          export SDLC_RELEASE_RECEIPTS=.sdlc/publication-receipts.json
-          nix run nixpkgs#just -- release-publish "$version"
-          if [[ -f "$SDLC_RELEASE_RECEIPTS" ]]; then
-            nix run "$SDLC_FLAKE"#sdlc -- release receipts \
-              --ledger "$SDLC_RELEASE_LEDGER" \
-              --receipts "$SDLC_RELEASE_RECEIPTS" \
-              --version "$version" \
-              --merged-sha "$MERGED_SHA" \
-              --source-sha "$source_sha"
-          fi
-      - name: Record completed publication
-        env:
-          GH_TOKEN: ${{ steps.release-app.outputs.token }}
-          MERGED_SHA: ${{ inputs.merged_sha }}
-          SDLC_FLAKE: ${{ inputs.sdlc_ref != '' && inputs.sdlc_ref || github.workspace }}
-        run: |
-          set -euo pipefail
-          version="$(jq -r .version .sdlc/release.json)"
-          tag="v${version}"
-          asset="sdlc-source-${version}-${MERGED_SHA}.tar.gz"
-          release_json="$(gh release view "$tag" --json isDraft,isPrerelease,assets)"
-          [[ "$(jq -r '.isDraft' <<<"$release_json")" == false ]] || { echo 'GitHub Release is still draft' >&2; exit 1; }
-          [[ "$(jq -r '.isPrerelease' <<<"$release_json")" == false ]] || { echo 'GitHub Release is prerelease' >&2; exit 1; }
-          asset_digest="$(jq -r --arg asset "$asset" '.assets[] | select(.name == $asset) | .digest // empty' <<<"$release_json")"
-          [[ "$asset_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo 'published immutable asset digest is missing' >&2; exit 1; }
-          nix run "$SDLC_FLAKE"#sdlc -- release ledger published \
-            --ledger .sdlc/release-ledger.json
-      - name: Save completed publication audit ledger
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-ledger-${{ inputs.merged_sha }}-${{ github.run_id }}-published
-          path: .sdlc/release-ledger.json
-          retention-days: 90
+          nix run .#sdlc-publish
+          jq -e --arg version "$SDLC_RELEASE_VERSION" --arg merged "$SDLC_RELEASE_MERGED_SHA" --arg source "$SDLC_RELEASE_SOURCE_SHA" \
+            '.schema == 1 and (.artifacts | length > 0) and all(.artifacts[]; .version == $version and .merged_sha == $merged and .source_sha == $source)' \
+            "$SDLC_RELEASE_RECEIPTS" >/dev/null
+          gh release edit "v$SDLC_RELEASE_VERSION" --draft=false

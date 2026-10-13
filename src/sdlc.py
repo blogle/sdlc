@@ -10,12 +10,8 @@ import sys
 import os
 import hashlib
 
-POLICY_DIR = Path(os.environ.get("SDLC_POLICY_MODULE_PATH", Path(__file__).resolve().parents[1] / "actions/repository-policy"))
-sys.path.insert(0, str(POLICY_DIR))
-import repository_policy
-import ruleset_api
-
 ROOT = Path.cwd()
+CONTRACT_ROOT = Path(os.environ.get("SDLC_SOURCE_PATH", Path(__file__).resolve().parents[1]))
 RANK = {"patch": 1, "minor": 2, "major": 3}
 VERSION_RE = re.compile(r"^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 MANIFEST_PATH = ".sdlc/release.json"
@@ -107,55 +103,40 @@ def _tag_versions():
     return [tuple(map(int, VERSION_RE.match(tag).groups())) for tag in tags if VERSION_RE.match(tag)]
 
 
-def _sha256(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def generated_tree_digest(changelog_bytes, bindings):
-    """Digest the canonical generated records, excluding the manifest."""
-    records = [("CHANGELOG.md", "file", changelog_bytes)]
-    records.extend((item["path"], "deleted", item["blob_sha"].encode("ascii")) for item in bindings)
-    payload = b"".join(path.encode() + b"\0" + kind.encode() + b"\0" + content + b"\0" for path, kind, content in sorted(records))
+def _fragment_digest(entries):
+    payload = b"".join(
+        path.relative_to(ROOT).as_posix().encode() + b"\0" + path.read_bytes() + b"\0"
+        for path, _ in sorted(entries, key=lambda entry: entry[0].as_posix())
+    )
     return hashlib.sha256(payload).hexdigest()
 
 
-def _generated_tree_digest(changelog_path, bindings):
-    return generated_tree_digest(changelog_path.read_bytes(), bindings)
-
-
 def verify_release_tree(source_sha, merged_sha, manifest):
-    """Verify the actual merged tree against a reconstructible snapshot."""
-    if manifest.get("schema") != 1 or manifest.get("source_main_sha") != source_sha:
-        raise ValueError("release manifest schema or source SHA is invalid")
+    """Verify the minimal source-bound release manifest and consumed fragments."""
+    if manifest.get("source_sha") != source_sha or not VERSION_RE.fullmatch(str(manifest.get("version", ""))):
+        raise ValueError("release manifest version or source SHA is invalid")
     if _git("rev-parse", f"{merged_sha}^") != source_sha:
-        raise ValueError("merged release commit parent does not equal source_main_sha")
-    fragments = manifest.get("fragments")
-    if not isinstance(fragments, list) or fragments != sorted(fragments, key=lambda item: item.get("path", "")):
-        raise ValueError("release manifest fragments must be sorted")
-    bindings = []
-    for item in fragments:
-        if not isinstance(item, dict) or set(("path", "blob_sha")) - set(item):
-            raise ValueError("release manifest fragment entries require path and blob_sha")
-        path, blob = item["path"], item["blob_sha"]
-        if _git("rev-parse", f"{source_sha}:{path}") != blob:
-            raise ValueError(f"source fragment blob does not match manifest: {path}")
+        raise ValueError("merged release commit parent does not equal source_sha")
+    paths = _git("ls-tree", "-r", "--name-only", source_sha, "--", ".changes").splitlines()
+    paths = sorted(path for path in paths if path.endswith(".json"))
+    if not paths:
+        raise ValueError("release source has no change fragments")
+    payload = b""
+    for path in paths:
+        content = subprocess.run(["git", "show", f"{source_sha}:{path}"], cwd=ROOT, check=True, capture_output=True).stdout
+        payload += path.encode() + b"\0" + content + b"\0"
         try:
             _git("rev-parse", f"{merged_sha}:{path}")
         except subprocess.CalledProcessError:
             pass
         else:
             raise ValueError(f"consumed fragment remains in merged tree: {path}")
-        bindings.append(item)
+    if hashlib.sha256(payload).hexdigest() != manifest.get("fragments_sha256"):
+        raise ValueError("release fragment digest does not match source")
     changed = set(_git("diff", "--name-only", source_sha, merged_sha).splitlines())
-    allowed = {"CHANGELOG.md", MANIFEST_PATH} | {item["path"] for item in bindings}
+    allowed = {"CHANGELOG.md", MANIFEST_PATH, *paths}
     if changed != allowed:
-        raise ValueError(f"merged release changed unexpected paths: {sorted(changed - allowed)}")
-    changelog = subprocess.run(["git", "show", f"{merged_sha}:CHANGELOG.md"], cwd=ROOT, check=True, capture_output=True).stdout
-    if manifest.get("changelog_sha256") != hashlib.sha256(changelog).hexdigest():
-        raise ValueError("merged CHANGELOG.md digest does not match manifest")
-    expected = generated_tree_digest(changelog, bindings)
-    if manifest.get("generated_tree") != expected:
-        raise ValueError("merged generated tree digest does not match manifest")
+        raise ValueError(f"merged release changed unexpected paths: {sorted(changed ^ allowed)}")
     return True
 
 
@@ -174,24 +155,9 @@ def release_snapshot(source_sha, date=None):
     bump = bump_intent(entries)
     version = _version_after(previous.get("version") if previous else None, bump)
     release_date = date or _git("show", "-s", "--format=%cs", source_sha)
-    bindings = []
-    for path, item in entries:
-        relative = path.relative_to(ROOT).as_posix()
-        blob = _git("rev-parse", f"{source_sha}:{relative}")
-        bindings.append({"path": relative, "blob_sha": blob, "type": item["type"], "semver": item["semver"], "summary": item["summary"]})
-    changelog("finalize", version=version, date=release_date, selected=[item["path"] for item in bindings])
-    changelog_path = ROOT / "CHANGELOG.md"
-    generated_tree_sha = _generated_tree_digest(changelog_path, bindings)
-    manifest = {
-        "schema": 1,
-        "version": version,
-        "prior_released_boundary": previous.get("source_main_sha") if previous else None,
-        "source_main_sha": source_sha,
-        "fragments": [{key: item[key] for key in ("path", "blob_sha")} for item in bindings],
-        "changelog_sha256": _sha256(changelog_path),
-        "generated_tree": generated_tree_sha,
-        "publication": {"version": version, "source_main_sha": source_sha},
-    }
+    fragment_hash = _fragment_digest(entries)
+    changelog("finalize", version=version, date=release_date, selected=[path.relative_to(ROOT).as_posix() for path, _ in entries])
+    manifest = {"version": version, "source_sha": source_sha, "fragments_sha256": fragment_hash}
     manifest_path = ROOT / MANIFEST_PATH
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
@@ -203,6 +169,16 @@ def render(entries):
 
 
 def changelog(action, version=None, date=None, json_output=False, selected=None):
+    if action == "generate":
+        source_sha = _git("rev-parse", "HEAD")
+        manifest = release_snapshot(source_sha, date)
+        if json_output:
+            print(json.dumps({"release": manifest is not None, "manifest": manifest}, sort_keys=True))
+        elif manifest:
+            print(f"generated release {manifest['version']} from {manifest['source_sha']}")
+        else:
+            print("no changelog fragments; no release")
+        return
     entries = fragments(selected)
     bump = bump_intent(entries)
     planned_version = next_version(bump) if bump else None
@@ -215,7 +191,7 @@ def changelog(action, version=None, date=None, json_output=False, selected=None)
             print("no changelog fragments; no release")
         else:
             print(f"release {planned_version} ({bump})\n\n{render(entries)}")
-    elif action == "finalize":
+    elif action in ("finalize", "generate"):
         if not entries:
             print("no changelog fragments; no release")
             return
@@ -236,77 +212,127 @@ def changelog(action, version=None, date=None, json_output=False, selected=None)
         raise ValueError(f"unknown changelog action {action}")
 
 
-def policy_context(repo=None):
-    def git(*args):
-        return subprocess.run(["git", *args], cwd=ROOT, check=True, capture_output=True, text=True).stdout.strip()
-    full_name = repo or os.environ.get("GITHUB_REPOSITORY")
-    if not full_name:
-        remote = git("config", "--get", "remote.origin.url")
-        match = re.search(r"github\.com[:/]([^/]+/[^/.]+)(?:\.git)?$", remote)
-        if not match:
-            raise ValueError("cannot infer GitHub repository; pass --repo OWNER/NAME")
-        full_name = match.group(1)
-    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", full_name):
-        raise ValueError("--repo must be OWNER/NAME")
-    default_branch = subprocess.run(["gh", "api", f"repos/{full_name}", "--jq", ".default_branch"], check=True, capture_output=True, text=True).stdout.strip()
-    return full_name, default_branch
+def _canonical_ruleset():
+    path = CONTRACT_ROOT / "rulesets/default-branch.json"
+    return json.loads(path.read_text())
 
 
-def policy_config():
-    path = ROOT / ".github/repository-policy.json"
-    try:
-        return json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ValueError(f"{path}: {exc}") from exc
-
-
-def _ruleset_command(action, repo, branch, render, label):
-    full_name = repo
-    all_rulesets, _ = ruleset_api.read_rulesets(full_name, include_parents=(action in ("plan", "check")))
-    named = [item for item in all_rulesets if item.get("name") == repository_policy.RULESET_NAME]
-    matches = [item for item in named if item.get("source", full_name) == full_name]
+def _ruleset(repo):
+    result = subprocess.run(
+        ["gh", "api", f"repos/{repo}/rulesets"], check=True,
+        capture_output=True, text=True,
+    )
+    matches = [item for item in json.loads(result.stdout) if item.get("name") == "SDLC default branch"]
     if len(matches) > 1:
-        raise ValueError(f"found {len(matches)} canonical rulesets named {repository_policy.RULESET_NAME!r}; resolve duplicates manually")
-    current = matches[0] if matches else None
-    desired = render(current)
-    if action == "plan":
-        print(json.dumps({"repository": full_name, "default_branch": branch, "action": "create" if current is None else ("update" if repository_policy.normalize_ruleset(current, desired) != repository_policy.normalize_ruleset(desired, desired) else "no-op"), "desired": desired, "current": current, "inherited_canonical_rulesets": [item for item in named if item not in matches], "unmanaged_rulesets": [item for item in all_rulesets if item.get("name") != repository_policy.RULESET_NAME]}, indent=2, sort_keys=True))
+        raise ValueError(f"multiple SDLC default branch rulesets exist on {repo}")
+    if not matches:
+        return None
+    return subprocess.run(
+        ["gh", "api", f"repos/{repo}/rulesets/{matches[0]['id']}"],
+        check=True, capture_output=True, text=True,
+    )
+
+
+def _matches_ruleset(actual, desired):
+    # Project the API response onto this pinned contract's exact payload.
+    # GitHub adds metadata (for example required-check app IDs) and can reorder
+    # arrays; fields outside the desired payload are not policy.
+    def project(value, shape):
+        if isinstance(shape, dict):
+            if not isinstance(value, dict):
+                return None
+            return {key: project(value.get(key), expected) for key, expected in shape.items()}
+        if isinstance(shape, list):
+            if not isinstance(value, list):
+                return None
+            values = [project(item, shape[0]) for item in value] if shape else value
+            return sorted(values, key=lambda item: json.dumps(item, sort_keys=True))
+        return value
+
+    if not isinstance(actual, dict):
+        return False
+    for key, expected in desired.items():
+        if key != "rules" and project(actual.get(key), expected) != project(expected, expected):
+            return False
+    actual_rules = actual.get("rules", [])
+    for expected in desired["rules"]:
+        matches = [item for item in actual_rules if item.get("type") == expected["type"]]
+        if len(matches) != 1 or project(matches[0], expected) != project(expected, expected):
+            return False
+    return len(actual_rules) == len(desired["rules"])
+
+
+def ruleset_command(action, repo, dry_run=False):
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
+        raise ValueError("--repo must be OWNER/NAME")
+    desired = _canonical_ruleset()
+    try:
+        current_raw = _ruleset(repo)
+    except subprocess.CalledProcessError:
+        if dry_run:
+            print(json.dumps({"repository": repo, "action": "read-unavailable", "ruleset": desired}, indent=2, sort_keys=True))
+            return
+        raise
+    current = json.loads(current_raw.stdout) if current_raw else None
+    equal = current is not None and _matches_ruleset(current, desired)
+    operation = "create" if current is None else ("no-op" if equal else "update")
+    if action == "plan" or dry_run:
+        print(json.dumps({"repository": repo, "action": operation, "ruleset": desired}, indent=2, sort_keys=True))
         return
     if action == "check":
-        repository_policy.check_live(current, desired, full_name)
-        print(f"{label} matches live ruleset for {full_name}")
+        if not equal:
+            raise ValueError(f"canonical SDLC ruleset is {operation} on {repo}; run `sdlc ruleset apply --repo {repo}`")
+        print(f"canonical ruleset matches for {repo}")
         return
-    if action == "apply":
-        if current is None:
-            subprocess.run(["gh", "api", "--method", "POST", f"repos/{full_name}/rulesets", "--input", "-"], input=json.dumps(desired), text=True, check=True, capture_output=True)
-        elif repository_policy.normalize_ruleset(current, desired) != repository_policy.normalize_ruleset(desired, desired):
-            subprocess.run(["gh", "api", "--method", "PUT", f"repos/{full_name}/rulesets/{current['id']}", "--input", "-"], input=json.dumps(desired), text=True, check=True, capture_output=True)
-        verify, _ = ruleset_api.read_rulesets(full_name, include_parents=False)
-        verified = [item for item in verify if item.get("name") == repository_policy.RULESET_NAME and item.get("source", full_name) == full_name]
-        if len(verified) != 1 or repository_policy.normalize_ruleset(verified[0], desired) != repository_policy.normalize_ruleset(desired, desired):
-            raise ValueError(f"read-after-write verification failed; rerun `sdlc {label} plan --repo {full_name}`")
-        print(f"{label} applied and verified for {full_name}")
+    if not equal:
+        endpoint = f"repos/{repo}/rulesets" if current is None else f"repos/{repo}/rulesets/{current['id']}"
+        method = "POST" if current is None else "PUT"
+        subprocess.run(["gh", "api", "--method", method, endpoint, "--input", "-"], input=json.dumps(desired), text=True, check=True)
+    ruleset_command("check", repo)
 
 
-def policy_command(action, repo=None):
-    full_name, branch = policy_context(repo)
-    _ruleset_command(action, full_name, branch, lambda _: repository_policy.render_policy(policy_config(), branch), "policy")
-
-
-def ruleset_command(action, repo):
-    full_name, branch = policy_context(repo)
-
-    def render(current):
-        return repository_policy.render_canonical_policy(branch, include_policy=True)
-
-    _ruleset_command(action, full_name, branch, render, "ruleset")
+def install_adapters(check=False):
+    lock = json.loads((ROOT / "flake.lock").read_text())
+    inputs = lock["nodes"]["root"]["inputs"]
+    if "sdlc" not in inputs:
+        if check:
+            print("SDLC self-onboarding is deferred")
+            return
+        raise ValueError("add a pinned sdlc input before generating consumer adapters")
+    node = inputs["sdlc"]
+    if isinstance(node, list):
+        node = node[0]
+    revision = lock["nodes"][node]["locked"].get("rev")
+    if not revision or not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise ValueError("flake.lock must pin SDLC to a full GitHub commit")
+    workflow = f"""# Generated by sdlc install; do not edit.\nname: SDLC CI\non:\n  pull_request:\n  merge_group:\n  push:\n    branches: [main, master]\npermissions:\n  contents: read\njobs:\n  sdlc:\n    uses: blogle/sdlc/.github/workflows/ci.yml@{revision}\n"""
+    release_workflow = f"""# Generated by sdlc install; do not edit.\nname: SDLC release\non:\n  pull_request_target:\n    types: [opened, synchronize, reopened, labeled, unlabeled]\n  push:\n    branches: [main, master]\n  schedule:\n    - cron: '17 * * * *'\n  workflow_dispatch:\npermissions:\n  contents: read\n  pull-requests: read\njobs:\n  release:\n    uses: blogle/sdlc/.github/workflows/release.yml@{revision}\n    secrets: inherit\n"""
+    generated = {
+        ".github/workflows/sdlc.yml": workflow,
+        ".github/workflows/sdlc-release.yml": release_workflow,
+        ".mergify.yml": (CONTRACT_ROOT / ".mergify.yml").read_text(),
+        "renovate.json": json.dumps({"$schema": "https://docs.renovatebot.com/renovate-schema.json", "extends": ["github>blogle/sdlc#v1"]}, indent=2) + "\n",
+    }
+    mismatches = []
+    for relative, content in generated.items():
+        path = ROOT / relative
+        if not path.exists() or path.read_text() != content:
+            mismatches.append(relative)
+            if not check:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content)
+    if check and mismatches:
+        raise ValueError("generated SDLC adapters are stale: " + ", ".join(mismatches))
+    if not check:
+        (ROOT / ".changes").mkdir(exist_ok=True)
+    print("SDLC adapters match the locked contract" if check else f"generated SDLC adapters for {revision}")
 
 
 def main():
     parser = argparse.ArgumentParser(prog="sdlc")
     commands = parser.add_subparsers(dest="command", required=True)
     changes = commands.add_parser("changelog")
-    changes.add_argument("action", choices=["check", "plan", "finalize"])
+    changes.add_argument("action", choices=["check", "plan", "finalize", "generate"])
     changes.add_argument("--version")
     changes.add_argument("--date")
     changes.add_argument("--json", action="store_true")
@@ -325,36 +351,20 @@ def main():
         operation.add_argument("--app-slug", default="")
     release_commands.choices["gate"].add_argument("--historical-merged-sha", default="")
     release_commands.choices["merge"].add_argument("--expected-head")
-    for action in ("enable", "disable", "status"):
-        operation = release_commands.add_parser(action)
-        operation.add_argument("--repo", required=True)
     publish = release_commands.add_parser("publish")
     publish.add_argument("merged_sha")
     reconcile = release_commands.add_parser("reconcile")
     reconcile.add_argument("--repo")
-    receipts = release_commands.add_parser("receipts")
-    receipts.add_argument("--ledger", required=True)
-    receipts.add_argument("--receipts", required=True)
-    receipts.add_argument("--version", required=True)
-    receipts.add_argument("--merged-sha", required=True)
-    receipts.add_argument("--source-sha", required=True)
-    ledger = release_commands.add_parser("ledger")
-    ledger.add_argument("action", choices=["artifact", "published"])
-    ledger.add_argument("--ledger", required=True)
-    ledger.add_argument("--commit")
-    ledger.add_argument("--name")
-    ledger.add_argument("--digest")
-    policy = commands.add_parser("policy")
-    policy.add_argument("action", choices=["plan", "apply", "check"])
-    policy.add_argument("--repo", help="GitHub OWNER/NAME (defaults to this checkout's origin)")
     ruleset = commands.add_parser("ruleset")
-    ruleset.add_argument("action", choices=["plan", "apply", "check"])
-    ruleset.add_argument("--repo", required=True, help="GitHub OWNER/NAME")
-    onboard = commands.add_parser("onboard")
-    onboard.add_argument("--repo", required=True, help="GitHub OWNER/NAME")
-    onboard.add_argument("--app-id")
-    onboard.add_argument("--private-key-file")
-    onboard.add_argument("--dry-run", action="store_true")
+    ruleset_commands = ruleset.add_subparsers(dest="ruleset_action", required=True)
+    for action in ("plan", "apply", "check"):
+        operation = ruleset_commands.add_parser(action)
+        operation.add_argument("--repo", required=True, help="GitHub OWNER/NAME")
+    enable = commands.add_parser("enable")
+    enable.add_argument("--repo", required=True)
+    enable.add_argument("--dry-run", action="store_true")
+    install = commands.add_parser("install")
+    install.add_argument("--check", action="store_true")
     args = parser.parse_args()
     try:
         if args.command == "changelog":
@@ -364,7 +374,7 @@ def main():
             if args.json:
                 print(json.dumps({"release": manifest is not None, "manifest": manifest}, sort_keys=True))
             elif manifest:
-                print(f"generated release candidate {manifest['version']} from {manifest['source_main_sha']}")
+                print(f"generated release candidate {manifest['version']} from {manifest['source_sha']}")
             else:
                 print("no changelog fragments; no release")
         elif args.command == "release" and args.release_action in ("gate", "merge"):
@@ -377,29 +387,12 @@ def main():
         elif args.command == "release" and args.release_action == "reconcile":
             import release_reconcile
             return release_reconcile.reconcile(args.repo)
-        elif args.command == "release" and args.release_action == "receipts":
-            import release_publisher
-            release_publisher.record_receipts(
-                Path(args.ledger), Path(args.receipts), args.version, args.merged_sha, args.source_sha
-            )
-        elif args.command == "release" and args.release_action == "ledger":
-            import release_publisher
-            if args.action == "artifact":
-                if not args.commit or not args.name or not args.digest:
-                    raise ValueError("ledger artifact requires --commit, --name, and --digest")
-                release_publisher.record_artifact(Path(args.ledger), args.commit, args.name, args.digest)
-            else:
-                release_publisher.mark_published(Path(args.ledger))
-        elif args.command == "onboard":
-            import onboard as bootstrap
-            bootstrap.onboard(args.repo, args.app_id, args.private_key_file, dry_run=args.dry_run)
         elif args.command == "ruleset":
-            ruleset_command(args.action, args.repo)
-        elif args.command == "release" and args.release_action in ("enable", "disable", "status"):
-            import onboard as bootstrap
-            getattr(bootstrap, f"release_{args.release_action}")(args.repo)
-        elif args.command == "policy":
-            policy_command(args.action, args.repo)
+            ruleset_command(args.ruleset_action, args.repo)
+        elif args.command == "enable":
+            ruleset_command("apply", args.repo, dry_run=args.dry_run)
+        elif args.command == "install":
+            install_adapters(check=args.check)
     except (ValueError, subprocess.CalledProcessError) as exc:
         print(f"sdlc: {exc}", file=sys.stderr)
         return 1

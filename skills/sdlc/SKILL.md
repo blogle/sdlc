@@ -1,50 +1,47 @@
 ---
 name: sdlc
-description: Follow the shared SDLC CI, Mergify integration, and release protocol in consuming repositories.
+description: Use the pinned SDLC contract for shared CI, policy, and rolling releases.
 ---
 
-# Shared SDLC for consuming repositories
+# Shared SDLC contract
 
-Use this skill whenever changing CI, build/test contracts, Mergify policy, changelog fragments, or release workflows in a repository that consumes `blogle/sdlc`.
+The consumer's `flake.lock` selects SDLC. The consumer owns only its Nix
+`checks.<system>.sdlc-fast`, `checks.<system>.sdlc-verify`, and
+`apps.<system>.sdlc-publish` outputs. Shared workflows own CI stages, runners,
+Nix setup, caching, rulesets, Mergify policy, and release orchestration.
 
-## Ownership and lifecycle
+## Development and CI
 
-The project owns **what** can be built, tested, and published: Nix packages/checks and a narrow publication hook. Consumer-local `ci.nix` groups project derivations for `pr-fast` and `candidate`; release publication is a shared workflow calling the consumer's own just recipe. The pinned SDLC flake library maps those native attrsets to `hydraJobs`; Hestia's matrix action owns fan-out/cache behavior. No part of a consumer build assumes the SDLC repository checkout is present.
+- Use `nix develop` and the consumer's `justfile` for local work.
+- Fast checks gate admission to Mergify. Full verification runs on Mergify's
+  synthetic candidate and gates queue merge.
+- Use the generated SDLC workflow callers and Mergify snapshot. After changing
+  the SDLC pin, run `nix run .#sdlc -- install` and commit regenerated adapters
+  with `flake.lock`. `nix run .#sdlc -- install --check` verifies them.
+- Keep public check names stable: `sdlc / check`, `sdlc / verify`,
+  `sdlc / policy`, and `sdlc / release-gate`.
+- Mergify queues only after `sdlc / check` and integration authorization. It
+  requires `sdlc / verify` on the candidate before squash merge. `release`
+  labeled PRs are excluded from Mergify.
 
-1. **Local/dev:** enter the project environment with `nix develop`, then use its `justfile` as the human/agent interface (`just --list`, `just check`, and project-specific recipes). Never recommend `nix --option build-users-group "" develop`.
-2. **`pr-fast`:** cheap admission checks only—format, lint, focused/unit tests, contract validation, and other fast feedback. Put expensive builds, broad/integration suites, image builds, and release work in `candidate`, not ordinary PR admission.
-3. **Mergify candidate/batch:** Workflow Automation is used only as a thin auto-enqueue trigger; Merge Queue performs speculative candidate validation/batching and merging. Merge Protections remain disabled because GitHub rulesets are authoritative. The auto-enqueue conditions mirror queue admission: base `main` or `master`, successful `sdlc / pr-fast`, and exactly one authority mode: `integration:auto` without review, or `integration:review` without auto plus `#approved-reviews-by >= 1`. `merge_conditions` requires only `sdlc / candidate`. Queue command restrictions allow write-permission senders or `anvil-daemon[bot]` to request queueing as a manual escape hatch, but queue conditions authorize admission. Mergify batches only optimize candidate validation; stacks remain dependency/order relationships. A batch never defines a release. The candidate stage is the expensive integration/build gate; a passing source-branch check alone does not replace it.
-   Reusable workflow checks are nested and caller/callee-prefixed. Emit stable required contexts using ordinary caller-local jobs named exactly `sdlc / pr-fast` and `sdlc / candidate`. Each must `needs` its reusable job, use `if: always()`, and fail unless `needs.<job>.result == 'success'`. Candidate uses the same merge-group/Mergify synthetic-PR condition as the reusable candidate job. Canonical Mergify requires these stable contexts.
-4. **Integration authorization:** `integration:auto` means the task has delegated integration authority. `integration:review` means implement autonomously, open/update the PR, then stop and wait for a GitHub approval of the exact current reviewable head. Eligible auto PRs are enqueued without a comment or checkbox; review remains blocked/pending until exact-head approval and all queue conditions pass. Queue commands/controls are escape hatches, not authorization: labels, GitHub approval, and checks are. GitHub stale-review dismissal invalidates review authorization after any head change. Never upgrade your own authority or change review to auto.
-5. **Squash merge:** Mergify merges each PR as one squash commit, keeping linear main history. Do not require or perform a zero-commits-behind-main/rebase treadmill. Stacks describe dependency/order relationships between PRs; batches group independent queue work for combined candidate testing. They are orthogonal.
-6. **Release/publication:** each merged PR with one or more release fragments may produce one release; each merged PR without fragments produces none. Release granularity is independent of Mergify batches. Publish/promote the immutable artifact identity validated for that PR. Do not rerun general CI or rebuild it on main. Registry-specific promotion belongs in the project's explicit publication hook.
+## Changes and releases
 
-## Contract and tooling
+- Add a unique `.changes/<topic>.json` fragment only for externally meaningful
+  changes. Include `type`, `semver` (`patch`, `minor`, or `major`), and `summary`.
+- The updater coalesces outstanding fragments into one replaceable
+  `sdlc/release-next` PR and applies the `release` label. Do not edit its
+  generated changelog or manifest by hand.
+- The release gate validates the exact base/head test-merge commit. GitHub's
+  required check prevents a base advance from reusing an earlier gate result.
+- Publication uses the actual squash-merged release SHA. Consumer hooks must
+  verify immutable registry digests on retry and write receipts to
+  `$SDLC_RELEASE_RECEIPTS`.
+- Never add a ruleset bypass for the release App. GitHub's protected merge
+  enforces the required checks.
 
-Same-owner consumers use `extends: sdlc` in `.mergify.yml` (supported for personal GitHub owners as well as organizations). The import is live from SDLC's default branch, not pinned to the consumer's runtime SDLC release. The `sdlc` source repo must have Mergify installed and remain visible to consumers; treat edits to its `.mergify.yml` as fleet-wide policy changes. For cross-owner repos, do not assume the bare name imports from blogle.
+## Validate
 
-Read consumer-local `ci.nix` and the v1 protocol docs before changing stage wiring. Preserve `schemaVersion = 1`; map the project's actual fast and candidate derivations. Do not silently skip or replace a shared Hestia job group. Release publication is a consumer-owned `just release-publish <version>` recipe and must promote candidate-validated artifacts only. If the target contract genuinely changes, update its versioned documentation and fixtures.
-
-Use the consumer's Nix-native checks directly through its justfile. Hestia evaluates the declared `hydraJobs` groups using nix-eval-jobs and fans out their derivations, preserving native `meta.hestia.group` and `meta.hestia.os`; do not aggregate independent checks into one opaque shell target. Use `sdlc changelog check|plan|finalize` for consumer-local release-fragment operations. Consumer just recipes are the local interface; never call the shared repository's justfile.
-
-Install the maintained shared skills with the consumer's `just skills` recipe. It uses Vercel's official `skills` CLI from the pinned Nix dev shell, targeting OpenCode and resolving the compatible `blogle/sdlc` `v1` source plus Mergify's canonical CLI repository. Refresh installed sources using the CLI's native `skills update -p -y`; do not copy, sync, or write custom skill-install logic.
-
-Nix and cache expectations are centralized. Prefer `nix develop`; the consumer flake should normally set `nixpkgs.follows = "sdlc/nixpkgs"`. CI uses Hestia's repository-scoped GitHub Actions cache; it is not a durable artifact store or cross-repo cache. Misses/evictions affect performance only. Do not introduce other binary caches in v1 or treat Hestia as artifact provenance.
-
-Treat repository rulesets as infrastructure-as-code. The small `.github/repository-policy.json` declares extra checks and `require_policy_check` (defaults false). First onboarding PRs set it false and add the version-pinned read-only caller. CI permits a distinct `FIRST-ONBOARDING` outcome only when the base has no declaration, the proposal is valid, the stable `sdlc / policy` wrapper exists, and a read-only API fetch confirms no live canonical ruleset. This interim success does **not** prove live protection. If a live canonical ruleset exists without a base declaration, or an already-onboarded PR deletes the declaration/ruleset, fail closed. After the first PR merges, authenticate `gh` as a repository administrator, run `nix develop -c sdlc policy plan --repo OWNER/NAME`, `nix develop -c sdlc policy apply --repo OWNER/NAME`, then `nix develop -c sdlc policy check --repo OWNER/NAME` to establish and verify baseline protection. Next, use a reviewed PR to set `require_policy_check: true`; live drift for that PR is compared to the base declaration, so the requirement is not applied before review. After merge run authenticated `policy apply` again to add the status context as required, then verify with `policy check`. The caller is already merged and reliably emits the context. Apply is idempotent and reads back its write. No policy App or Actions write secret is used. Unrelated/legacy rulesets are never changed; duplicates require manual inspection. For dotfiles' legacy rulesets, review effective overlap and migrate separately.
-
-On a policy PR the proposed declaration is schema-validated but live drift compares against the base-branch declaration. The reusable workflow checks out the caller, then invokes the self-referenced SDLC composite action (`uses: $/actions/repository-policy`) so its script always comes from the exact pinned SDLC revision; consumers do not vendor policy implementation files. REST list pages discover ruleset IDs; fetch full details by ID before comparing/applying/verifying. Once merged, run the exact `policy apply` command. A missing/broken ruleset fails closed and reports plan/apply repair commands. The checker validates effective enforcement, target, required status checks, PR/squash/stale-review, deletion/force-push, and visible bypass actors. GitHub may redact bypass details; then the check warns that validation is partial while still checking every field visible to its read-only token. Other applicable rulesets are reported as unmanaged; review their effects manually. Public repos can fall back to anonymous REST reads; private repos need a token able to read rulesets, otherwise the check fails closed. The renderer uses `~DEFAULT_BRANCH` for both `main` and `master`; use a declaration override only for an intentional non-default target. Candidate remains out of source-PR ruleset checks.
-
-GitHub rulesets own PR-only, squash-only, stale-review dismissal, status freshness, stable fast-check, deletion, and non-fast-forward protections. Workflow Automation only triggers enqueueing; Merge Queue owns queue admission, candidate batching/validation, and merge execution. Merge Protections remain disabled. Mergify automatically incorporates supported GitHub protections into queue behavior.
-
-## Changelog fragments
-
-Add `.changes/<topic>.json` only when a change is externally meaningful/release-worthy. CI, docs, tests, and internal refactors normally need no fragment. Fragment metadata (`type`, `semver` patch/minor/major, `summary`) determines category and bump intent. PRs never directly edit `CHANGELOG.md` to add individual release notes. Fragments are ephemeral: finalization for one merged PR renders/compacts only that PR's fragments into `CHANGELOG.md` and deletes them; Git history is their archive. No fragments means no release; a Mergify batch with several PRs still yields per-PR releases.
-
-For deployable projects, candidate validation publishes an immutable artifact identity (such as an OCI digest) using that repository's registry. Release-publish promotes/re-tags that exact identity; the Nix binary cache is not provenance. Do not add a registry interface to the shared contract. Protected rolling release finalization is proven: an ordinary App-owned release PR is validated at its exact head, rechecked against protected `main`, squash-merged without a bypass, and published from the actual merged SHA. One `sdlc onboard --repo OWNER/NAME` command is the idempotent admin cutover: it accepts or securely prompts for local App credentials, performs prepare-only workflow/CI/artifact/permission/App/secret/policy preflight, applies and verifies the canonical policy, then enables the existing activation variable only after readiness succeeds. `--dry-run` never writes; optional status/disable commands are conveniences. This is not work for coding agents. Nexus currently lacks Actions vars/secrets read/write, so fleet-wide hands-off onboarding requires a narrow authorized gateway. Never pass private keys to coding agents and never claim gateway automation before it exists. Issue #9 is historical, not a blocker for this protected path.
-
-Renovate consumers extend `github>blogle/sdlc#v1`; runtime Nix/workflow references pin a concrete `v1.x.y`. Renovate groups those runtime updates and does not automerge them by default. A consumer's `flake.lock` changes only when it accepts the proposed update.
-
-## Validate and report
-
-Before finishing, run `nix develop -c just check` (or the consuming repo's documented equivalent), then `just ci-fast` / `nix build --no-link .#checks.x86_64-linux.ci-pr-fast`; run candidate-equivalent checks locally when practical without moving expensive work into admission. Validate changed contract/changelog data and do not claim a check that was not run. In the PR, summarize intent, list exact verification commands/results, call out deferred work, and leave integration at the task's granted policy. For `integration:review`, stop for authorization; do not queue or merge yourself.
+Before handing off, run `nix develop -c just check`, the consumer's fast stage,
+and its candidate-equivalent checks when practical. Validate changed workflow
+YAML with `actionlint`. Report exactly which checks ran and any hosted GitHub
+steps still needed for the canary.
