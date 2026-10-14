@@ -105,8 +105,8 @@ class ReleaseLifecycleTests(unittest.TestCase):
             ]
             protection = {
                 "classic": False,
-                "contexts": ["sdlc / check", "sdlc / policy"],
-                "check_apps": {"sdlc / check": GITHUB_ACTIONS_APP_ID, "sdlc / policy": GITHUB_ACTIONS_APP_ID},
+                "contexts": ["sdlc / check", "sdlc / policy", "Mergify Merge Protections"],
+                "check_apps": {"sdlc / check": GITHUB_ACTIONS_APP_ID, "sdlc / policy": GITHUB_ACTIONS_APP_ID, "Mergify Merge Protections": 10562},
                 "bypass_actors": [],
                 "rulesets": [{"id": 7, "name": "SDLC default branch", "enforcement": "active", "updated_at": "now"}],
                 "canonical_ruleset_matches": True,
@@ -125,8 +125,9 @@ class ReleaseLifecycleTests(unittest.TestCase):
                 protection=protection,
             )
             release_check = Check("sdlc / release-gate", "success", candidate_sha, "release-bot", 3, "2026-10-14T00:00:02Z")
+            merge_protection = Check("Mergify Merge Protections", "success", candidate_sha, "mergify", 4, "2026-10-14T00:00:03Z", 10562)
             api = StatefulReleaseApi(
-                "blogle/example", source_sha, pr, required_checks + [release_check], protection, actual_merge_sha
+                "blogle/example", source_sha, pr, required_checks + [release_check, merge_protection], protection, actual_merge_sha
             )
             result = release_gate.merge_release_pr(
                 api=api,

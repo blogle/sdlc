@@ -47,6 +47,7 @@ class SharedCiContractTests(unittest.TestCase):
         ruleset = (ROOT / "rulesets/default-branch.json").read_text()
         self.assertIn('"context": "sdlc / check", "integration_id": 15368', ruleset)
         self.assertIn('"context": "sdlc / policy", "integration_id": 15368', ruleset)
+        self.assertIn('"context": "Mergify Merge Protections", "integration_id": 10562', ruleset)
         self.assertNotIn('"context": "sdlc / release-gate"', ruleset)
         self.assertNotIn("IS_RELEASE", (ROOT / ".github/workflows/ci.yml").read_text())
 
@@ -55,3 +56,10 @@ class SharedCiContractTests(unittest.TestCase):
         self.assertIn("check-success = @github-actions/sdlc / check", policy)
         self.assertIn("check-success = @github-actions/sdlc / verify", policy)
         self.assertIn("label != release", policy)
+
+    def test_required_mergify_protection_blocks_direct_merge_routes(self):
+        policy = (ROOT / ".mergify.yml").read_text()
+        self.assertIn("merge_protections:", policy)
+        self.assertIn("queue-name = validated candidates", policy)
+        self.assertIn("check-success = @mergify/Mergify Merge Queue", policy)
+        self.assertIn("check-success = @sdlc-release/sdlc / release-gate", policy)

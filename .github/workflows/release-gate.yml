@@ -96,6 +96,12 @@ jobs:
               -f status=completed -f conclusion="$conclusion" \
               -f 'output[title]=Release gate' -f 'output[summary]=Release candidate validation completed.'
             [[ "$result" -eq 0 ]] || exit "$result"
+            for ((attempt = 1; attempt <= 24; attempt++)); do
+              merge_protection="$(gh api "repos/$GITHUB_REPOSITORY/commits/$head_sha/check-runs?per_page=100" --jq '[.check_runs[] | select(.name == "Mergify Merge Protections" and .head_sha == "'"$head_sha"'" and .app.slug == "mergify")] | sort_by(.started_at) | last | [.status // "", .conclusion // ""] | @tsv')"
+              [[ "$merge_protection" == $'completed\tsuccess' ]] && break
+              sleep 5
+            done
+            [[ "$merge_protection" == $'completed\tsuccess' ]] || { echo 'Mergify Merge Protections did not pass for the exact release head' >&2; exit 1; }
           done
 
   base-refresh:

@@ -29,7 +29,14 @@ verify_release_tree = coordinator.verify_release_tree
 RELEASE_BRANCH = "sdlc/release-next"
 RELEASE_CHECK = "sdlc / release-gate"
 GITHUB_ACTIONS_APP_ID = 15368
-REQUIRED_CHECKS = ("sdlc / check", "sdlc / policy")
+MERGIFY_APP_ID = 10562
+REQUIRED_CHECK_APPS = {
+    "sdlc / check": GITHUB_ACTIONS_APP_ID,
+    "sdlc / policy": GITHUB_ACTIONS_APP_ID,
+    "Mergify Merge Protections": MERGIFY_APP_ID,
+}
+REQUIRED_CHECKS = tuple(REQUIRED_CHECK_APPS)
+RELEASE_GATE_CHECKS = ("sdlc / check", "sdlc / policy")
 MANIFEST_PATH = ".sdlc/release.json"
 FRAGMENT_PREFIX = ".changes/"
 FRAGMENT_SUFFIX = ".json"
@@ -192,10 +199,10 @@ def verify_protection(protection: Mapping[str, Any], required_checks: Iterable[s
     check_apps = protection.get("check_apps", {})
     wrong_apps = sorted(
         name for name in required_checks
-        if check_apps.get(name) != GITHUB_ACTIONS_APP_ID
+        if check_apps.get(name) != REQUIRED_CHECK_APPS.get(name)
     )
     if wrong_apps:
-        raise GateError(f"protected required checks are not bound to GitHub Actions: {wrong_apps}")
+        raise GateError(f"protected required checks are not bound to their trusted publishers: {wrong_apps}")
 
 
 def _protection(repo: str, branch: str) -> Mapping[str, Any]:
@@ -366,8 +373,8 @@ def evaluate_release_gate(*, pr: PullRequest, authenticated_login: str, app_slug
     verify_protection(protection)
     if parent_sha != main_sha:
         raise GateError("release head parent is not current main")
-    _required_check(checks, "sdlc / check", pr.head_sha, app_id=GITHUB_ACTIONS_APP_ID)
-    _required_check(checks, "sdlc / policy", pr.head_sha, app_id=GITHUB_ACTIONS_APP_ID)
+    for name in RELEASE_GATE_CHECKS:
+        _required_check(checks, name, pr.head_sha, app_id=REQUIRED_CHECK_APPS[name])
     if manifest is None:
         raise GateError("release manifest is required")
     verify_candidate(main_sha, pr.head_sha, manifest, planner=planner)
@@ -415,8 +422,8 @@ def merge_release_pr(*, api: GithubMergeApi, pr_number: int, expected_head_sha: 
         raise GateError("release head parent is not current main")
     verify_protection(api.protection())
     checks = api.checks(expected_head_sha)
-    _required_check(checks, "sdlc / check", expected_head_sha, app_id=GITHUB_ACTIONS_APP_ID)
-    _required_check(checks, "sdlc / policy", expected_head_sha, app_id=GITHUB_ACTIONS_APP_ID)
+    for name in REQUIRED_CHECKS:
+        _required_check(checks, name, expected_head_sha, app_id=REQUIRED_CHECK_APPS[name])
     _required_check(checks, RELEASE_CHECK, expected_head_sha, api.app_slug)
     return api.merge(pr_number, sha=expected_head_sha, merge_method="squash")
 
@@ -440,8 +447,8 @@ def _gate_command(args: argparse.Namespace) -> int:
             raise GateError("historical squash merge does not match manifest source_main_sha")
         verify_protection(_protection(args.repo, repo["default_branch"]))
         historical_checks = _checks(args.repo, pr.head_sha)
-        _required_check(historical_checks, "sdlc / check", pr.head_sha, app_id=GITHUB_ACTIONS_APP_ID)
-        _required_check(historical_checks, "sdlc / policy", pr.head_sha, app_id=GITHUB_ACTIONS_APP_ID)
+        for name in REQUIRED_CHECKS:
+            _required_check(historical_checks, name, pr.head_sha, app_id=REQUIRED_CHECK_APPS[name])
         _required_check(historical_checks, RELEASE_CHECK, pr.head_sha, slug)
         verify_candidate(source_sha, args.historical_merged_sha, manifest)
         return 0

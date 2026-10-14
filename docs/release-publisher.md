@@ -5,10 +5,11 @@ This is the publisher-side contract for the rolling-release architecture in
 `blogle/sdlc` as ruleset
 [24821903](https://github.com/blogle/sdlc/rules/24821903), with squash-only
 merges, required `sdlc / check` and `sdlc / policy` contexts bound to the
-GitHub Actions app, non-strict freshness, and no bypass actors. Mergify
-requires `sdlc / verify` for queue candidates; it is intentionally not a
-global PR-head requirement. The release gate is an App-owned check used only
-for the rolling release candidate.
+GitHub Actions app, required `Mergify Merge Protections` bound to Mergify,
+non-strict freshness, and no bypass actors. Mergify requires `sdlc / verify`
+for queue candidates; it is intentionally not a global PR-head requirement.
+The Mergify protection check blocks direct merges and routes rolling release
+PRs through the trusted App-owned release gate.
 
 The release GitHub App is `sdlc-release[bot]`. Actions reads its credentials
 from `SDLC_RELEASE_APP_ID` and `SDLC_RELEASE_APP_PRIVATE_KEY`, and verifies

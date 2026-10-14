@@ -14,8 +14,8 @@ from src.sdlc import generated_tree_digest
 
 PROTECTION = {
     "classic": True,
-    "contexts": ["sdlc / check", "sdlc / policy"],
-    "check_apps": {"sdlc / check": 15368, "sdlc / policy": 15368},
+    "contexts": ["sdlc / check", "sdlc / policy", "Mergify Merge Protections"],
+    "check_apps": {"sdlc / check": 15368, "sdlc / policy": 15368, "Mergify Merge Protections": 10562},
     "bypass_actors": [],
     "rulesets": [{"id": 1, "name": "SDLC default branch", "enforcement": "active", "updated_at": "now", "bypass_actors": []}],
     "canonical_ruleset_matches": True,
@@ -84,7 +84,7 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertEqual(pr.head_type, "User")
         self.assertEqual(pr.author_login, "sdlc-release[bot]")
         self.assertEqual(pr.author_type, "Bot")
-        api = FakeApi("main", pr, [Check("sdlc / check", "success", "head", check_id=1, completed_at="2026-10-10T01:00:00Z", app_id=15368), Check("sdlc / policy", "success", "head", check_id=3, completed_at="2026-10-10T01:00:00Z", app_id=15368), Check("sdlc / release-gate", "success", "head", "sdlc-release", 2, "2026-10-10T01:00:00Z")], "sdlc-release")
+        api = FakeApi("main", pr, [Check("sdlc / check", "success", "head", check_id=1, completed_at="2026-10-10T01:00:00Z", app_id=15368), Check("sdlc / policy", "success", "head", check_id=3, completed_at="2026-10-10T01:00:00Z", app_id=15368), Check("Mergify Merge Protections", "success", "head", "mergify", 4, "2026-10-10T01:00:01Z", 10562), Check("sdlc / release-gate", "success", "head", "sdlc-release", 2, "2026-10-10T01:00:00Z")], "sdlc-release")
         merge_release_pr(api=api, pr_number=14, expected_head_sha="head", current_main_sha="main", release_bot_login="sdlc-release[bot]")
 
     def test_same_repository_release_pr_by_human_is_rejected(self):
@@ -120,6 +120,9 @@ class ReleaseGateTests(unittest.TestCase):
         checks = [Check("sdlc / check", "success", "head", check_id=1, completed_at="2026-10-10T01:00:00Z", app_id=7)]
         with self.assertRaisesRegex(GateError, "not successful"):
             release_gate._required_check(checks, "sdlc / check", "head", app_id=15368)
+        forged = [Check("Mergify Merge Protections", "success", "head", check_id=2, completed_at="2026-10-10T01:00:00Z", app_id=15368)]
+        with self.assertRaisesRegex(GateError, "not successful"):
+            release_gate._required_check(forged, "Mergify Merge Protections", "head", app_id=10562)
 
     def test_check_api_is_paginated_and_preserves_completion_metadata(self):
         response = json.dumps([{"total_count": 1, "check_runs": [{"name": "sdlc / check", "conclusion": "success", "head_sha": "head", "id": 7, "completed_at": "2026-10-10T01:00:00Z", "app": {"slug": "ci", "id": 15368}}]}])
@@ -193,8 +196,8 @@ class ReleaseGateTests(unittest.TestCase):
     def test_attestation_binds_zero_bypass_to_current_ruleset(self):
         protection = {
             "classic": False,
-            "contexts": ["sdlc / check", "sdlc / policy"],
-            "check_apps": {"sdlc / check": 15368, "sdlc / policy": 15368},
+            "contexts": ["sdlc / check", "sdlc / policy", "Mergify Merge Protections"],
+            "check_apps": {"sdlc / check": 15368, "sdlc / policy": 15368, "Mergify Merge Protections": 10562},
             "bypass_actors": [],
             "rulesets": [{"id": 7, "name": "SDLC default branch", "enforcement": "active", "updated_at": "now"}],
             "canonical_ruleset_matches": True,
@@ -206,8 +209,8 @@ class ReleaseGateTests(unittest.TestCase):
             verify_protection(protection)
 
     def test_required_contexts_must_be_pinned_to_github_actions(self):
-        protection = dict(PROTECTION, check_apps={"sdlc / check": 7, "sdlc / policy": 15368})
-        with self.assertRaisesRegex(GateError, "not bound to GitHub Actions"):
+        protection = dict(PROTECTION, check_apps={"sdlc / check": 7, "sdlc / policy": 15368, "Mergify Merge Protections": 10562})
+        with self.assertRaisesRegex(GateError, "not bound to their trusted publishers"):
             verify_protection(protection)
 
     def test_unrelated_active_ruleset_does_not_satisfy_release_protection(self):
@@ -300,12 +303,12 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertIsNone(api.merge_args)
 
     def test_merge_passes_expected_head_and_requires_app_owned_gate(self):
-        api = FakeApi("main", self.release_pr(), [Check("sdlc / check", "success", "head", check_id=1, completed_at="2026-10-10T01:00:00Z", app_id=15368), Check("sdlc / policy", "success", "head", check_id=3, completed_at="2026-10-10T01:00:00Z", app_id=15368), Check("sdlc / release-gate", "success", "head", "release-bot", 2, "2026-10-10T01:00:00Z")])
+        api = FakeApi("main", self.release_pr(), [Check("sdlc / check", "success", "head", check_id=1, completed_at="2026-10-10T01:00:00Z", app_id=15368), Check("sdlc / policy", "success", "head", check_id=3, completed_at="2026-10-10T01:00:00Z", app_id=15368), Check("Mergify Merge Protections", "success", "head", "mergify", 4, "2026-10-10T01:00:01Z", 10562), Check("sdlc / release-gate", "success", "head", "release-bot", 2, "2026-10-10T01:00:00Z")])
         merge_release_pr(api=api, pr_number=14, expected_head_sha="head", current_main_sha="main", release_bot_login="release-bot[bot]")
         self.assertEqual(api.merge_args, (14, {"sha": "head", "merge_method": "squash"}))
 
     def test_merge_rejects_same_named_check_from_another_app(self):
-        api = FakeApi("main", self.release_pr(), [Check("sdlc / check", "success", "head", check_id=1, completed_at="2026-10-10T01:00:00Z", app_id=15368), Check("sdlc / policy", "success", "head", check_id=3, completed_at="2026-10-10T01:00:00Z", app_id=15368), Check("sdlc / release-gate", "success", "head", "attacker", 2, "2026-10-10T01:00:00Z")])
+        api = FakeApi("main", self.release_pr(), [Check("sdlc / check", "success", "head", check_id=1, completed_at="2026-10-10T01:00:00Z", app_id=15368), Check("sdlc / policy", "success", "head", check_id=3, completed_at="2026-10-10T01:00:00Z", app_id=15368), Check("Mergify Merge Protections", "success", "head", "mergify", 4, "2026-10-10T01:00:01Z", 10562), Check("sdlc / release-gate", "success", "head", "attacker", 2, "2026-10-10T01:00:00Z")])
         with self.assertRaisesRegex(GateError, "App"):
             merge_release_pr(api=api, pr_number=14, expected_head_sha="head", current_main_sha="main", release_bot_login="release-bot[bot]")
 
@@ -328,6 +331,8 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertIn("SDLC_RULESET_ATTESTATION: ${{ vars.SDLC_RULESET_ATTESTATION }}", workflow)
         self.assertIn("check-runs?per_page=100", workflow)
         self.assertIn("sleep 10", workflow)
+        self.assertIn("Mergify Merge Protections", workflow)
+        self.assertIn("sleep 5", workflow)
 
 
 if __name__ == "__main__":
