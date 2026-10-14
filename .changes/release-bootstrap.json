@@ -1,0 +1,5 @@
+{
+  "type": "feature",
+  "semver": "minor",
+  "summary": "add idempotent release onboarding and activation preflight"
+}

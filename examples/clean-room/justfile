@@ -1,0 +1,13 @@
+set shell := ["bash", "-euo", "pipefail", "-c"]
+
+# A consumer-owned post-merge hook. The coordinator supplies identity context;
+# this fixture owns artifact production and records two immutable receipts.
+release-publish version:
+    test "{{version}}" = "${SDLC_RELEASE_VERSION}"
+    test -n "${SDLC_RELEASE_MERGED_SHA}"
+    test -n "${SDLC_RELEASE_SOURCE_SHA}"
+    test -n "${SDLC_RELEASE_RECEIPTS}"
+    mkdir -p .sdlc/clean-room-artifacts
+    printf 'anvil artifact %s\n' "{{version}}" > .sdlc/clean-room-artifacts/anvil.oci
+    printf 'sandbox artifact %s\n' "{{version}}" > .sdlc/clean-room-artifacts/sandbox.oci
+    anvil_digest=$(sha256sum .sdlc/clean-room-artifacts/anvil.oci | cut -d' ' -f1); sandbox_digest=$(sha256sum .sdlc/clean-room-artifacts/sandbox.oci | cut -d' ' -f1); jq -n --arg version "${SDLC_RELEASE_VERSION}" --arg merged "${SDLC_RELEASE_MERGED_SHA}" --arg source "${SDLC_RELEASE_SOURCE_SHA}" --arg anvil "sha256:${anvil_digest}" --arg sandbox "sha256:${sandbox_digest}" '{schema: 1, artifacts: [{name: "anvil", digest: $anvil, version: $version, merged_sha: $merged, source_main_sha: $source}, {name: "sandbox", digest: $sandbox, version: $version, merged_sha: $merged, source_main_sha: $source}]}' > "${SDLC_RELEASE_RECEIPTS}"

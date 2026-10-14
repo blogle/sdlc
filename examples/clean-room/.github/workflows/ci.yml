@@ -1,0 +1,12 @@
+name: SDLC CI
+on:
+  pull_request:
+  merge_group:
+  push:
+    branches: [main, master]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  sdlc:
+    uses: blogle/sdlc/.github/workflows/ci.yml@<PINNED_SHA>

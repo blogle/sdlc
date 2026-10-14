@@ -13,6 +13,7 @@ check:
     nix run nixpkgs#yq-go -- eval '.' .mergify.yml >/dev/null
     nix run nixpkgs#yq-go -- eval -e '.concurrency."cancel-in-progress" == false and (.concurrency | has("queue") | not)' .github/workflows/release-reconcile.yml >/dev/null
     nix run .#sdlc -- changelog check
+    nix-instantiate --eval --strict tests/consumer-contract.nix
     nix flake check --no-build
     nix build --no-link .#checks.x86_64-linux.test
 
@@ -28,10 +29,10 @@ test:
     python3 -m unittest discover -s tests -v
 
 ci-fast:
-    nix build --no-link .#checks.x86_64-linux.sdlc-fast
+    nix build --no-link .#ci.x86_64-linux.fast
 
 ci-candidate:
-    nix build --no-link .#checks.x86_64-linux.sdlc-verify
+    nix build --no-link .#ci.x86_64-linux.verify
 
 changelog *args:
     sdlc changelog {{args}}

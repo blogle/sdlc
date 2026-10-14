@@ -111,32 +111,55 @@ def _fragment_digest(entries):
     return hashlib.sha256(payload).hexdigest()
 
 
+def _sha256(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def generated_tree_digest(changelog_bytes, bindings):
+    """Digest the canonical generated records, excluding the manifest."""
+    records = [("CHANGELOG.md", "file", changelog_bytes)]
+    records.extend((item["path"], "deleted", item["blob_sha"].encode("ascii")) for item in bindings)
+    payload = b"".join(path.encode() + b"\0" + kind.encode() + b"\0" + content + b"\0" for path, kind, content in sorted(records))
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _generated_tree_digest(changelog_path, bindings):
+    return generated_tree_digest(changelog_path.read_bytes(), bindings)
+
+
 def verify_release_tree(source_sha, merged_sha, manifest):
-    """Verify the minimal source-bound release manifest and consumed fragments."""
-    if manifest.get("source_sha") != source_sha or not VERSION_RE.fullmatch(str(manifest.get("version", ""))):
-        raise ValueError("release manifest version or source SHA is invalid")
+    """Verify the actual merged tree against a reconstructible snapshot."""
+    if manifest.get("schema") != 1 or manifest.get("source_main_sha") != source_sha:
+        raise ValueError("release manifest schema or source SHA is invalid")
     if _git("rev-parse", f"{merged_sha}^") != source_sha:
-        raise ValueError("merged release commit parent does not equal source_sha")
-    paths = _git("ls-tree", "-r", "--name-only", source_sha, "--", ".changes").splitlines()
-    paths = sorted(path for path in paths if path.endswith(".json"))
-    if not paths:
-        raise ValueError("release source has no change fragments")
-    payload = b""
-    for path in paths:
-        content = subprocess.run(["git", "show", f"{source_sha}:{path}"], cwd=ROOT, check=True, capture_output=True).stdout
-        payload += path.encode() + b"\0" + content + b"\0"
+        raise ValueError("merged release commit parent does not equal source_main_sha")
+    fragments = manifest.get("fragments")
+    if not isinstance(fragments, list) or fragments != sorted(fragments, key=lambda item: item.get("path", "")):
+        raise ValueError("release manifest fragments must be sorted")
+    bindings = []
+    for item in fragments:
+        if not isinstance(item, dict) or set(("path", "blob_sha")) - set(item):
+            raise ValueError("release manifest fragment entries require path and blob_sha")
+        path, blob = item["path"], item["blob_sha"]
+        if _git("rev-parse", f"{source_sha}:{path}") != blob:
+            raise ValueError(f"source fragment blob does not match manifest: {path}")
         try:
             _git("rev-parse", f"{merged_sha}:{path}")
         except subprocess.CalledProcessError:
             pass
         else:
             raise ValueError(f"consumed fragment remains in merged tree: {path}")
-    if hashlib.sha256(payload).hexdigest() != manifest.get("fragments_sha256"):
-        raise ValueError("release fragment digest does not match source")
+        bindings.append(item)
     changed = set(_git("diff", "--name-only", source_sha, merged_sha).splitlines())
-    allowed = {"CHANGELOG.md", MANIFEST_PATH, *paths}
+    allowed = {"CHANGELOG.md", MANIFEST_PATH} | {item["path"] for item in bindings}
     if changed != allowed:
-        raise ValueError(f"merged release changed unexpected paths: {sorted(changed ^ allowed)}")
+        raise ValueError(f"merged release changed unexpected paths: {sorted(changed - allowed)}")
+    changelog = subprocess.run(["git", "show", f"{merged_sha}:CHANGELOG.md"], cwd=ROOT, check=True, capture_output=True).stdout
+    if manifest.get("changelog_sha256") != hashlib.sha256(changelog).hexdigest():
+        raise ValueError("merged CHANGELOG.md digest does not match manifest")
+    expected = generated_tree_digest(changelog, bindings)
+    if manifest.get("generated_tree") != expected:
+        raise ValueError("merged generated tree digest does not match manifest")
     return True
 
 
@@ -155,9 +178,23 @@ def release_snapshot(source_sha, date=None):
     bump = bump_intent(entries)
     version = _version_after(previous.get("version") if previous else None, bump)
     release_date = date or _git("show", "-s", "--format=%cs", source_sha)
-    fragment_hash = _fragment_digest(entries)
-    changelog("finalize", version=version, date=release_date, selected=[path.relative_to(ROOT).as_posix() for path, _ in entries])
-    manifest = {"version": version, "source_sha": source_sha, "fragments_sha256": fragment_hash}
+    bindings = []
+    for path, item in entries:
+        relative = path.relative_to(ROOT).as_posix()
+        blob = _git("rev-parse", f"{source_sha}:{relative}")
+        bindings.append({"path": relative, "blob_sha": blob, "type": item["type"], "semver": item["semver"], "summary": item["summary"]})
+    changelog("finalize", version=version, date=release_date, selected=[item["path"] for item in bindings])
+    changelog_path = ROOT / "CHANGELOG.md"
+    manifest = {
+        "schema": 1,
+        "version": version,
+        "prior_released_boundary": previous.get("source_main_sha") if previous else None,
+        "source_main_sha": source_sha,
+        "fragments": [{key: item[key] for key in ("path", "blob_sha")} for item in bindings],
+        "changelog_sha256": _sha256(changelog_path),
+        "generated_tree": _generated_tree_digest(changelog_path, bindings),
+        "publication": {"version": version, "source_main_sha": source_sha},
+    }
     manifest_path = ROOT / MANIFEST_PATH
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
@@ -305,11 +342,13 @@ def install_adapters(check=False):
     revision = lock["nodes"][node]["locked"].get("rev")
     if not revision or not re.fullmatch(r"[0-9a-f]{40}", revision):
         raise ValueError("flake.lock must pin SDLC to a full GitHub commit")
-    workflow = f"""# Generated by sdlc install; do not edit.\nname: SDLC CI\non:\n  pull_request:\n  merge_group:\n  push:\n    branches: [main, master]\npermissions:\n  contents: read\njobs:\n  sdlc:\n    uses: blogle/sdlc/.github/workflows/ci.yml@{revision}\n"""
+    workflow = f"""# Generated by sdlc install; do not edit.\nname: SDLC CI\non:\n  pull_request:\n  merge_group:\n  push:\n    branches: [main, master]\npermissions:\n  contents: read\n  actions: read\njobs:\n  sdlc:\n    uses: blogle/sdlc/.github/workflows/ci.yml@{revision}\n    with:\n      sdlc_ref: {revision}\n"""
     release_workflow = f"""# Generated by sdlc install; do not edit.\nname: SDLC release\non:\n  pull_request_target:\n    types: [opened, synchronize, reopened, labeled, unlabeled]\n  push:\n    branches: [main, master]\n  schedule:\n    - cron: '17 * * * *'\n  workflow_dispatch:\npermissions:\n  contents: read\n  pull-requests: read\njobs:\n  release:\n    uses: blogle/sdlc/.github/workflows/release.yml@{revision}\n    secrets: inherit\n"""
+    cache_gc_workflow = f"""# Generated by sdlc install; do not edit.\nname: SDLC cache maintenance\non:\n  schedule:\n    - cron: '23 3 * * *'\n  workflow_dispatch:\n    inputs:\n      dry_run:\n        description: Show cache entries selected for removal\n        type: boolean\n        default: false\npermissions:\n  contents: read\n  actions: write\njobs:\n  garbage-collect:\n    uses: blogle/sdlc/.github/workflows/hestia-gc.yml@{revision}\n    with:\n      dry_run: ${{{{ inputs.dry_run }}}}\n"""
     generated = {
         ".github/workflows/sdlc.yml": workflow,
         ".github/workflows/sdlc-release.yml": release_workflow,
+        ".github/workflows/sdlc-cache-gc.yml": cache_gc_workflow,
         ".mergify.yml": (CONTRACT_ROOT / ".mergify.yml").read_text(),
         "renovate.json": json.dumps({"$schema": "https://docs.renovatebot.com/renovate-schema.json", "extends": ["github>blogle/sdlc#v1"]}, indent=2) + "\n",
     }

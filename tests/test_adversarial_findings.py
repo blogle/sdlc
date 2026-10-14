@@ -25,11 +25,17 @@ class ConsumerLibraryTests(unittest.TestCase):
             pkgs = flake.inputs.nixpkgs.legacyPackages.x86_64-linux;
             check = pkgs.runCommand "contract-test" {} "touch $out";
             app = { type = "app"; program = "${check}/bin/publish"; };
-            result = flake.lib.mkConsumer { fast = check; verify = check; publish = app; };
+            result = flake.lib.mkConsumer {
+              fast = { fmt = check; clippy = check; };
+              verify = { tests = check; integration = check; };
+              publish = app;
+            };
           in
-            assert result.checks.sdlc-fast == check;
-            assert result.checks.sdlc-verify == check;
-            assert result.apps.sdlc-publish == app;
+            assert result.fast.fmt == check;
+            assert result.fast.clippy == check;
+            assert result.verify.tests == check;
+            assert result.verify.integration == check;
+            assert result.publish == app;
             true
         '''
         result = self._nix_eval(expression)
@@ -46,8 +52,8 @@ class ConsumerLibraryTests(unittest.TestCase):
           in %s
         '''
         expressions = (
-            base % 'builtins.deepSeq (lib.mkConsumer { fast = {}; verify = check; publish = app; }) true',
-            base % 'builtins.deepSeq (lib.mkConsumer { fast = check; verify = check; publish = app; extra = true; }) true',
+            base % 'builtins.deepSeq (lib.mkConsumer { fast = {}; verify = { test = check; }; publish = app; }) true',
+            base % 'builtins.deepSeq (lib.mkConsumer { fast = { fmt = check; }; verify = { test = check; }; publish = app; extra = true; }) true',
         )
         for expression in expressions:
             with self.subTest(expression=expression):

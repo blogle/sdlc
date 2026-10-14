@@ -57,8 +57,10 @@ jobs:
       - name: Verify and publish head-specific gate
         env:
           GH_TOKEN: ${{ steps.release-app.outputs.token }}
+          SDLC_RULESET_TOKEN: ${{ github.token }}
           RELEASE_BOT_LOGIN: ${{ vars.SDLC_RELEASE_BOT_LOGIN }}
           RELEASE_APP_SLUG: ${{ steps.release-app.outputs.app-slug }}
+          SDLC_RULESET_ATTESTATION: ${{ vars.SDLC_RULESET_ATTESTATION }}
           SDLC_FLAKE: ${{ inputs.sdlc_ref != '' && inputs.sdlc_ref || github.workspace }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
@@ -78,18 +80,11 @@ jobs:
             head_sha="$(jq -r '.head.sha' <<<"$pr_json")"
             [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]] || continue
             git fetch --no-tags origin "$head_sha"
-            merge_sha=""
-            check_state=""
             for ((attempt = 1; attempt <= 12; attempt++)); do
-              pr_json="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr_number")"
-              merge_sha="$(jq -r '.merge_commit_sha // empty' <<<"$pr_json")"
-              if [[ "$merge_sha" =~ ^[0-9a-f]{40}$ ]]; then
-                check_state="$(gh api "repos/$GITHUB_REPOSITORY/commits/$merge_sha/check-runs?per_page=100" --jq '[.check_runs[] | select(.name == "sdlc / check" and .head_sha == "'"$merge_sha"'")] | sort_by(.started_at) | last | [.status // "", .conclusion // ""] | @tsv')"
-                [[ "$check_state" == $'completed\tsuccess' ]] && break
-              fi
+              check_state="$(gh api "repos/$GITHUB_REPOSITORY/commits/$head_sha/check-runs?per_page=100" --jq '[.check_runs[] | select(.name == "sdlc / check" and .head_sha == "'"$head_sha"'")] | sort_by(.started_at) | last | [.status // "", .conclusion // ""] | @tsv')"
+              [[ "${check_state%%$'\t'*}" == completed ]] && break
               sleep 10
             done
-            [[ "$merge_sha" =~ ^[0-9a-f]{40}$ && "$check_state" == $'completed\tsuccess' ]] || { echo 'required sdlc / check did not pass on the release test-merge commit' >&2; exit 1; }
             set +e
             nix run "$SDLC_FLAKE"#sdlc -- release gate --repo "$GITHUB_REPOSITORY" --pr "$pr_number" --release-bot "$RELEASE_BOT_LOGIN" --app-slug "$RELEASE_APP_SLUG"
             result=$?
@@ -97,7 +92,7 @@ jobs:
             conclusion=failure
             [[ "$result" -eq 0 ]] && conclusion=success
             gh api --method POST "repos/$GITHUB_REPOSITORY/check-runs" \
-              -f name='sdlc / release-gate' -f head_sha="$merge_sha" \
+              -f name='sdlc / release-gate' -f head_sha="$head_sha" \
               -f status=completed -f conclusion="$conclusion" \
               -f 'output[title]=Release gate' -f 'output[summary]=Release candidate validation completed.'
             [[ "$result" -eq 0 ]] || exit "$result"
@@ -132,29 +127,23 @@ jobs:
       - name: Revalidate every open release head
         env:
           GH_TOKEN: ${{ steps.release-app.outputs.token }}
+          SDLC_RULESET_TOKEN: ${{ github.token }}
           RELEASE_BOT_LOGIN: ${{ vars.SDLC_RELEASE_BOT_LOGIN }}
           RELEASE_APP_SLUG: ${{ steps.release-app.outputs.app-slug }}
+          SDLC_RULESET_ATTESTATION: ${{ vars.SDLC_RULESET_ATTESTATION }}
           SDLC_FLAKE: ${{ inputs.sdlc_ref != '' && inputs.sdlc_ref || github.workspace }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
-          prs="$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&base=$DEFAULT_BRANCH&head=${GITHUB_REPOSITORY%%/*}:sdlc/release-next" --jq '.[].number')"
+            prs="$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&base=$DEFAULT_BRANCH&head=${GITHUB_REPOSITORY%%/*}:sdlc/release-next" --jq '.[].number')"
           for pr in $prs; do
-            pr_json="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr")"
-            head_sha="$(jq -r '.head.sha' <<<"$pr_json")"
+            head_sha="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq '.head.sha')"
             git fetch --no-tags origin "$head_sha"
-            merge_sha=""
-            check_state=""
             for ((attempt = 1; attempt <= 12; attempt++)); do
-              pr_json="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr")"
-              merge_sha="$(jq -r '.merge_commit_sha // empty' <<<"$pr_json")"
-              if [[ "$merge_sha" =~ ^[0-9a-f]{40}$ ]]; then
-                check_state="$(gh api "repos/$GITHUB_REPOSITORY/commits/$merge_sha/check-runs?per_page=100" --jq '[.check_runs[] | select(.name == "sdlc / check" and .head_sha == "'"$merge_sha"'")] | sort_by(.started_at) | last | [.status // "", .conclusion // ""] | @tsv')"
-                [[ "$check_state" == $'completed\tsuccess' ]] && break
-              fi
+              check_state="$(gh api "repos/$GITHUB_REPOSITORY/commits/$head_sha/check-runs?per_page=100" --jq '[.check_runs[] | select(.name == "sdlc / check" and .head_sha == "'"$head_sha"'")] | sort_by(.started_at) | last | [.status // "", .conclusion // ""] | @tsv')"
+              [[ "${check_state%%$'\t'*}" == completed ]] && break
               sleep 10
             done
-            [[ "$merge_sha" =~ ^[0-9a-f]{40}$ && "$check_state" == $'completed\tsuccess' ]] || { echo 'required sdlc / check did not pass on the release test-merge commit' >&2; exit 1; }
             set +e
             nix run "$SDLC_FLAKE"#sdlc -- release gate --repo "$GITHUB_REPOSITORY" --pr "$pr" --release-bot "$RELEASE_BOT_LOGIN" --app-slug "$RELEASE_APP_SLUG"
             result=$?
@@ -162,7 +151,7 @@ jobs:
             conclusion=failure
             [[ "$result" -eq 0 ]] && conclusion=success
             gh api --method POST "repos/$GITHUB_REPOSITORY/check-runs" \
-              -f name='sdlc / release-gate' -f head_sha="$merge_sha" \
+              -f name='sdlc / release-gate' -f head_sha="$head_sha" \
               -f status=completed -f conclusion="$conclusion" \
               -f 'output[title]=Release gate refresh' -f 'output[summary]=Release candidate revalidated after main advanced.'
             [[ "$result" -eq 0 ]] || exit "$result"

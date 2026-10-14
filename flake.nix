@@ -31,10 +31,13 @@
           sdlc = sdlcCli;
           skills = pkgs.skills;
           mergify-cli = mergify-nix.packages.${system}.mergify-cli;
+          nix-eval-jobs = pkgs.nix-eval-jobs;
         });
       apps = eachSystem (system: {
           default = { type = "app"; program = "${self.packages.${system}.sdlc}/bin/sdlc"; };
         });
+      ci = nixpkgs.lib.genAttrs [ "x86_64-linux" ] (system:
+        import ./ci.nix { inherit self system; });
       devShells = eachSystem (system:
         let pkgs = nixpkgs.legacyPackages.${system};
         in {
@@ -52,22 +55,22 @@
               python3 -m unittest discover -s tests -v
               touch $out
             '';
+            syntax = pkgs.runCommand "sdlc-syntax" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+              python3 - <<'PY'
+              from pathlib import Path
+              for path in Path("${./src}").glob("*.py"):
+                  compile(path.read_text(), str(path), "exec")
+              PY
+              touch $out
+            '';
+            config = pkgs.runCommand "sdlc-config" { nativeBuildInputs = [ pkgs.jq ]; } ''
+              jq empty ${./rulesets/default-branch.json}
+              jq empty ${./default.json}
+              touch $out
+            '';
         in {
           inherit test;
-          sdlc-fast = pkgs.runCommand "sdlc-fast" { nativeBuildInputs = [ pkgs.python3 ]; } ''
-            python3 - <<'PY'
-            from pathlib import Path
-            for name in ("src/sdlc.py", "src/release_gate.py", "src/release_publisher.py", "src/release_reconcile.py"):
-                path = Path("${./.}") / name
-                compile(path.read_text(), str(path), "exec")
-            PY
-            ${pkgs.jq}/bin/jq empty ${./rulesets/default-branch.json}
-            ${pkgs.jq}/bin/jq empty ${./default.json}
-            touch $out
-          '';
-          sdlc-verify = pkgs.runCommand "sdlc-verify" { buildInputs = [ test ]; } ''
-            touch $out
-          '';
+          inherit syntax config;
         });
     };
 }

@@ -1,0 +1,5 @@
+{
+  "type": "feature",
+  "semver": "patch",
+  "summary": "make onboarding a safe one-command policy and release cutover"
+}

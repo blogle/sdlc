@@ -1,64 +1,72 @@
 name: SDLC CI
 on:
   workflow_call:
+    inputs:
+      sdlc_ref:
+        type: string
+        required: true
   pull_request:
   merge_group:
   push:
     branches: [main, master]
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: sdlc-ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
   check:
-    name: check
+    if: >-
+      (github.event_name != 'pull_request' ||
+      !contains(github.event.pull_request.labels.*.name, 'release'))
+    uses: ./.github/workflows/stage.yml
+    with:
+      stage: check
+      sdlc_ref: ${{ inputs.sdlc_ref || github.sha }}
+  check-context:
+    name: sdlc / check
+    if: always() && github.event_name != 'merge_group'
+    needs: [check]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        if: >-
-          github.event_name != 'pull_request' ||
-          !contains(github.event.pull_request.labels.*.name, 'release')
-      - uses: DeterminateSystems/nix-installer-action@v23
-        if: >-
-          github.event_name != 'pull_request' ||
-          !contains(github.event.pull_request.labels.*.name, 'release')
-        with:
-          extra-conf: |
-            substituters = https://cache.nixos.org https://nix-community.cachix.org
-            trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=
-      - name: Fast application checks
-        if: >-
-          github.event_name != 'pull_request' ||
-          !contains(github.event.pull_request.labels.*.name, 'release')
-        run: nix build --no-link .#checks.x86_64-linux.sdlc-fast
-      - name: Release PR fast-check context
-        if: >-
-          github.event_name == 'pull_request' &&
-          contains(github.event.pull_request.labels.*.name, 'release')
-        run: echo 'Application checks are replaced by the generated-content release gate.'
+      - name: Require fast stage unless release-specific validation owns the PR
+        env:
+          STAGE_RESULT: ${{ needs.check.result }}
+          IS_RELEASE: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'release') }}
+        run: |
+          set -euo pipefail
+          if [[ "$IS_RELEASE" == true ]]; then
+            test "$STAGE_RESULT" = skipped
+          else
+            test "$STAGE_RESULT" = success
+          fi
   verify:
-    name: verify
     if: >-
       github.event_name == 'merge_group' ||
-      (github.event_name == 'pull_request' && startsWith(github.head_ref, 'mergify/merge-queue/'))
+      (github.event_name == 'pull_request' && startsWith(github.head_ref, 'mergify/merge-queue/')) ||
+      (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
+    uses: ./.github/workflows/stage.yml
+    with:
+      stage: verify
+      sdlc_ref: ${{ inputs.sdlc_ref || github.sha }}
+  verify-context:
+    name: sdlc / verify
+    if: always() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && startsWith(github.head_ref, 'mergify/merge-queue/')))
+    needs: [verify]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: DeterminateSystems/nix-installer-action@v23
-        with:
-          extra-conf: |
-            substituters = https://cache.nixos.org https://nix-community.cachix.org
-            trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=
-      - run: nix build --no-link .#checks.x86_64-linux.sdlc-verify
+      - name: Require verify stage
+        env:
+          STAGE_RESULT: ${{ needs.verify.result }}
+        run: test "$STAGE_RESULT" = success
   policy:
-    name: policy
+    name: sdlc / policy
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: DeterminateSystems/nix-installer-action@v23
         with:
-          extra-conf: |
-            substituters = https://cache.nixos.org https://nix-community.cachix.org
-            trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=
+          persist-credentials: false
+      - uses: DeterminateSystems/nix-installer-action@v23
       - run: nix run .#sdlc -- install --check

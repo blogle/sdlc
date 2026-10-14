@@ -40,8 +40,8 @@ class ChangelogSuccessorTests(unittest.TestCase):
             prior_source = "a" * 40
             (manifest_dir / "release.json").write_text(
                 json.dumps(
-                    {"version": "1.2.0", "source_sha": prior_source,
-                     "fragments_sha256": "0" * 64}
+                    {"schema": 1, "version": "1.2.0",
+                     "source_main_sha": prior_source}
                 ) + "\n"
             )
             changes = root / ".changes"
@@ -71,9 +71,13 @@ class ChangelogSuccessorTests(unittest.TestCase):
                         source, date="2026-10-11"
                     )
                 self.assertEqual(manifest["version"], "1.2.1")
-                self.assertEqual(manifest["source_sha"], source)
-                self.assertEqual(set(manifest), {"version", "source_sha", "fragments_sha256"})
-                self.assertRegex(manifest["fragments_sha256"], r"^[0-9a-f]{64}$")
+                self.assertEqual(manifest["prior_released_boundary"], prior_source)
+                self.assertEqual(manifest["source_main_sha"], source)
+                self.assertEqual(
+                    [item["path"] for item in manifest["fragments"]],
+                    [".changes/a-history-test.json",
+                     ".changes/b-fragment-docs.json"],
+                )
                 self.assertFalse(list(changes.glob("*.json")))
 
                 result = (root / "CHANGELOG.md").read_text()

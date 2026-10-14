@@ -1,0 +1,40 @@
+pull_request_rules:
+  - name: queue validated feature PRs
+    conditions:
+      - base ~= ^(main|master)$
+      - head != sdlc/release-next
+      - label != release
+      - check-success = "sdlc / check"
+      - or:
+          - and:
+              - label = integration:auto
+              - label != integration:review
+          - and:
+              - label = integration:review
+              - label != integration:auto
+              - "#approved-reviews-by >= 1"
+    actions:
+      queue:
+        name: validated candidates
+
+queue_rules:
+  - name: validated candidates
+    queue_conditions:
+      - base ~= ^(main|master)$
+      - head != sdlc/release-next
+      - label != release
+      - check-success = "sdlc / check"
+      - or:
+          - and:
+              - label = integration:auto
+              - label != integration:review
+          - and:
+              - label = integration:review
+              - label != integration:auto
+              - "#approved-reviews-by >= 1"
+    merge_conditions:
+      - check-success = "sdlc / verify"
+    batch_size: 5
+    batch_max_wait_time: 2 minutes
+    merge_method: squash
+    update_method: merge

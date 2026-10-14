@@ -1,0 +1,94 @@
+name: SDLC Nix stage (internal)
+on:
+  workflow_call:
+    inputs:
+      stage:
+        type: string
+        required: true
+      sdlc_ref:
+        type: string
+        required: true
+permissions:
+  contents: read
+  actions: read
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.hestia.outputs.matrix }}
+      any-jobs: ${{ steps.hestia.outputs.any-jobs }}
+      manifest-version: ${{ steps.hestia.outputs.manifest-version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: DeterminateSystems/nix-installer-action@v23
+        with:
+          extra-conf: |
+            substituters = https://cache.nixos.org/ https://nix-community.cachix.org
+            trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=
+      - uses: Mic92/hestia@v3
+        with:
+          upstream-cache-filter: true
+          upstream-cache-key-names: "cache.nixos.org-1 nix-community.cachix.org-1"
+          filter-drv-closures: true
+      - name: Validate consumer changelog fragments
+        if: inputs.stage == 'check'
+        run: nix run .#sdlc -- changelog check
+      - uses: Mic92/hestia/matrix@v3
+        id: hestia
+        with:
+          flake: .#ci.x86_64-linux.${{ inputs.stage == 'check' && 'fast' || 'verify' }}
+          nix-eval-jobs: "nix run github:blogle/sdlc/${{ inputs.sdlc_ref }}#nix-eval-jobs --"
+  build:
+    needs: evaluate
+    if: needs.evaluate.outputs.any-jobs == 'true'
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.evaluate.outputs.matrix) }}
+    steps:
+      - uses: DeterminateSystems/nix-installer-action@v23
+        with:
+          extra-conf: |
+            substituters = https://cache.nixos.org/ https://nix-community.cachix.org
+            trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=
+      - uses: Mic92/hestia@v3
+        with:
+          wait-manifest-version: ${{ needs.evaluate.outputs.manifest-version }}
+          upstream-cache-filter: true
+          upstream-cache-key-names: "cache.nixos.org-1 nix-community.cachix.org-1"
+      - name: Prefetch derivation closures from Hestia
+        env:
+          INSTALLABLES: ${{ matrix.installables }}
+        run: |
+          read -r -a installables <<< "$INSTALLABLES"
+          "$HESTIA_BIN" prefetch "${installables[@]}"
+      - name: Build exact Nix derivations
+        env:
+          INSTALLABLES: ${{ matrix.installables }}
+        run: |
+          read -r -a installables <<< "$INSTALLABLES"
+          nix build -L "${installables[@]}"
+  gate:
+    name: sdlc / ${{ inputs.stage }}
+    if: always()
+    needs: [evaluate, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Aggregate Hestia matrix result (empty means cached)
+        env:
+          EVALUATE_RESULT: ${{ needs.evaluate.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          ANY_JOBS: ${{ needs.evaluate.outputs.any-jobs }}
+        run: |
+          set -euo pipefail
+          test "$EVALUATE_RESULT" = success
+          if [[ "$ANY_JOBS" == true ]]; then
+            test "$BUILD_RESULT" = success
+          else
+            test "$BUILD_RESULT" = skipped
+          fi

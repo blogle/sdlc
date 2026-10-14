@@ -1,3 +1,4 @@
+import importlib.util
 import json
 from pathlib import Path
 import subprocess
@@ -5,6 +6,11 @@ import tempfile
 import unittest
 
 from src import release_gate, sdlc
+
+
+PUBLISHER_SPEC = importlib.util.spec_from_file_location("release_publisher", Path(__file__).parents[1] / "src/release_publisher.py")
+publisher = importlib.util.module_from_spec(PUBLISHER_SPEC)
+PUBLISHER_SPEC.loader.exec_module(publisher)
 
 
 class ReleaseIntegrationTests(unittest.TestCase):
@@ -38,10 +44,10 @@ class ReleaseIntegrationTests(unittest.TestCase):
                     return result.stdout if raw else result.stdout.decode().strip()
 
                 replay = release_gate.replay_snapshot(source, git=git_temp)
-                self.assertEqual(replay[0], manifest)
+                self.assertEqual(replay, manifest)
                 release_gate.verify_candidate(source, release_sha, manifest, git=git_temp, planner=lambda _: replay)
                 result = subprocess.run(
-                    ["python3", str(Path(__file__).parents[1] / "src/sdlc.py"), "release", "publish", release_sha],
+                    ["python3", str(Path(__file__).parents[1] / "src/release_publisher.py"), release_sha],
                     cwd=temp, check=True, capture_output=True, text=True,
                 )
                 self.assertEqual(json.loads(result.stdout)["commit"], release_sha)
