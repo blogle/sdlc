@@ -90,7 +90,7 @@ def reconcile(repo: str | None = None) -> int:
     branch = os.environ.get("SDLC_RELEASE_BRANCH", "sdlc/release-next")
     if not repo:
         _fail("GITHUB_REPOSITORY is required")
-    sdlc.policy_command("check", repo)
+    sdlc.ruleset_command("check", repo)
     _gh("auth", "setup-git")
     for attempt in range(1, 4):
         subprocess.run(["git", "fetch", "--prune", "--tags", "origin", default_branch, branch], check=False)

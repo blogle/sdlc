@@ -19,9 +19,9 @@ on:
         default: ""
     secrets:
       SDLC_RELEASE_APP_ID:
-        required: true
+        required: false
       SDLC_RELEASE_APP_PRIVATE_KEY:
-        required: true
+        required: false
   workflow_dispatch:
     inputs:
       merged_sha:
@@ -40,20 +40,19 @@ on:
         default: ""
 
 permissions:
-  contents: write
-  packages: write
-  pull-requests: write
+  contents: read
+  pull-requests: read
 
 jobs:
   reconcile:
-    if: inputs.merged_sha == ''
+    if: inputs.merged_sha == '' && vars.SDLC_RELEASE_ACTIVATE == 'true'
     uses: ./.github/workflows/release-reconcile.yml
     with:
       sdlc_ref: ${{ inputs.sdlc_ref }}
     secrets: inherit
 
   publish:
-    if: inputs.merged_sha != ''
+    if: inputs.merged_sha != '' && inputs.activate && vars.SDLC_RELEASE_ACTIVATE == 'true'
     uses: ./.github/workflows/release-publish.yml
     with:
       merged_sha: ${{ inputs.merged_sha }}

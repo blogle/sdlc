@@ -13,8 +13,8 @@ on:
 # main, creates a release PR, tags, or publishes directly.
 permissions:
   actions: read
-  contents: write
-  pull-requests: write
+  contents: read
+  pull-requests: read
 
 jobs:
   publisher-completion:

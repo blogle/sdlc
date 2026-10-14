@@ -18,9 +18,10 @@ The single manifest contract for the updater, release gate, and publisher is
 
 `fragments` are sorted by path and bind each consumed fragment to the exact
 blob in `source_main_sha`. `publication` only binds release version and source
-identity; consumers retain their existing `just release-publish <version>`
-recipe and own any immutable artifact storage. This contract adds no
-artifact/build DSL.
+identity. Consumers publish only through the Nix app at
+`ci.<system>.publish`; SDLC resolves that app from the merged consumer flake.
+The hook returns immutable artifact receipts bound to the same release
+identity. This contract adds no artifact/build DSL.
 
 `generated_tree` is not a Git tree SHA. It is SHA-256 over sorted records of
 the generated `CHANGELOG.md` bytes and each consumed-fragment deletion record:

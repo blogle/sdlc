@@ -33,8 +33,25 @@ class SharedCiContractTests(unittest.TestCase):
         self.assertIn("mergify/merge-queue/", verify)
         self.assertIn("github.event.repository.default_branch", verify)
 
+    def test_hestia_gate_requires_all_evaluated_builds_and_accepts_empty_cached_matrix(self):
+        stage = (ROOT / ".github/workflows/stage.yml").read_text()
+        gate = stage.split("  gate:", 1)[1]
+        self.assertIn("test \"$EVALUATE_RESULT\" = success", gate)
+        self.assertIn('if [[ "$ANY_JOBS" == true ]]; then', gate)
+        self.assertIn('test "$BUILD_RESULT" = success', gate)
+        self.assertIn('test "$BUILD_RESULT" = skipped', gate)
+        self.assertIn("fail-fast: false", stage)
+        self.assertIn('nix build -L "${installables[@]}"', stage)
+
+    def test_release_specific_status_is_not_a_global_required_context(self):
+        ruleset = (ROOT / "rulesets/default-branch.json").read_text()
+        self.assertIn('"context": "sdlc / check", "integration_id": 15368', ruleset)
+        self.assertIn('"context": "sdlc / policy", "integration_id": 15368', ruleset)
+        self.assertNotIn('"context": "sdlc / release-gate"', ruleset)
+        self.assertNotIn("IS_RELEASE", (ROOT / ".github/workflows/ci.yml").read_text())
+
     def test_mergify_queues_after_fast_check_and_merges_after_verify(self):
         policy = (ROOT / ".mergify.yml").read_text()
-        self.assertIn('check-success = "sdlc / check"', policy)
-        self.assertIn('check-success = "sdlc / verify"', policy)
+        self.assertIn("check-success = @github-actions/sdlc / check", policy)
+        self.assertIn("check-success = @github-actions/sdlc / verify", policy)
         self.assertIn("label != release", policy)

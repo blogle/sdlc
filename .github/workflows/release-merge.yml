@@ -10,9 +10,9 @@ on:
         default: ""
     secrets:
       SDLC_RELEASE_APP_ID:
-        required: true
+        required: false
       SDLC_RELEASE_APP_PRIVATE_KEY:
-        required: true
+        required: false
   workflow_run:
     workflows: [SDLC release gate]
     types: [completed]
@@ -32,12 +32,12 @@ jobs:
     name: merge validated release PR
     outputs:
       merged_sha: ${{ steps.merge-release.outputs.merged_sha }}
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    if: vars.SDLC_RELEASE_ACTIVATE == 'true' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     permissions:
       contents: read
       checks: read
-      pull-requests: write
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -53,14 +53,14 @@ jobs:
         with:
           app-id: ${{ secrets.SDLC_RELEASE_APP_ID }}
           private-key: ${{ secrets.SDLC_RELEASE_APP_PRIVATE_KEY }}
-          permission-contents: read
+          permission-contents: write
+          permission-administration: read
           permission-pull-requests: write
           permission-checks: read
       - name: Recheck and squash merge release PR
         id: merge-release
         env:
           GH_TOKEN: ${{ steps.release-app.outputs.token }}
-          SDLC_RULESET_TOKEN: ${{ github.token }}
           RELEASE_BOT_LOGIN: ${{ vars.SDLC_RELEASE_BOT_LOGIN }}
           RELEASE_APP_SLUG: ${{ steps.release-app.outputs.app-slug }}
           SDLC_RULESET_ATTESTATION: ${{ vars.SDLC_RULESET_ATTESTATION }}
@@ -107,11 +107,11 @@ jobs:
     needs: merge
     if: needs.merge.result == 'success' && needs.merge.outputs.merged_sha != ''
     permissions:
-      contents: write
-      packages: write
-      pull-requests: write
+      contents: read
+      pull-requests: read
     uses: ./.github/workflows/release.yml
     with:
       merged_sha: ${{ needs.merge.outputs.merged_sha }}
       activate: ${{ vars.SDLC_RELEASE_ACTIVATE == 'true' }}
+      sdlc_ref: ${{ inputs.sdlc_ref }}
     secrets: inherit

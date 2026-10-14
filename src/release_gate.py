@@ -28,7 +28,8 @@ verify_release_tree = coordinator.verify_release_tree
 
 RELEASE_BRANCH = "sdlc/release-next"
 RELEASE_CHECK = "sdlc / release-gate"
-REQUIRED_CHECKS = ("sdlc / check",)
+GITHUB_ACTIONS_APP_ID = 15368
+REQUIRED_CHECKS = ("sdlc / check", "sdlc / policy")
 MANIFEST_PATH = ".sdlc/release.json"
 FRAGMENT_PREFIX = ".changes/"
 FRAGMENT_SUFFIX = ".json"
@@ -59,6 +60,7 @@ class Check:
     app_slug: str | None = None
     check_id: int | None = None
     completed_at: str | None = None
+    app_id: int | None = None
 
 
 def _git(*args: str, cwd: str | Path | None = None, raw: bool = False) -> str | bytes:
@@ -134,15 +136,24 @@ def _checks(repo: str, sha: str) -> list[Check]:
             (item.get("app") or {}).get("slug"),
             item.get("id"),
             item.get("completed_at"),
+            (item.get("app") or {}).get("id"),
         )
         for item in items
     ]
 
 
-def _required_check(checks: Iterable[Check], name: str, sha: str, app_slug: str | None = None) -> None:
+def _required_check(
+    checks: Iterable[Check],
+    name: str,
+    sha: str,
+    app_slug: str | None = None,
+    app_id: int | None = None,
+) -> None:
     candidates = [item for item in checks if item.name == name and item.sha == sha]
     if app_slug is not None:
         candidates = [item for item in candidates if item.app_slug == app_slug]
+    if app_id is not None:
+        candidates = [item for item in candidates if item.app_id == app_id]
     if not candidates or any(item.check_id is None or item.completed_at is None for item in candidates):
         if candidates:
             raise GateError(f"required check {name!r} has ambiguous completion ordering for exact head {sha}")
@@ -154,18 +165,23 @@ def _required_check(checks: Iterable[Check], name: str, sha: str, app_slug: str 
 
 
 def verify_protection(protection: Mapping[str, Any], required_checks: Iterable[str] = REQUIRED_CHECKS) -> None:
+    required_checks = tuple(required_checks)
     active = [item for item in protection.get("rulesets", ()) if item.get("enforcement") == "active" and item.get("name") == "SDLC default branch"]
-    if not active and not protection.get("classic"):
-        raise GateError("no applicable branch protection or active ruleset is configured")
-    if active:
-        attestation = protection.get("ruleset_attestation")
-        if len(active) != 1 or not isinstance(attestation, Mapping):
-            raise GateError("canonical ruleset bypass actors are not visible; refusing release merge")
-        ruleset = active[0]
-        if attestation.get("ruleset_id") != ruleset.get("id") or attestation.get("updated_at") != ruleset.get("updated_at"):
-            raise GateError("canonical ruleset attestation does not match its current identity")
-        if attestation.get("bypass_actors") != []:
-            raise GateError("release merge requires zero protection bypass actors")
+    if len(active) != 1:
+        raise GateError("exactly one active canonical SDLC ruleset is required")
+    if protection.get("canonical_ruleset_matches") is not True:
+        raise GateError("live canonical ruleset differs from the pinned SDLC policy")
+    attestation = protection.get("ruleset_attestation")
+    if not isinstance(attestation, Mapping):
+        raise GateError("canonical ruleset bypass actors are not attested; refusing release merge")
+    ruleset = active[0]
+    if attestation.get("ruleset_id") != ruleset.get("id") or attestation.get("updated_at") != ruleset.get("updated_at"):
+        raise GateError("canonical ruleset attestation does not match its current identity")
+    if attestation.get("bypass_actors") != []:
+        raise GateError("release merge requires zero protection bypass actors")
+    visible_bypass = ruleset.get("bypass_actors")
+    if visible_bypass is not None and visible_bypass != []:
+        raise GateError("release merge requires zero protection bypass actors")
     if protection.get("strict") is True:
         raise GateError("global strict freshness is enabled; release gate will not change repository policy")
     if protection.get("bypass_actors"):
@@ -173,6 +189,13 @@ def verify_protection(protection: Mapping[str, Any], required_checks: Iterable[s
     missing = set(required_checks) - set(protection.get("contexts", ()))
     if missing:
         raise GateError(f"protected required checks are absent: {sorted(missing)}")
+    check_apps = protection.get("check_apps", {})
+    wrong_apps = sorted(
+        name for name in required_checks
+        if check_apps.get(name) != GITHUB_ACTIONS_APP_ID
+    )
+    if wrong_apps:
+        raise GateError(f"protected required checks are not bound to GitHub Actions: {wrong_apps}")
 
 
 def _protection(repo: str, branch: str) -> Mapping[str, Any]:
@@ -182,6 +205,11 @@ def _protection(repo: str, branch: str) -> Mapping[str, Any]:
     except GateError:
         classic = {}
     contexts = set(classic.get("required_status_checks", {}).get("contexts", ()))
+    check_apps = {
+        item.get("context"): item.get("app_id")
+        for item in classic.get("required_status_checks", {}).get("checks", ())
+        if isinstance(item, dict) and isinstance(item.get("context"), str)
+    }
     strict = classic.get("required_status_checks", {}).get("strict")
     bypass = []
     applicable = []
@@ -194,27 +222,38 @@ def _protection(repo: str, branch: str) -> Mapping[str, Any]:
         raise GateError("canonical ruleset bypass actors are not visible; refusing release merge")
     for summary in rulesets:
         detail = _gh_json(f"repos/{repo}/rulesets/{summary['id']}") if summary.get("id") else summary
-        if detail.get("enforcement") != "active" or detail.get("name") != "SDLC default branch":
+        if detail.get("enforcement") != "active" or detail.get("name") != "SDLC default branch" or detail.get("source", repo) != repo:
             continue
         includes = detail.get("conditions", {}).get("ref_name", {}).get("include", ())
         if "~DEFAULT_BRANCH" not in includes and f"refs/heads/{branch}" not in includes:
             continue
         actors = detail.get("bypass_actors")
-        if not isinstance(actors, list):
-            raise GateError("canonical ruleset bypass actors are not visible; refusing release merge")
+        if actors is not None and not isinstance(actors, list):
+            raise GateError("canonical ruleset bypass actors are malformed; refusing release merge")
         if attestation is None or attestation.get("repository") != repo or attestation.get("schema") != 1 or attestation.get("bypass_actors") != []:
             raise GateError("canonical ruleset bypass actors are not visible; refusing release merge")
         if attestation.get("ruleset_id") != detail.get("id") or attestation.get("updated_at") != detail.get("updated_at"):
             raise GateError("canonical ruleset attestation does not match its current identity")
+        if actors and actors != []:
+            raise GateError("canonical ruleset has bypass actors; refusing release merge")
+        if not coordinator._matches_ruleset(
+            detail,
+            coordinator._canonical_ruleset(),
+            allow_redacted_bypass=actors is None,
+        ):
+            raise GateError("live canonical ruleset differs from the pinned SDLC policy")
         applicable.append(detail)
-        bypass.extend(actors)
+        bypass.extend(actors or [])
         for rule in detail.get("rules", ()):
             if rule.get("type") != "required_status_checks":
                 continue
             params = rule.get("parameters", {})
-            contexts.update(item.get("context") for item in params.get("required_status_checks", ()))
+            for item in params.get("required_status_checks", ()):
+                context = item.get("context")
+                contexts.add(context)
+                check_apps[context] = item.get("integration_id")
             strict = strict or params.get("strict_required_status_checks_policy", False)
-    return {"classic": bool(classic), "rulesets": applicable, "contexts": contexts, "strict": strict, "bypass_actors": bypass, "ruleset_attestation": attestation}
+    return {"classic": bool(classic), "rulesets": applicable, "canonical_ruleset_matches": len(applicable) == 1, "contexts": contexts, "check_apps": check_apps, "strict": strict, "bypass_actors": bypass, "ruleset_attestation": attestation}
 
 
 def _authenticated_app(release_bot_login: str, app_slug: str, repository: str) -> tuple[str, str]:
@@ -327,7 +366,8 @@ def evaluate_release_gate(*, pr: PullRequest, authenticated_login: str, app_slug
     verify_protection(protection)
     if parent_sha != main_sha:
         raise GateError("release head parent is not current main")
-    _required_check(checks, "sdlc / check", pr.head_sha)
+    _required_check(checks, "sdlc / check", pr.head_sha, app_id=GITHUB_ACTIONS_APP_ID)
+    _required_check(checks, "sdlc / policy", pr.head_sha, app_id=GITHUB_ACTIONS_APP_ID)
     if manifest is None:
         raise GateError("release manifest is required")
     verify_candidate(main_sha, pr.head_sha, manifest, planner=planner)
@@ -375,7 +415,8 @@ def merge_release_pr(*, api: GithubMergeApi, pr_number: int, expected_head_sha: 
         raise GateError("release head parent is not current main")
     verify_protection(api.protection())
     checks = api.checks(expected_head_sha)
-    _required_check(checks, "sdlc / check", expected_head_sha)
+    _required_check(checks, "sdlc / check", expected_head_sha, app_id=GITHUB_ACTIONS_APP_ID)
+    _required_check(checks, "sdlc / policy", expected_head_sha, app_id=GITHUB_ACTIONS_APP_ID)
     _required_check(checks, RELEASE_CHECK, expected_head_sha, api.app_slug)
     return api.merge(pr_number, sha=expected_head_sha, merge_method="squash")
 
@@ -398,8 +439,10 @@ def _gate_command(args: argparse.Namespace) -> int:
         if len(parents) != 1 or parents[0].get("sha") != source_sha:
             raise GateError("historical squash merge does not match manifest source_main_sha")
         verify_protection(_protection(args.repo, repo["default_branch"]))
-        _required_check(_checks(args.repo, pr.head_sha), "sdlc / check", pr.head_sha)
-        _required_check(_checks(args.repo, pr.head_sha), RELEASE_CHECK, pr.head_sha, slug)
+        historical_checks = _checks(args.repo, pr.head_sha)
+        _required_check(historical_checks, "sdlc / check", pr.head_sha, app_id=GITHUB_ACTIONS_APP_ID)
+        _required_check(historical_checks, "sdlc / policy", pr.head_sha, app_id=GITHUB_ACTIONS_APP_ID)
+        _required_check(historical_checks, RELEASE_CHECK, pr.head_sha, slug)
         verify_candidate(source_sha, args.historical_merged_sha, manifest)
         return 0
     evaluate_release_gate(

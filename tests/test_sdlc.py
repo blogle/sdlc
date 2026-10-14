@@ -72,6 +72,21 @@ class RulesetTests(unittest.TestCase):
         self.assertEqual(plan["action"], "read-unavailable")
         self.assertEqual(plan["ruleset"], sdlc._canonical_ruleset())
 
+    def test_read_only_ruleset_check_accepts_only_current_attested_bypass_redaction(self):
+        desired = sdlc._canonical_ruleset()
+        actual = dict(desired, id=7, updated_at="now")
+        del actual["bypass_actors"]
+        response = __import__("subprocess").CompletedProcess([], 0, json.dumps(actual), "")
+        attestation = json.dumps({"schema": 1, "repository": "owner/repo", "ruleset_id": 7, "updated_at": "now", "bypass_actors": []})
+        with patch.object(sdlc, "_ruleset", return_value=response), patch.dict(sdlc.os.environ, {"SDLC_RULESET_ATTESTATION": attestation}), redirect_stdout(io.StringIO()) as out:
+            sdlc.ruleset_command("check", "owner/repo")
+        self.assertIn("matches", out.getvalue())
+
+        stale = json.dumps({"schema": 1, "repository": "owner/repo", "ruleset_id": 7, "updated_at": "old", "bypass_actors": []})
+        with patch.object(sdlc, "_ruleset", return_value=response), patch.dict(sdlc.os.environ, {"SDLC_RULESET_ATTESTATION": stale}):
+            with self.assertRaisesRegex(ValueError, "ruleset is update"):
+                sdlc.ruleset_command("check", "owner/repo")
+
 
 class InstallTests(unittest.TestCase):
     def test_install_generates_and_checks_pinned_adapters(self):
@@ -88,6 +103,16 @@ class InstallTests(unittest.TestCase):
             workflow = (root / ".github/workflows/sdlc.yml").read_text()
             self.assertIn("ci.yml@" + "a" * 40, workflow)
             self.assertIn("sdlc_ref: " + "a" * 40, workflow)
+            reconcile = (root / ".github/workflows/sdlc-release.yml").read_text()
+            self.assertIn("release.yml@" + "a" * 40, reconcile)
+            self.assertIn("workflows: [SDLC release merge]", reconcile)
+            self.assertNotIn("pull_request_target", reconcile)
+            gate = (root / ".github/workflows/sdlc-release-gate.yml").read_text()
+            self.assertIn("release-gate.yml@" + "a" * 40, gate)
+            self.assertIn("workflows: [SDLC CI]", gate)
+            merge = (root / ".github/workflows/sdlc-release-merge.yml").read_text()
+            self.assertIn("release-merge.yml@" + "a" * 40, merge)
+            self.assertIn("workflows: [SDLC release gate]", merge)
             cache_workflow = (root / ".github/workflows/sdlc-cache-gc.yml").read_text()
             self.assertIn("hestia-gc.yml@" + "a" * 40, cache_workflow)
             self.assertIn("actions: write", cache_workflow)

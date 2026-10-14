@@ -54,6 +54,9 @@ class ConsumerLibraryTests(unittest.TestCase):
         expressions = (
             base % 'builtins.deepSeq (lib.mkConsumer { fast = {}; verify = { test = check; }; publish = app; }) true',
             base % 'builtins.deepSeq (lib.mkConsumer { fast = { fmt = check; }; verify = { test = check; }; publish = app; extra = true; }) true',
+            base % 'builtins.deepSeq (lib.mkConsumer { fast = { fmt = check; }; verify = { test = check; }; }) true',
+            base % 'builtins.deepSeq (lib.mkConsumer { fast = { fmt = check; }; verify = { test = check; }; publish = { type = "app"; program = "publish"; }; }) true',
+            base % 'builtins.deepSeq (lib.mkConsumer { fast = { fmt = check; }; verify = { test = check; }; publish = app // { extra = true; }; }) true',
         )
         for expression in expressions:
             with self.subTest(expression=expression):

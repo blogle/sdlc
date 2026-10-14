@@ -37,7 +37,10 @@
           default = { type = "app"; program = "${self.packages.${system}.sdlc}/bin/sdlc"; };
         });
       ci = nixpkgs.lib.genAttrs [ "x86_64-linux" ] (system:
-        import ./ci.nix { inherit self system; });
+        sdlcLib.mkConsumer (import ./ci.nix {
+          inherit self system;
+          pkgs = nixpkgs.legacyPackages.${system};
+        }));
       devShells = eachSystem (system:
         let pkgs = nixpkgs.legacyPackages.${system};
         in {
@@ -63,9 +66,10 @@
               PY
               touch $out
             '';
-            config = pkgs.runCommand "sdlc-config" { nativeBuildInputs = [ pkgs.jq ]; } ''
+            config = pkgs.runCommand "sdlc-config" { nativeBuildInputs = [ pkgs.bash pkgs.jq ]; } ''
               jq empty ${./rulesets/default-branch.json}
               jq empty ${./default.json}
+              bash -n ${./scripts/sdlc-release-publish.sh}
               touch $out
             '';
         in {

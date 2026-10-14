@@ -10,9 +10,9 @@ on:
         default: ""
     secrets:
       SDLC_RELEASE_APP_ID:
-        required: true
+        required: false
       SDLC_RELEASE_APP_PRIVATE_KEY:
-        required: true
+        required: false
   pull_request_target:
     types: [opened, synchronize, reopened]
   push:
@@ -29,11 +29,11 @@ permissions:
 jobs:
   pull-request-gate:
     name: release gate driver
-    if: github.event_name == 'pull_request_target' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    if: vars.SDLC_RELEASE_ACTIVATE == 'true' && (github.event_name == 'pull_request_target' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      checks: write
+      checks: read
       pull-requests: read
     steps:
       - uses: actions/checkout@v4
@@ -52,12 +52,12 @@ jobs:
           app-id: ${{ secrets.SDLC_RELEASE_APP_ID }}
           private-key: ${{ secrets.SDLC_RELEASE_APP_PRIVATE_KEY }}
           permission-contents: read
+          permission-administration: read
           permission-pull-requests: read
           permission-checks: write
       - name: Verify and publish head-specific gate
         env:
           GH_TOKEN: ${{ steps.release-app.outputs.token }}
-          SDLC_RULESET_TOKEN: ${{ github.token }}
           RELEASE_BOT_LOGIN: ${{ vars.SDLC_RELEASE_BOT_LOGIN }}
           RELEASE_APP_SLUG: ${{ steps.release-app.outputs.app-slug }}
           SDLC_RULESET_ATTESTATION: ${{ vars.SDLC_RULESET_ATTESTATION }}
@@ -100,11 +100,11 @@ jobs:
 
   base-refresh:
     name: refresh release gate after main advances
-    if: github.event_name == 'push'
+    if: vars.SDLC_RELEASE_ACTIVATE == 'true' && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      checks: write
+      checks: read
       pull-requests: read
     steps:
       - uses: actions/checkout@v4
@@ -122,12 +122,12 @@ jobs:
           app-id: ${{ secrets.SDLC_RELEASE_APP_ID }}
           private-key: ${{ secrets.SDLC_RELEASE_APP_PRIVATE_KEY }}
           permission-contents: read
+          permission-administration: read
           permission-pull-requests: read
           permission-checks: write
       - name: Revalidate every open release head
         env:
           GH_TOKEN: ${{ steps.release-app.outputs.token }}
-          SDLC_RULESET_TOKEN: ${{ github.token }}
           RELEASE_BOT_LOGIN: ${{ vars.SDLC_RELEASE_BOT_LOGIN }}
           RELEASE_APP_SLUG: ${{ steps.release-app.outputs.app-slug }}
           SDLC_RULESET_ATTESTATION: ${{ vars.SDLC_RULESET_ATTESTATION }}

@@ -25,7 +25,8 @@ class SelfReleaseDogfoodTests(unittest.TestCase):
         self.assertNotIn("publish_version", workflow)
         self.assertIn("if: inputs.merged_sha == ''", workflow)
         self.assertIn("if: inputs.merged_sha != ''", workflow)
-        self.assertIn("packages: write", workflow)
+        self.assertNotIn("packages: write", workflow)
+        self.assertNotIn("packages: read", workflow)
 
     def test_only_leaf_reconciler_owns_recovery_serialization(self):
         caller = (ROOT / ".github/workflows/release.yml").read_text()
@@ -88,6 +89,23 @@ class SelfReleaseDogfoodTests(unittest.TestCase):
         self.assertIn("already durably published; recovery is a no-op", workflow)
         self.assertIn("sort_by(.merged_at) | reverse", workflow)
         self.assertIn("--historical-merged-sha", workflow)
+
+    def test_disabled_activation_blocks_reconciliation_merge_and_publication_mutations(self):
+        reconcile = (ROOT / ".github/workflows/release-reconcile.yml").read_text()
+        merge = (ROOT / ".github/workflows/release-merge.yml").read_text()
+        publish = (ROOT / ".github/workflows/release-publish.yml").read_text()
+        self.assertIn("if: vars.SDLC_RELEASE_ACTIVATE == 'true'", reconcile)
+        self.assertIn("vars.SDLC_RELEASE_ACTIVATE == 'true'", merge)
+        self.assertIn("inputs.activate && vars.SDLC_RELEASE_ACTIVATE == 'true'", publish)
+
+    def test_self_release_consumer_exposes_and_runs_the_canonical_publish_app(self):
+        flake = (ROOT / "flake.nix").read_text()
+        contract = (ROOT / "ci.nix").read_text()
+        publisher = (ROOT / "scripts/sdlc-release-publish.sh").read_text()
+        self.assertIn("sdlcLib.mkConsumer", flake)
+        self.assertIn("inherit publish", contract)
+        self.assertIn("SDLC_RELEASE_RECEIPTS", publisher)
+        self.assertIn("source_main_sha", publisher)
 
 
 if __name__ == "__main__":
