@@ -18,7 +18,10 @@ class SharedCiContractTests(unittest.TestCase):
         self.assertIn("github:blogle/sdlc/${{ inputs.sdlc_ref }}#nix-eval-jobs", stage)
         self.assertIn("Mic92/hestia@v3", stage)
         self.assertIn("Mic92/hestia/matrix@v3", stage)
-        self.assertIn("sdlc / ${{ inputs.stage }}", stage)
+        self.assertNotIn("sdlc / ${{ inputs.stage }}", stage)
+        self.assertIn("inputs.sdlc_ref && 'check' || 'sdlc / check'", workflow)
+        self.assertIn("inputs.sdlc_ref && 'verify' || 'sdlc / verify'", workflow)
+        self.assertIn("inputs.sdlc_ref && 'policy' || 'sdlc / policy'", workflow)
         self.assertIn("nix run .#sdlc -- install --check", workflow)
 
     def test_full_verification_runs_only_for_merge_queue_candidates(self):

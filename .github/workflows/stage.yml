@@ -74,7 +74,6 @@ jobs:
           read -r -a installables <<< "$INSTALLABLES"
           nix build -L "${installables[@]}"
   gate:
-    name: sdlc / ${{ inputs.stage }}
     if: always()
     needs: [evaluate, build]
     runs-on: ubuntu-latest
