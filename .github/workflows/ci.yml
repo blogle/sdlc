@@ -5,10 +5,6 @@ on:
       sdlc_ref:
         type: string
         required: true
-  pull_request:
-  merge_group:
-  push:
-    branches: [main, master]
 permissions:
   contents: read
   actions: read
@@ -25,7 +21,7 @@ jobs:
       stage: check
       sdlc_ref: ${{ inputs.sdlc_ref || github.sha }}
   check-context:
-    name: ${{ github.repository == 'blogle/sdlc' && 'sdlc / check' || 'check' }}
+    name: check
     if: always() && github.event_name != 'merge_group'
     needs: [check]
     runs-on: ubuntu-latest
@@ -51,7 +47,7 @@ jobs:
       stage: verify
       sdlc_ref: ${{ inputs.sdlc_ref || github.sha }}
   verify-context:
-    name: ${{ github.repository == 'blogle/sdlc' && 'sdlc / verify' || 'verify' }}
+    name: verify
     if: always() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && startsWith(github.head_ref, 'mergify/merge-queue/')))
     needs: [verify]
     runs-on: ubuntu-latest
@@ -61,7 +57,7 @@ jobs:
           STAGE_RESULT: ${{ needs.verify.result }}
         run: test "$STAGE_RESULT" = success
   policy:
-    name: ${{ github.repository == 'blogle/sdlc' && 'sdlc / policy' || 'policy' }}
+    name: policy
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
