@@ -1,11 +1,10 @@
 name: SDLC CI
 on:
-  pull_request:
-  workflow_dispatch:
-  # PR-scoped caches are invisible to other PRs. Publishing from the default
-  # branch is required to make Hestia substitutions available across PRs.
-  push:
-    branches: [main, master]
+  workflow_call:
+    inputs:
+      sdlc_ref:
+        type: string
+        required: true
 permissions:
   contents: read
   actions: read
@@ -13,54 +12,57 @@ concurrency:
   group: sdlc-ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
-  policy:
-    if: github.event_name == 'pull_request'
-    uses: ./.github/workflows/policy-check.yml
-  policy-context:
-    name: sdlc / policy
-    needs: policy
-    if: always() && github.event_name == 'pull_request'
+  check:
+    uses: ./.github/workflows/stage.yml
+    with:
+      stage: check
+      sdlc_ref: ${{ inputs.sdlc_ref || github.sha }}
+  check-context:
+    name: check
+    if: always() && github.event_name != 'merge_group'
+    needs: [check]
     runs-on: ubuntu-latest
     steps:
-      - run: test "${{ needs.policy.result }}" = success
-  pr-fast:
-    name: sdlc / pr-fast
+      - name: Require fast stage
+        env:
+          STAGE_RESULT: ${{ needs.check.result }}
+        run: |
+          set -euo pipefail
+          test "$STAGE_RESULT" = success
+  pr-fast-context:
+    name: pr-fast
+    if: always() && github.event_name == 'pull_request'
+    needs: [check]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Preserve the legacy required context
+        run: test "${{ needs.check.result }}" = success
+  verify:
+    if: >-
+      github.event_name == 'merge_group' ||
+      (github.event_name == 'pull_request' && startsWith(github.head_ref, 'mergify/merge-queue/')) ||
+      (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
+    uses: ./.github/workflows/stage.yml
+    with:
+      stage: verify
+      sdlc_ref: ${{ inputs.sdlc_ref || github.sha }}
+  verify-context:
+    name: verify
+    if: always() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && startsWith(github.head_ref, 'mergify/merge-queue/')))
+    needs: [verify]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require verify stage
+        env:
+          STAGE_RESULT: ${{ needs.verify.result }}
+        run: test "$STAGE_RESULT" = success
+  policy:
+    name: policy
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          fetch-depth: 0
           persist-credentials: false
       - uses: DeterminateSystems/nix-installer-action@v23
-        with:
-          extra-conf: |
-            substituters = https://cache.nixos.org/ https://nix-community.cachix.org
-            trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=
-      - uses: Mic92/hestia@v3
-        with:
-          upstream-cache-filter: true
-          upstream-cache-key-names: "cache.nixos.org-1 nix-community.cachix.org-1"
-      - name: Run enforced library/fixture checks
-        env:
-          SDLC_REMOTE_REF: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: nix develop -c just check
-
-  candidate:
-    if: github.event_name == 'pull_request' && startsWith(github.event.pull_request.head.ref, 'mergify/merge-queue/')
-    uses: ./.github/workflows/stage.yml
-    with:
-      stage: candidate
-  candidate-context:
-    name: sdlc / candidate
-    needs: candidate
-    if: always() && github.event_name == 'pull_request' && startsWith(github.event.pull_request.head.ref, 'mergify/merge-queue/')
-    runs-on: ubuntu-latest
-    steps:
-      - run: test "${{ needs.candidate.result }}" = success
-
-  # A post-merge pass is the only place GitHub permits Hestia to write into
-  # the cache scope that subsequent unrelated PRs can read.
-  cache-warm:
-    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-    uses: ./.github/workflows/candidate.yml
+      - run: nix run .#sdlc -- install --check

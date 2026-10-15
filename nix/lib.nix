@@ -1,36 +1,28 @@
 let
-  stageNames = [ "pr-fast" "candidate" ];
-  validateContract = contract:
-    let
-      stages = contract.stages or { };
-      validStage = stage:
-        builtins.isAttrs stage
-        && builtins.attrNames stage != [ ]
-        && builtins.all (name: builtins.isAttrs stage.${name} && (stage.${name}.type or null) == "derivation") (builtins.attrNames stage);
-      valid = builtins.isAttrs contract
-        && builtins.attrNames contract == [ "schemaVersion" "stages" ]
-        && (contract.schemaVersion or null) == 1
-        && builtins.isAttrs stages
-        && builtins.attrNames stages == builtins.sort builtins.lessThan stageNames
-        && builtins.all (name: validStage stages.${name}) stageNames;
-    in
-    if valid then contract else throw ''Invalid SDLC contract v1: stages must map pr-fast and candidate to non-empty attrsets of Nix derivations.'';
+  isDerivation = value: builtins.isAttrs value && (value.type or null) == "derivation";
+  isDerivationSet = value:
+    builtins.isAttrs value
+    && builtins.attrNames value != [ ]
+    && builtins.all (name: isDerivation value.${name}) (builtins.attrNames value);
+  isPublishApp = value:
+    builtins.isAttrs value
+    && builtins.all (name: builtins.elem name [ "meta" "program" "type" ]) (builtins.attrNames value)
+    && (value.type or null) == "app"
+    && (!(value ? meta) || builtins.isAttrs value.meta)
+    && builtins.isString (value.program or null)
+    && builtins.hasContext value.program
+    && builtins.substring 0 (builtins.stringLength builtins.storeDir + 1) value.program == "${builtins.storeDir}/";
+  mkConsumer = args:
+    if builtins.attrNames args != [ "fast" "publish" "verify" ] then
+      throw "mkConsumer expects exactly fast, verify, and publish"
+    else if !(isDerivationSet args.fast && isDerivationSet args.verify) then
+      throw "fast and verify must be non-empty attrsets of Nix derivations"
+    else if !isPublishApp args.publish then
+      throw "publish must be a Nix app with a store-backed executable program"
+    else args;
 in
 {
   apiVersion = 1;
-  inherit validateContract;
-
-  # Preserve the consumer's derivation attributes and Hestia metadata verbatim.
-  # Hestia's matrix action owns evaluation, grouping, caching, and fan-out.
-  mkConsumer = { contract }:
-    let checked = validateContract contract;
-    in {
-      hydraJobs = {
-        ci-pr-fast = checked.stages.pr-fast;
-        ci-candidate = checked.stages.candidate;
-      };
-    };
-
-  devTools = { pkgs, sdlcCli }:
-    [ sdlcCli pkgs.skills ];
+  inherit mkConsumer;
+  devTools = { pkgs, sdlcCli }: [ sdlcCli pkgs.skills ];
 }

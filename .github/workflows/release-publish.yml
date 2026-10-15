@@ -27,8 +27,7 @@ on:
         required: true
 
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 concurrency:
   group: sdlc-release-publish-${{ github.repository }}
@@ -36,15 +35,19 @@ concurrency:
 
 jobs:
   publish:
-    if: ${{ inputs.activate }}
+    if: ${{ inputs.activate && vars.SDLC_RELEASE_ACTIVATE == 'true' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/create-github-app-token@v1
         id: release-app
         with:
           app-id: ${{ secrets.SDLC_RELEASE_APP_ID }}
           private-key: ${{ secrets.SDLC_RELEASE_APP_PRIVATE_KEY }}
+          permission-administration: read
           permission-contents: write
+          permission-packages: write
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.merged_sha }}
@@ -55,15 +58,14 @@ jobs:
       - name: Verify canonical protection and actual merged identity
         env:
           GH_TOKEN: ${{ steps.release-app.outputs.token }}
+          SDLC_RULESET_ATTESTATION: ${{ vars.SDLC_RULESET_ATTESTATION }}
           REPOSITORY: ${{ github.repository }}
           MERGED_SHA: ${{ inputs.merged_sha }}
           SDLC_FLAKE: ${{ inputs.sdlc_ref != '' && inputs.sdlc_ref || github.workspace }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
-          rulesets="$(gh api "repos/${REPOSITORY}/rulesets" --paginate)"
-          REPOSITORY="$REPOSITORY" python3 -c 'import json,os,sys; data=json.load(sys.stdin); repo=os.environ["REPOSITORY"]; matches=[x for x in data if x.get("name") == "SDLC default branch" and x.get("source", repo) == repo and x.get("enforcement") == "active"]; sys.exit("canonical active ruleset missing; refusing publication") if len(matches) != 1 else None' <<<"$rulesets"
-          nix run "$SDLC_FLAKE"#sdlc -- policy check --repo "$REPOSITORY"
+          nix run "$SDLC_FLAKE"#sdlc -- ruleset check --repo "$REPOSITORY"
           git fetch origin "$DEFAULT_BRANCH" --tags
           test "$(git rev-parse HEAD)" = "$MERGED_SHA"
           git merge-base --is-ancestor "$MERGED_SHA" FETCH_HEAD
@@ -153,6 +155,7 @@ jobs:
           SDLC_RELEASE_LEDGER: .sdlc/release-ledger.json
           SDLC_FLAKE: ${{ inputs.sdlc_ref != '' && inputs.sdlc_ref || github.workspace }}
           MERGED_SHA: ${{ inputs.merged_sha }}
+          RELEASE_BOT_LOGIN: ${{ vars.SDLC_RELEASE_BOT_LOGIN }}
         run: |
           set -euo pipefail
           version="$(jq -r .version .sdlc/release.json)"
@@ -161,15 +164,17 @@ jobs:
           export SDLC_RELEASE_MERGED_SHA="$MERGED_SHA"
           export SDLC_RELEASE_SOURCE_SHA="$source_sha"
           export SDLC_RELEASE_RECEIPTS=.sdlc/publication-receipts.json
-          nix run nixpkgs#just -- release-publish "$version"
-          if [[ -f "$SDLC_RELEASE_RECEIPTS" ]]; then
-            nix run "$SDLC_FLAKE"#sdlc -- release receipts \
-              --ledger "$SDLC_RELEASE_LEDGER" \
-              --receipts "$SDLC_RELEASE_RECEIPTS" \
-              --version "$version" \
-              --merged-sha "$MERGED_SHA" \
-              --source-sha "$source_sha"
-          fi
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$RELEASE_BOT_LOGIN" --password-stdin
+          nix run "$SDLC_FLAKE"#sdlc -- release invoke \
+            --consumer-flake "$GITHUB_WORKSPACE" \
+            --system x86_64-linux
+          test -s "$SDLC_RELEASE_RECEIPTS" || { echo 'consumer ci.publish produced no artifact receipts' >&2; exit 1; }
+          nix run "$SDLC_FLAKE"#sdlc -- release receipts \
+            --ledger "$SDLC_RELEASE_LEDGER" \
+            --receipts "$SDLC_RELEASE_RECEIPTS" \
+            --version "$version" \
+            --merged-sha "$MERGED_SHA" \
+            --source-sha "$source_sha"
       - name: Record completed publication
         env:
           GH_TOKEN: ${{ steps.release-app.outputs.token }}
@@ -180,6 +185,10 @@ jobs:
           version="$(jq -r .version .sdlc/release.json)"
           tag="v${version}"
           asset="sdlc-source-${version}-${MERGED_SHA}.tar.gz"
+          release_json="$(gh release view "$tag" --json isDraft,isPrerelease,assets)"
+          if [[ "$(jq -r '.isDraft' <<<"$release_json")" == true ]]; then
+            gh release edit "$tag" --draft=false
+          fi
           release_json="$(gh release view "$tag" --json isDraft,isPrerelease,assets)"
           [[ "$(jq -r '.isDraft' <<<"$release_json")" == false ]] || { echo 'GitHub Release is still draft' >&2; exit 1; }
           [[ "$(jq -r '.isPrerelease' <<<"$release_json")" == false ]] || { echo 'GitHub Release is prerelease' >&2; exit 1; }

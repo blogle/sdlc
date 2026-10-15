@@ -1,63 +1,68 @@
-"""Regression guards for Hestia cache wiring and PR/default-branch isolation."""
+"""The reusable workflow is the sole CI stage definition."""
 
 from pathlib import Path
 import unittest
 
+
 ROOT = Path(__file__).parents[1]
 
 
-def source(path: str) -> str:
-    return (ROOT / path).read_text()
-
-
-class HestiaCacheWorkflowTests(unittest.TestCase):
-    def test_filters_upstream_in_eval_and_build_jobs(self):
-        workflow = source(".github/workflows/stage.yml")
-        self.assertEqual(workflow.count("uses: Mic92/hestia@v3"), 2)
-        self.assertEqual(workflow.count("upstream-cache-filter: true"), 2)
-        self.assertEqual(
-            workflow.count('upstream-cache-key-names: "cache.nixos.org-1 nix-community.cachix.org-1"'),
-            2,
-        )
-        # Derivation closures must be filtered in the evaluating job only.
-        self.assertEqual(workflow.count("filter-drv-closures: true"), 1)
-        self.assertIn('INSTALLABLES: ${{ matrix.installables }}', workflow)
-        self.assertIn('"$HESTIA_BIN" prefetch "${installables[@]}"', workflow)
-        self.assertNotIn('run: nix build -L ${{ matrix.installables }}', workflow)
-        self.assertIn("wait-manifest-version: ${{ needs.evaluate.outputs.manifest-version }}", workflow)
-
-    def test_sdlc_populates_default_branch_cache(self):
-        workflow = source(".github/workflows/ci.yml")
-        self.assertIn("push:\n    branches: [main, master]", workflow)
-        self.assertIn("cache-warm:", workflow)
-        self.assertIn("uses: ./.github/workflows/candidate.yml", workflow)
-        self.assertIn("github.event_name == 'push' && github.ref == format(", workflow)
-
-    def test_consumer_examples_publish_on_default_branch_only(self):
-        for example in ("minimal", "clean-room"):
-            with self.subTest(example=example):
-                workflow = source(f"examples/{example}/.github/workflows/ci.yml")
-                self.assertIn("cache-warm:", workflow)
-                self.assertIn("uses: blogle/sdlc/.github/workflows/candidate.yml@v1.2.3", workflow)
-                self.assertIn(
-                    "github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)",
-                    workflow,
-                )
-
-    def test_gc_has_write_permission_and_only_runs_on_default_branch(self):
-        workflow = source(".github/workflows/hestia-gc.yml")
-        self.assertIn("actions: write", workflow)
+class SharedCiContractTests(unittest.TestCase):
+    def test_reusable_workflow_defines_fast_verify_and_policy_jobs(self):
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        self_workflow = (ROOT / ".github/workflows/ci-self.yml").read_text()
+        stage = (ROOT / ".github/workflows/stage.yml").read_text()
         self.assertIn("workflow_call:", workflow)
-        self.assertIn("schedule:", workflow)
-        self.assertIn("github.ref == format('refs/heads/{0}', github.event.repository.default_branch)", workflow)
-        self.assertIn("GITHUB_TOKEN: ${{ github.token }}", workflow)
-        self.assertIn('"$HESTIA_BIN" gc', workflow)
-        self.assertIn("group: hestia-gc-", workflow)
+        self.assertIn("stage.yml", workflow)
+        self.assertIn("merge_group:", self_workflow)
+        self.assertIn("uses: ./.github/workflows/ci.yml", self_workflow)
+        self.assertIn("ci.x86_64-linux.${{ inputs.stage == 'check' && 'fast' || 'verify' }}", stage)
+        self.assertIn("github:blogle/sdlc/${{ inputs.sdlc_ref }}#nix-eval-jobs", stage)
+        self.assertIn("Mic92/hestia@v3", stage)
+        self.assertIn("Mic92/hestia/matrix@v3", stage)
+        self.assertNotIn("sdlc / ${{ inputs.stage }}", stage)
+        self.assertIn("name: check", workflow)
+        self.assertIn("pr-fast-context:\n    name: pr-fast", workflow)
+        self.assertIn("needs: [check]", workflow)
+        self.assertIn('test "${{ needs.check.result }}" = success', workflow)
+        self.assertIn("name: verify", workflow)
+        self.assertIn("name: policy", workflow)
+        self.assertIn("nix run .#sdlc -- install --check", workflow)
 
-    def test_source_ci_does_not_run_candidate_on_default_branch_as_required_gate(self):
-        workflow = source(".github/workflows/ci.yml")
-        self.assertIn(
-            "if: github.event_name == 'pull_request' && startsWith(github.event.pull_request.head.ref, 'mergify/merge-queue/')",
-            workflow,
-        )
-        self.assertIn("if: always() && github.event_name == 'pull_request'", workflow)
+    def test_full_verification_runs_only_for_merge_queue_candidates(self):
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        verify = workflow.split("  verify:", 1)[1].split("  policy:", 1)[0]
+        self.assertIn("github.event_name == 'merge_group'", verify)
+        self.assertIn("mergify/merge-queue/", verify)
+        self.assertIn("github.event.repository.default_branch", verify)
+
+    def test_hestia_gate_requires_all_evaluated_builds_and_accepts_empty_cached_matrix(self):
+        stage = (ROOT / ".github/workflows/stage.yml").read_text()
+        gate = stage.split("  gate:", 1)[1]
+        self.assertIn("test \"$EVALUATE_RESULT\" = success", gate)
+        self.assertIn('if [[ "$ANY_JOBS" == true ]]; then', gate)
+        self.assertIn('test "$BUILD_RESULT" = success', gate)
+        self.assertIn('test "$BUILD_RESULT" = skipped', gate)
+        self.assertIn("fail-fast: false", stage)
+        self.assertIn('nix build -L "${installables[@]}"', stage)
+
+    def test_release_specific_status_is_not_a_global_required_context(self):
+        ruleset = (ROOT / "rulesets/default-branch.json").read_text()
+        self.assertIn('"context": "sdlc / check", "integration_id": 15368', ruleset)
+        self.assertIn('"context": "sdlc / policy", "integration_id": 15368', ruleset)
+        self.assertIn('"context": "Mergify Merge Protections", "integration_id": 10562', ruleset)
+        self.assertNotIn('"context": "sdlc / release-gate"', ruleset)
+        self.assertNotIn("IS_RELEASE", (ROOT / ".github/workflows/ci.yml").read_text())
+
+    def test_mergify_queues_after_fast_check_and_merges_after_verify(self):
+        policy = (ROOT / ".mergify.yml").read_text()
+        self.assertIn("check-success = @github-actions/sdlc / check", policy)
+        self.assertIn("check-success = @github-actions/sdlc / verify", policy)
+        self.assertIn("label != release", policy)
+
+    def test_required_mergify_protection_blocks_direct_merge_routes(self):
+        policy = (ROOT / ".mergify.yml").read_text()
+        self.assertIn("merge_protections:", policy)
+        self.assertIn("queue-name = validated candidates", policy)
+        self.assertIn("check-success = @mergify/Mergify Merge Queue", policy)
+        self.assertIn("check-success = @sdlc-release/sdlc / release-gate", policy)

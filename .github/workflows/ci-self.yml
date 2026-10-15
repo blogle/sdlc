@@ -1,0 +1,14 @@
+name: SDLC CI
+on:
+  pull_request:
+  merge_group:
+  push:
+    branches: [main, master]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  sdlc:
+    uses: ./.github/workflows/ci.yml
+    with:
+      sdlc_ref: ${{ github.sha }}

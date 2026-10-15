@@ -5,6 +5,9 @@ on:
       stage:
         type: string
         required: true
+      sdlc_ref:
+        type: string
+        required: true
 permissions:
   contents: read
   actions: read
@@ -28,22 +31,17 @@ jobs:
             trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=
       - uses: Mic92/hestia@v3
         with:
-          # Keep upstream-signed outputs in their upstream caches rather than
-          # filling the repository's GitHub Actions cache with Nixpkgs closures.
           upstream-cache-filter: true
           upstream-cache-key-names: "cache.nixos.org-1 nix-community.cachix.org-1"
-          # Matrix evaluation registers the input .drv closures. They must
-          # use the same filter as the build jobs, with prefetch below.
           filter-drv-closures: true
       - name: Validate consumer changelog fragments
-        if: inputs.stage == 'pr-fast'
+        if: inputs.stage == 'check'
         run: nix run .#sdlc -- changelog check
       - uses: Mic92/hestia/matrix@v3
         id: hestia
         with:
-          flake: .#hydraJobs.x86_64-linux.ci-${{ inputs.stage }}
-          nix-eval-jobs: "nix run .#nix-eval-jobs --"
-
+          flake: .#ci.x86_64-linux.${{ inputs.stage == 'check' && 'fast' || 'verify' }}
+          nix-eval-jobs: "nix run github:blogle/sdlc/${{ inputs.sdlc_ref }}#nix-eval-jobs --"
   build:
     needs: evaluate
     if: needs.evaluate.outputs.any-jobs == 'true'
@@ -75,14 +73,12 @@ jobs:
         run: |
           read -r -a installables <<< "$INSTALLABLES"
           nix build -L "${installables[@]}"
-
   gate:
-    name: sdlc / ${{ inputs.stage }}
     if: always()
     needs: [evaluate, build]
     runs-on: ubuntu-latest
     steps:
-      - name: Aggregate native Hestia matrix result
+      - name: Aggregate Hestia matrix result (empty means cached)
         env:
           EVALUATE_RESULT: ${{ needs.evaluate.result }}
           BUILD_RESULT: ${{ needs.build.result }}

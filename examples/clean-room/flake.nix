@@ -8,9 +8,12 @@
     let
       systems = [ "x86_64-linux" ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
-      consumer = system: sdlc.lib.mkConsumer {
-        contract = import ./ci.nix { inherit self system; };
-      };
+      consumer = system:
+        let
+          ci = import ./ci.nix { inherit self system; };
+          pkgs = nixpkgs.legacyPackages.${system};
+          publish = { type = "app"; program = "${pkgs.writeShellScriptBin "publish" "echo publication hook"}/bin/publish"; };
+        in sdlc.lib.mkConsumer { inherit (ci) fast verify; inherit publish; };
     in {
       checks = forAllSystems (system:
         let
@@ -21,11 +24,8 @@
           contract = pkgs.runCommand "clean-room-contract" { } ''touch $out'';
           candidate = pkgs.runCommand "clean-room-candidate" { } ''touch $out'';
           artifact = pkgs.runCommand "clean-room-artifact" { } ''touch $out'';
-          generated-stage-contract = pkgs.runCommand "clean-room-stage-contract" {
-            buildInputs = builtins.attrValues ci.hydraJobs.ci-pr-fast ++ builtins.attrValues ci.hydraJobs.ci-candidate;
-          } ''touch $out'';
         });
-      hydraJobs = forAllSystems (system: (consumer system).hydraJobs);
+      ci = forAllSystems consumer;
       packages = forAllSystems (system:
         { nix-eval-jobs = nixpkgs.legacyPackages.${system}.nix-eval-jobs; });
     };

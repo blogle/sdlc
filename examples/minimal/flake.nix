@@ -14,25 +14,25 @@
         let
           pkgs = nixpkgs.legacyPackages.${system};
         in {
-          fast = pkgs.runCommand "consumer-fast" { } ''echo fast admission; touch $out'';
-          fast-contract = pkgs.runCommand "consumer-contract" { } ''echo validate declared contract; touch $out'';
-          candidate = pkgs.runCommand "consumer-candidate" { } ''echo synthetic candidate validation; touch $out'';
-          candidate-artifact = pkgs.runCommand "consumer-candidate-artifact" { } ''echo candidate artifact derivation; touch $out'';
+          format = pkgs.runCommand "consumer-format-check" { nativeBuildInputs = [ pkgs.coreutils ]; } ''
+            test -f ${./flake.nix}
+            touch $out
+          '';
+          tests = pkgs.runCommand "consumer-unit-tests" { nativeBuildInputs = [ pkgs.coreutils ]; } ''
+            test -f ${./ci.nix}
+            touch $out
+          '';
         });
-      hydraJobs = nixpkgs.lib.genAttrs systems (system:
-        let ci = sdlc.lib.mkConsumer {
-          contract = import ./ci.nix { inherit self system; };
-        };
-        in ci.hydraJobs);
-      apps = nixpkgs.lib.genAttrs systems (system:
-        {
-          sdlc = { type = "app"; program = "${sdlc.packages.${system}.sdlc}/bin/sdlc"; };
-        });
+      ci = nixpkgs.lib.genAttrs systems (system:
+        let
+          ci = import ./ci.nix { inherit self system; };
+          pkgs = nixpkgs.legacyPackages.${system};
+          publish = { type = "app"; program = "${pkgs.writeShellScriptBin "publish" "echo publication hook"}/bin/publish"; };
+        in sdlc.lib.mkConsumer (ci // { inherit publish; }));
       packages = nixpkgs.lib.genAttrs systems (system:
         let pkgs = nixpkgs.legacyPackages.${system};
         in {
-          sdlc = sdlc.packages.${system}.sdlc;
-          nix-eval-jobs = pkgs.nix-eval-jobs;
+           sdlc = sdlc.packages.${system}.sdlc;
         });
       devShells = nixpkgs.lib.genAttrs systems (system:
         let pkgs = nixpkgs.legacyPackages.${system};

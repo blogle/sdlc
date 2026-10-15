@@ -116,14 +116,19 @@ class ArtifactLedger:
     def load_or_create(cls, path: Path, identity: ReleaseIdentity) -> "ArtifactLedger":
         if path.exists():
             data = json.loads(path.read_text())
+            if not isinstance(data, dict) or data.get("schema") != 1 or not isinstance(data.get("artifacts"), dict):
+                raise IdentityError("artifact ledger is malformed or has an unsupported schema")
             expected = {
                 "version": identity.version,
                 "merged_sha": identity.commit,
                 "source_main_sha": identity.source_main,
                 "tree_sha": identity.tree,
+                "changelog_sha256": identity.changelog_digest,
+                "fragments": [[path, blob] for path, blob in identity.fragments],
             }
             if any(data.get(key) != value for key, value in expected.items()):
                 raise IdentityError("artifact ledger belongs to a different release identity")
+            data.setdefault("consumer_receipts_recorded", False)
             return cls(path, data)
         return cls(path, {
             "schema": 1,
@@ -135,6 +140,7 @@ class ArtifactLedger:
             "fragments": [[path, blob] for path, blob in identity.fragments],
             "artifacts": {},
             "tagged": False,
+            "consumer_receipts_recorded": False,
             "published": False,
         })
 
@@ -154,6 +160,8 @@ class ArtifactLedger:
     def mark_published(self) -> None:
         if not self.data.get("tagged"):
             raise IdentityError("cannot publish before the exact tag is recorded")
+        if not self.data.get("consumer_receipts_recorded"):
+            raise IdentityError("cannot publish before consumer artifact receipts are validated")
         self.data["published"] = True
 
     def save(self) -> None:
@@ -177,17 +185,32 @@ def record_receipts(ledger_path: Path, receipts_path: Path, version: str, merged
     artifacts = data.get("artifacts") if isinstance(data, dict) else None
     if not isinstance(data, dict) or data.get("schema") != 1 or not isinstance(artifacts, list) or not artifacts:
         raise IdentityError("publication receipts must be schema 1 with at least one artifact")
+    identity = validate_checkout(merged_sha)
+    if (identity.version, identity.source_main) != (version, source_sha):
+        raise IdentityError("publication receipt inputs do not match the merged release manifest")
     ledger = json.loads(ledger_path.read_text())
-    if any(ledger.get(key) != value for key, value in {"version": version, "merged_sha": merged_sha, "source_main_sha": source_sha}.items()):
+    expected = {
+        "version": identity.version,
+        "merged_sha": identity.commit,
+        "source_main_sha": identity.source_main,
+        "tree_sha": identity.tree,
+        "changelog_sha256": identity.changelog_digest,
+        "fragments": [[path, blob] for path, blob in identity.fragments],
+    }
+    if not isinstance(ledger, dict) or any(ledger.get(key) != value for key, value in expected.items()):
         raise IdentityError("publication receipts do not match the release identity")
-    identity = ReleaseIdentity(version, merged_sha, source_sha, ledger["tree_sha"], ledger["changelog_sha256"], tuple(map(tuple, ledger["fragments"])))
     target = ArtifactLedger.load_or_create(ledger_path, identity)
+    names: set[str] = set()
     for artifact in artifacts:
         if not isinstance(artifact, dict) or not isinstance(artifact.get("name"), str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", str(artifact.get("digest", ""))):
             raise IdentityError("publication receipt artifact requires name and sha256 digest")
+        if not artifact["name"].strip() or artifact["name"] in names:
+            raise IdentityError("publication receipt artifact names must be non-empty and unique")
+        names.add(artifact["name"])
         if artifact.get("version") != version or artifact.get("merged_sha") != merged_sha or artifact.get("source_main_sha") != source_sha:
             raise IdentityError("publication receipt artifact identity does not match the release")
         target.record_artifact(artifact["name"], artifact["digest"][len("sha256:"):])
+    target.data["consumer_receipts_recorded"] = True
     target.save()
 
 
@@ -201,10 +224,54 @@ def record_artifact(ledger_path: Path, commit: str, name: str, digest: str) -> N
 
 def mark_published(ledger_path: Path) -> None:
     data = json.loads(ledger_path.read_text())
-    identity = ReleaseIdentity(data["version"], data["merged_sha"], data["source_main_sha"], data["tree_sha"], data["changelog_sha256"], tuple(map(tuple, data["fragments"])))
+    if not isinstance(data, dict) or not isinstance(data.get("merged_sha"), str):
+        raise IdentityError("artifact ledger is malformed")
+    identity = validate_checkout(data["merged_sha"])
     ledger = ArtifactLedger.load_or_create(ledger_path, identity)
     ledger.mark_published()
     ledger.save()
+
+
+def invoke_consumer_publish(consumer_flake: str, system: str) -> None:
+    """Build and run the pinned consumer's canonical ``ci.publish`` app."""
+    version = os.environ.get("SDLC_RELEASE_VERSION", "")
+    merged_sha = _sha(os.environ.get("SDLC_RELEASE_MERGED_SHA"), "SDLC_RELEASE_MERGED_SHA")
+    source_sha = _sha(os.environ.get("SDLC_RELEASE_SOURCE_SHA"), "SDLC_RELEASE_SOURCE_SHA")
+    receipts = os.environ.get("SDLC_RELEASE_RECEIPTS", "")
+    if not VERSION_RE.fullmatch(version):
+        raise IdentityError("SDLC_RELEASE_VERSION must be a semantic version")
+    if not receipts:
+        raise IdentityError("SDLC_RELEASE_RECEIPTS is required")
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", system):
+        raise IdentityError("consumer system must be a Nix system identifier")
+
+    identity = validate_checkout(merged_sha)
+    if (identity.version, identity.source_main) != (version, source_sha):
+        raise IdentityError("publisher environment does not match the actual merged release identity")
+
+    installable = f"{consumer_flake}#ci.{system}.publish.program"
+    program = subprocess.run(
+        ["nix", "eval", "--no-write-lock-file", "--raw", installable],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    derivation = subprocess.run(
+        [
+            "nix", "eval", "--no-write-lock-file", "--raw", installable,
+            "--apply", "program: builtins.head (builtins.attrNames (builtins.getContext program))",
+        ],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    store_dir = subprocess.run(
+        ["nix", "eval", "--no-write-lock-file", "--raw", "--expr", "builtins.storeDir"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    if not program.startswith(f"{store_dir}/") or not derivation.endswith(".drv"):
+        raise IdentityError("ci.publish.program is not a store-backed executable Nix app")
+
+    subprocess.run(["nix-store", "--realise", derivation], check=True)
+    if not Path(program).is_file() or not os.access(program, os.X_OK):
+        raise IdentityError("ci.publish.program did not build an executable")
+    subprocess.run([program], check=True)
 
 
 def verify_tag(tag_sha: str, merged_sha: str) -> None:

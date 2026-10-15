@@ -1,0 +1,5 @@
+{
+  "type": "feat",
+  "semver": "minor",
+  "summary": "Add pinned consumer adapters and manifest-driven fleet delivery"
+}

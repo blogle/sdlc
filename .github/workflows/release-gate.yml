@@ -10,9 +10,9 @@ on:
         default: ""
     secrets:
       SDLC_RELEASE_APP_ID:
-        required: true
+        required: false
       SDLC_RELEASE_APP_PRIVATE_KEY:
-        required: true
+        required: false
   pull_request_target:
     types: [opened, synchronize, reopened]
   push:
@@ -29,11 +29,11 @@ permissions:
 jobs:
   pull-request-gate:
     name: release gate driver
-    if: github.event_name == 'pull_request_target' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    if: vars.SDLC_RELEASE_ACTIVATE == 'true' && (github.event_name == 'pull_request_target' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      checks: write
+      checks: read
       pull-requests: read
     steps:
       - uses: actions/checkout@v4
@@ -52,12 +52,12 @@ jobs:
           app-id: ${{ secrets.SDLC_RELEASE_APP_ID }}
           private-key: ${{ secrets.SDLC_RELEASE_APP_PRIVATE_KEY }}
           permission-contents: read
+          permission-administration: read
           permission-pull-requests: read
           permission-checks: write
       - name: Verify and publish head-specific gate
         env:
           GH_TOKEN: ${{ steps.release-app.outputs.token }}
-          SDLC_RULESET_TOKEN: ${{ github.token }}
           RELEASE_BOT_LOGIN: ${{ vars.SDLC_RELEASE_BOT_LOGIN }}
           RELEASE_APP_SLUG: ${{ steps.release-app.outputs.app-slug }}
           SDLC_RULESET_ATTESTATION: ${{ vars.SDLC_RULESET_ATTESTATION }}
@@ -81,7 +81,7 @@ jobs:
             [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]] || continue
             git fetch --no-tags origin "$head_sha"
             for ((attempt = 1; attempt <= 12; attempt++)); do
-              check_state="$(gh api "repos/$GITHUB_REPOSITORY/commits/$head_sha/check-runs?per_page=100" --jq '[.check_runs[] | select(.name == "sdlc / pr-fast" and .head_sha == "'"$head_sha"'")] | sort_by(.started_at) | last | [.status // "", .conclusion // ""] | @tsv')"
+              check_state="$(gh api "repos/$GITHUB_REPOSITORY/commits/$head_sha/check-runs?per_page=100" --jq '[.check_runs[] | select(.name == "sdlc / check" and .head_sha == "'"$head_sha"'")] | sort_by(.started_at) | last | [.status // "", .conclusion // ""] | @tsv')"
               [[ "${check_state%%$'\t'*}" == completed ]] && break
               sleep 10
             done
@@ -96,15 +96,21 @@ jobs:
               -f status=completed -f conclusion="$conclusion" \
               -f 'output[title]=Release gate' -f 'output[summary]=Release candidate validation completed.'
             [[ "$result" -eq 0 ]] || exit "$result"
+            for ((attempt = 1; attempt <= 24; attempt++)); do
+              merge_protection="$(gh api "repos/$GITHUB_REPOSITORY/commits/$head_sha/check-runs?per_page=100" --jq '[.check_runs[] | select(.name == "Mergify Merge Protections" and .head_sha == "'"$head_sha"'" and .app.slug == "mergify")] | sort_by(.started_at) | last | [.status // "", .conclusion // ""] | @tsv')"
+              [[ "$merge_protection" == $'completed\tsuccess' ]] && break
+              sleep 5
+            done
+            [[ "$merge_protection" == $'completed\tsuccess' ]] || { echo 'Mergify Merge Protections did not pass for the exact release head' >&2; exit 1; }
           done
 
   base-refresh:
     name: refresh release gate after main advances
-    if: github.event_name == 'push'
+    if: vars.SDLC_RELEASE_ACTIVATE == 'true' && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      checks: write
+      checks: read
       pull-requests: read
     steps:
       - uses: actions/checkout@v4
@@ -122,12 +128,12 @@ jobs:
           app-id: ${{ secrets.SDLC_RELEASE_APP_ID }}
           private-key: ${{ secrets.SDLC_RELEASE_APP_PRIVATE_KEY }}
           permission-contents: read
+          permission-administration: read
           permission-pull-requests: read
           permission-checks: write
       - name: Revalidate every open release head
         env:
           GH_TOKEN: ${{ steps.release-app.outputs.token }}
-          SDLC_RULESET_TOKEN: ${{ github.token }}
           RELEASE_BOT_LOGIN: ${{ vars.SDLC_RELEASE_BOT_LOGIN }}
           RELEASE_APP_SLUG: ${{ steps.release-app.outputs.app-slug }}
           SDLC_RULESET_ATTESTATION: ${{ vars.SDLC_RULESET_ATTESTATION }}
@@ -140,7 +146,7 @@ jobs:
             head_sha="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq '.head.sha')"
             git fetch --no-tags origin "$head_sha"
             for ((attempt = 1; attempt <= 12; attempt++)); do
-              check_state="$(gh api "repos/$GITHUB_REPOSITORY/commits/$head_sha/check-runs?per_page=100" --jq '[.check_runs[] | select(.name == "sdlc / pr-fast" and .head_sha == "'"$head_sha"'")] | sort_by(.started_at) | last | [.status // "", .conclusion // ""] | @tsv')"
+              check_state="$(gh api "repos/$GITHUB_REPOSITORY/commits/$head_sha/check-runs?per_page=100" --jq '[.check_runs[] | select(.name == "sdlc / check" and .head_sha == "'"$head_sha"'")] | sort_by(.started_at) | last | [.status // "", .conclusion // ""] | @tsv')"
               [[ "${check_state%%$'\t'*}" == completed ]] && break
               sleep 10
             done

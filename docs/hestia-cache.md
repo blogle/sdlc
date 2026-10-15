@@ -31,38 +31,27 @@ locally built outputs are still eligible for Hestia. The checks remain ordinary
 Nix derivations; this change does not introduce custom file/target dependency
 tracking or disable inexpensive Nix-backed checks.
 
-No Hestia setting can make PR writes visible to other PRs. SDLC itself warms
-its default-branch cache on main/master pushes. **Consumers must wire their
-own default-branch push trigger**, because a reusable workflow cannot add
-triggers to its caller.
-
-For a Mergify-based consumer, add the following to the caller workflow (using
-the same pinned SDLC version as its other workflow calls):
+No Hestia setting can make PR writes visible to other PRs. SDLC warms its
+default-branch cache on main/master pushes. The generated consumer `sdlc.yml`
+caller also enables a default-branch verify run; this is not a required PR
+status context.
 
 ~~~yaml
-on:
-  pull_request:
-  push:
-    branches: [main, master]  # include your actual default branch
-
 jobs:
-  # Existing PR fast, candidate, and required-gate jobs remain intact.
-  cache-warm:
-    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-    uses: blogle/sdlc/.github/workflows/candidate.yml@<PINNED_SDLC_RELEASE>
+  sdlc:
+    uses: blogle/sdlc/.github/workflows/ci.yml@<PINNED_SDLC_SHA>
 ~~~
 
-The push job should not be used as a required PR status context. It rebuilds
-the candidate stage on the **merged** default-branch commit, thereby
+The push-triggered verify stage should not be used as a required PR status
+context. It builds the verify derivations on the **merged** default-branch commit, thereby
 publishing entries that later PRs can substitute. Since GitHub forbids
 promoting PR-scoped cache entries directly into the default scope, the first
 post-merge run may rebuild previously tested outputs. Later PRs benefit.
-There is no need to rerun all other CI jobs on default-branch pushes just to
-warm the cache; only the candidate stage must run.
+It also runs the fast stage on that push, but both stages are Hestia-cache-aware;
+only missing derivations need build runners.
 
-SDLC's minimal and clean-room examples demonstrate the push job. Their
-example workflow release pins are independent examples; consuming repos
-must update to the SDLC release containing this change.
+SDLC's generated cache-GC workflow also uses a separate `actions: write`
+permission boundary so the ordinary CI caller remains read-only.
 
 ## Garbage collection
 
@@ -72,13 +61,13 @@ hestia-gc.yml workflow with a read-only dry run, default-branch guard,
 serialized GC runs, and the actions:write permission needed to delete cache
 entries. SDLC itself runs GC daily.
 
-Each consuming repository can opt in with its own scheduled caller:
+`sdlc install` generates a separate scheduled caller in each consumer:
 
 ~~~yaml
-name: Hestia GC
+name: SDLC cache maintenance
 on:
   schedule:
-    - cron: "23 3 * * *"
+    - cron: '23 3 * * *'
   workflow_dispatch:
     inputs:
       dry_run:
@@ -88,10 +77,8 @@ permissions:
   contents: read
   actions: write
 jobs:
-  gc:
-    uses: blogle/sdlc/.github/workflows/hestia-gc.yml@<PINNED_SDLC_RELEASE>
-    with:
-      dry_run: ${{ inputs.dry_run || false }}
+  garbage-collect:
+    uses: blogle/sdlc/.github/workflows/hestia-gc.yml@<PINNED_SDLC_SHA>
 ~~~
 
 Schedules run against the repository's default branch. Do not invoke GC from

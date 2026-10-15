@@ -1,9 +1,14 @@
+merge_protections_settings:
+  reporting_method: check-runs
+  post_comment: false
+
 pull_request_rules:
-  - name: automatically queue validated candidates
+  - name: queue validated feature PRs
     conditions:
       - base ~= ^(main|master)$
       - head != sdlc/release-next
-      - check-success = "sdlc / pr-fast"
+      - label != release
+      - check-success = @github-actions/sdlc / check
       - or:
           - and:
               - label = integration:auto
@@ -21,7 +26,8 @@ queue_rules:
     queue_conditions:
       - base ~= ^(main|master)$
       - head != sdlc/release-next
-      - check-success = "sdlc / pr-fast"
+      - label != release
+      - check-success = @github-actions/sdlc / check
       - or:
           - and:
               - label = integration:auto
@@ -31,21 +37,24 @@ queue_rules:
               - label != integration:auto
               - "#approved-reviews-by >= 1"
     merge_conditions:
-      - check-success = "sdlc / candidate"
+      - check-success = @github-actions/sdlc / verify
     batch_size: 5
     batch_max_wait_time: 2 minutes
     merge_method: squash
     update_method: merge
 
-commands_restrictions:
-  queue:
-    conditions:
-      - or:
-          - sender-permission >= write
-          - sender = anvil-daemon[bot]
-
-merge_queue:
-  max_parallel_checks: 5
-  mode: serial
-  queue_controls_comment: true
-  status_comments: all
+merge_protections:
+  - name: Feature PRs merge only after queue verification
+    if:
+      - base ~= ^(main|master)$
+      - head != sdlc/release-next
+    success_conditions:
+      - queue-name = validated candidates
+      - check-success = @mergify/Mergify Merge Queue
+  - name: Release candidate needs trusted SDLC gate
+    if:
+      - base ~= ^(main|master)$
+      - head = sdlc/release-next
+    success_conditions:
+      - check-success = @sdlc-release/sdlc / release-gate
+      - "#commits-behind = 0"

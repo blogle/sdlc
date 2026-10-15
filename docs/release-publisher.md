@@ -4,7 +4,12 @@ This is the publisher-side contract for the rolling-release architecture in
 [release-manifest.md](release-manifest.md). Canonical protection is active on
 `blogle/sdlc` as ruleset
 [24821903](https://github.com/blogle/sdlc/rules/24821903), with squash-only
-merges, required `sdlc / pr-fast`, non-strict freshness, and no bypass actors.
+merges, required `sdlc / check` and `sdlc / policy` contexts bound to the
+GitHub Actions app, required `Mergify Merge Protections` bound to Mergify,
+non-strict freshness, and no bypass actors. Mergify requires `sdlc / verify`
+for queue candidates; it is intentionally not a global PR-head requirement.
+The Mergify protection check blocks direct merges and routes rolling release
+PRs through the trusted App-owned release gate.
 
 The release GitHub App is `sdlc-release[bot]`. Actions reads its credentials
 from `SDLC_RELEASE_APP_ID` and `SDLC_RELEASE_APP_PRIVATE_KEY`, and verifies
@@ -23,27 +28,35 @@ read/write operations; fully hands-off fleet onboarding therefore waits for
 that narrow gateway surface. Private keys must not enter coding-agent contexts,
 and no activation is implied for Anvil.
 
+The App needs repository permissions for contents, pull requests, checks, and
+packages as used by the corresponding workflow jobs, plus **Administration:
+read** to inspect the canonical ruleset. It must not receive Administration:
+write. GitHub can still redact `bypass_actors` from that read scope, so release
+jobs require the current attestation described below.
+
 ## Automatic workflow
 
 1. A feature PR with a valid `.changes/*.json` fragment passes
-   `sdlc / pr-fast` and enters the normal Mergify queue
+   `sdlc / check` and enters the normal Mergify queue
    (`integration:auto`). Only Mergify merges feature PRs.
-2. A `push` to `main` runs `self-release.yml`, which calls the shared
-   `release.yml` and `release-reconcile.yml`. The reconciler first proves
-   the previous tagged release has a published, digest-identified artifact.
-   It then opens or replaces `sdlc/release-next` as the release App.
+2. A `push` to the default branch, schedule, or successful release workflow
+   completion calls the generated pinned reconciler. When release activation
+   is enabled, it first proves the previous tagged release has a completed,
+   digest-identified publication, then opens or refreshes one
+   `sdlc/release-next` PR as the release App. Disabled activation skips
+   reconciliation, merge, and publication mutations.
 3. The release PR is excluded from Mergify. Its ordinary PR CI and the
    independent `sdlc / release-gate` verify exact candidate bytes, a
    deterministic replay, App identity, and the live source parent. After CI
    completes, the trusted gate workflow revalidates the exact release head.
-4. The trusted release merger rechecks the required head checks and live
-   `main`, then squash-merges through the GitHub API with the expected head
-   SHA. It dispatches `release.yml` with the *actual* merge commit SHA and
-   `activate` from `vars.SDLC_RELEASE_ACTIVATE`.
-5. The publisher verifies this identity, prepares one source archive,
-   creates or verifies the exact annotated version tag, persists immutable
-   artifact bytes in a GitHub Release, and finalizes the non-draft release
-   through the consumer-owned `just release-publish <version>` hook.
+4. The trusted release merger rechecks the required check and policy contexts,
+   the App-owned release-gate result, live protection, and current `main`, then
+   squash-merges with the expected head SHA. It reads the actual GitHub merge
+   commit SHA and passes that output directly to publication.
+5. The publisher validates the merged tree, prepares or verifies the exact
+   immutable source asset and version tag, resolves and runs the executable at
+   `ci.<system>.publish`, validates its identity-bound artifact receipts, and
+   only then marks the GitHub Release complete.
 
 No human review or branch-protection bypass is part of the release path.
 A failed prerequisite blocks the release; it must not be represented as
@@ -88,18 +101,21 @@ verifier and independently check the complete source-to-merged tree diff.
   Durable bytes are stored as an asset named with the version and exact
   merged SHA. On retry the publisher downloads and verifies an existing
   asset; it never relies on a 90-day Actions artifact or overwrites bytes.
+- `ci.publish` runs from the exact merged consumer commit with
+  `SDLC_RELEASE_VERSION`, `SDLC_RELEASE_MERGED_SHA`,
+  `SDLC_RELEASE_SOURCE_SHA`, and `SDLC_RELEASE_RECEIPTS`. The shared publisher
+  validates the receipt schema and identity, records immutable artifact
+  digests, and refuses completion without at least one receipt.
 - An existing `v<version>` annotated tag is accepted only if it resolves
   to the exact merged SHA. A conflicting tag is a hard failure.
 - Publication is serialized per repository without canceling previous work.
   There is no `push` trigger in the reusable publisher; the trusted merger
   dispatches it after the release PR merges.
 
-After a transient failure, inspect the release-merge and publisher Actions
-runs, identify the **actual squash-merged release commit**, and only then
-retry the publisher with that SHA and `activate=true`. Do not substitute
-the release PR's replaceable head SHA, the workflow event SHA, or current
-`main`. A successful retry must retain the existing release asset ID and
-SHA-256 digest, not silently replace an existing artifact.
+After a transient failure, rerun the trusted release-merge workflow. Its
+recovery path revalidates the historical candidate and discovers the actual
+merged SHA; it does not require an operator-supplied SHA. The publisher reuses
+existing immutable assets and rejects any changed digest.
 
 The first SDLC release, [v1.2.0](https://github.com/blogle/sdlc/releases/tag/v1.2.0),
 required a manual recovery dispatch after publisher hotfixes. The successor

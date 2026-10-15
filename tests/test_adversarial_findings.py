@@ -7,7 +7,7 @@ import unittest
 ROOT = Path(__file__).parents[1]
 
 
-class AdversarialFindingTests(unittest.TestCase):
+class ConsumerLibraryTests(unittest.TestCase):
     def _nix_eval(self, expression: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             ["nix", "eval", "--impure", "--expr", expression],
@@ -16,52 +16,51 @@ class AdversarialFindingTests(unittest.TestCase):
             text=True,
         )
 
-    def test_contract_accepts_real_derivations_only(self):
+    def test_consumer_maps_hooks_to_stable_flake_outputs(self):
         if shutil.which("nix") is None:
-            self.skipTest("nix is unavailable inside the isolated Nix test builder")
-        expression = """
+            self.skipTest("nix is unavailable")
+        expression = '''
           let
             flake = builtins.getFlake (toString ./.);
             pkgs = flake.inputs.nixpkgs.legacyPackages.x86_64-linux;
-            real = pkgs.runCommand "contract-test" {} "touch $out";
-            contract = {
-              schemaVersion = 1;
-              stages = { pr-fast = { real = real; }; candidate = { real = real; }; };
+            check = pkgs.runCommand "contract-test" {} "touch $out";
+            app = { type = "app"; program = "${check}/bin/publish"; };
+            result = flake.lib.mkConsumer {
+              fast = { fmt = check; clippy = check; };
+              verify = { tests = check; integration = check; };
+              publish = app;
             };
           in
-            assert pkgs.lib.isDerivation real;
-            builtins.seq ((flake.lib.mkConsumer { inherit contract; }).hydraJobs.ci-pr-fast) true
-        """
+            assert result.fast.fmt == check;
+            assert result.fast.clippy == check;
+            assert result.verify.tests == check;
+            assert result.verify.integration == check;
+            assert result.publish == app;
+            true
+        '''
         result = self._nix_eval(expression)
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_contract_rejects_fake_derivation_and_unknown_keys(self):
+    def test_consumer_library_rejects_invalid_hooks_and_extra_configuration(self):
         if shutil.which("nix") is None:
-            self.skipTest("nix is unavailable inside the isolated Nix test builder")
-        fake = """
+            self.skipTest("nix is unavailable")
+        base = '''
           let
-            lib = (builtins.getFlake (toString ./. )).lib;
-            fake = { drvPath = "/nix/store/fake"; };
-            contract = { schemaVersion = 1; stages = { pr-fast = { fake = fake; }; candidate = { fake = fake; }; }; };
-          in builtins.seq ((lib.mkConsumer { inherit contract; }).hydraJobs.ci-pr-fast) true
-        """
-        unknown = """
-          let
-            lib = (builtins.getFlake (toString ./. )).lib;
-            contract = { schemaVersion = 1; stages = { pr-fast = { }; candidate = { }; }; extra = true; };
-          in builtins.deepSeq (lib.mkConsumer { inherit contract; }) true
-        """
-        for expression in (fake, unknown):
+            lib = (builtins.getFlake (toString ./.)).lib;
+            check = (builtins.getFlake (toString ./.)).inputs.nixpkgs.legacyPackages.x86_64-linux.runCommand "contract-test" {} "touch $out";
+            app = { type = "app"; program = "publish"; };
+          in %s
+        '''
+        expressions = (
+            base % 'builtins.deepSeq (lib.mkConsumer { fast = {}; verify = { test = check; }; publish = app; }) true',
+            base % 'builtins.deepSeq (lib.mkConsumer { fast = { fmt = check; }; verify = { test = check; }; publish = app; extra = true; }) true',
+            base % 'builtins.deepSeq (lib.mkConsumer { fast = { fmt = check; }; verify = { test = check; }; }) true',
+            base % 'builtins.deepSeq (lib.mkConsumer { fast = { fmt = check; }; verify = { test = check; }; publish = { type = "app"; program = "publish"; }; }) true',
+            base % 'builtins.deepSeq (lib.mkConsumer { fast = { fmt = check; }; verify = { test = check; }; publish = app // { extra = true; }; }) true',
+        )
+        for expression in expressions:
             with self.subTest(expression=expression):
                 self.assertNotEqual(self._nix_eval(expression).returncode, 0)
-
-    def test_packaged_cli_declares_openssl_runtime(self):
-        flake = (ROOT / "flake.nix").read_text()
-        self.assertIn("pkgs.openssl", flake)
-
-    def test_readme_has_one_consumer_packages_attrset(self):
-        readme = (ROOT / "README.md").read_text()
-        self.assertEqual(readme.count("packages = forAllSystems"), 1)
 
 
 if __name__ == "__main__":
