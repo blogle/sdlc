@@ -29,6 +29,14 @@ jobs:
         run: |
           set -euo pipefail
           test "$STAGE_RESULT" = success
+  pr-fast-context:
+    name: sdlc / pr-fast
+    if: always() && github.event_name == 'pull_request'
+    needs: [check]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Preserve the legacy required context
+        run: test "${{ needs.check.result }}" = success
   verify:
     if: >-
       github.event_name == 'merge_group' ||
