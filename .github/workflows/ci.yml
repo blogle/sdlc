@@ -30,7 +30,7 @@ jobs:
           set -euo pipefail
           test "$STAGE_RESULT" = success
   pr-fast-context:
-    name: sdlc / pr-fast
+    name: pr-fast
     if: always() && github.event_name == 'pull_request'
     needs: [check]
     runs-on: ubuntu-latest

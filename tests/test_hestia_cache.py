@@ -22,7 +22,7 @@ class SharedCiContractTests(unittest.TestCase):
         self.assertIn("Mic92/hestia/matrix@v3", stage)
         self.assertNotIn("sdlc / ${{ inputs.stage }}", stage)
         self.assertIn("name: check", workflow)
-        self.assertIn("pr-fast-context:\n    name: sdlc / pr-fast", workflow)
+        self.assertIn("pr-fast-context:\n    name: pr-fast", workflow)
         self.assertIn("needs: [check]", workflow)
         self.assertIn('test "${{ needs.check.result }}" = success', workflow)
         self.assertIn("name: verify", workflow)
