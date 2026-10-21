@@ -30,8 +30,7 @@
         "do_not_enforce_on_create": false,
         "required_status_checks": [
           { "context": "sdlc / check", "integration_id": 15368 },
-          { "context": "sdlc / policy", "integration_id": 15368 },
-          { "context": "Mergify Merge Protections", "integration_id": 10562 }
+          { "context": "sdlc / policy", "integration_id": 15368 }
         ]
       }
     }

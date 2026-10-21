@@ -50,7 +50,8 @@ class SharedCiContractTests(unittest.TestCase):
         ruleset = (ROOT / "rulesets/default-branch.json").read_text()
         self.assertIn('"context": "sdlc / check", "integration_id": 15368', ruleset)
         self.assertIn('"context": "sdlc / policy", "integration_id": 15368', ruleset)
-        self.assertIn('"context": "Mergify Merge Protections", "integration_id": 10562', ruleset)
+        self.assertNotIn('"context": "Mergify Merge Protections"', ruleset)
+        self.assertNotIn('"integration_id": 10562', ruleset)
         self.assertNotIn('"context": "sdlc / release-gate"', ruleset)
         self.assertNotIn("IS_RELEASE", (ROOT / ".github/workflows/ci.yml").read_text())
 

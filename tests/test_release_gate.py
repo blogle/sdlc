@@ -51,6 +51,12 @@ class FakeApi:
 
 
 class ReleaseGateTests(unittest.TestCase):
+    def test_canonical_required_publishers_are_sdlc_checks_only(self):
+        self.assertEqual(
+            release_gate.REQUIRED_CHECK_APPS,
+            {"sdlc / check": 15368, "sdlc / policy": 15368},
+        )
+
     def release_pr(self, head="head"):
         return PullRequest(14, head, "sdlc/release-next", "blogle", "User", "blogle/sdlc", "release-bot[bot]", "Bot")
 

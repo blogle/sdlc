@@ -29,11 +29,9 @@ verify_release_tree = coordinator.verify_release_tree
 RELEASE_BRANCH = "sdlc/release-next"
 RELEASE_CHECK = "sdlc / release-gate"
 GITHUB_ACTIONS_APP_ID = 15368
-MERGIFY_APP_ID = 10562
 REQUIRED_CHECK_APPS = {
     "sdlc / check": GITHUB_ACTIONS_APP_ID,
     "sdlc / policy": GITHUB_ACTIONS_APP_ID,
-    "Mergify Merge Protections": MERGIFY_APP_ID,
 }
 REQUIRED_CHECKS = tuple(REQUIRED_CHECK_APPS)
 RELEASE_GATE_CHECKS = ("sdlc / check", "sdlc / policy")
