@@ -57,6 +57,7 @@ class SharedCiContractTests(unittest.TestCase):
     def test_mergify_queues_after_fast_check_and_merges_after_verify(self):
         policy = (ROOT / ".mergify.yml").read_text()
         self.assertIn("check-success = @github-actions/sdlc / check", policy)
+        self.assertEqual(policy.count("check-success = @github-actions/sdlc / policy"), 2)
         self.assertIn("check-success = @github-actions/sdlc / verify", policy)
         self.assertIn("label != release", policy)
 

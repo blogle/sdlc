@@ -116,6 +116,7 @@ class InstallTests(unittest.TestCase):
             cache_workflow = (root / ".github/workflows/sdlc-cache-gc.yml").read_text()
             self.assertIn("hestia-gc.yml@" + "a" * 40, cache_workflow)
             self.assertIn("actions: write", cache_workflow)
+            self.assertIn("dry_run: ${{ inputs.dry_run == true }}", cache_workflow)
             self.assertTrue((root / ".mergify.yml").exists())
             self.assertTrue((root / "renovate.json").exists())
             workflow = workflow.replace("a" * 40, "b" * 40)

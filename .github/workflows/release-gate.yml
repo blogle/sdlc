@@ -29,7 +29,10 @@ permissions:
 jobs:
   pull-request-gate:
     name: release gate driver
-    if: vars.SDLC_RELEASE_ACTIVATE == 'true' && (github.event_name == 'pull_request_target' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'))
+    if: >-
+      vars.SDLC_RELEASE_ACTIVATE == 'true' &&
+      ((github.event_name == 'pull_request_target' && github.event.pull_request.head.ref == 'sdlc/release-next') ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'sdlc/release-next'))
     runs-on: ubuntu-latest
     permissions:
       contents: read

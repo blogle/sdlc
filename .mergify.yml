@@ -9,6 +9,7 @@ pull_request_rules:
       - head != sdlc/release-next
       - label != release
       - check-success = @github-actions/sdlc / check
+      - check-success = @github-actions/sdlc / policy
       - or:
           - and:
               - label = integration:auto
@@ -28,6 +29,7 @@ queue_rules:
       - head != sdlc/release-next
       - label != release
       - check-success = @github-actions/sdlc / check
+      - check-success = @github-actions/sdlc / policy
       - or:
           - and:
               - label = integration:auto
