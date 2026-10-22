@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.0] - 2026-10-22
+
+- **fix**: Require policy checks before queue admission, recover stale release candidates on a schedule, and pass a boolean to scheduled cache maintenance.
+- **feat**: Add pinned consumer adapters and manifest-driven fleet delivery
+- **feature**: make onboarding a safe one-command policy and release cutover
+- **feature**: add idempotent release onboarding and activation preflight
+- **fix**: centralize thin consumer status, policy, and publication workflow adapters
+
 ## [1.3.0] - 2026-10-11
 
 - **feature**: add idempotent release onboarding and activation preflight

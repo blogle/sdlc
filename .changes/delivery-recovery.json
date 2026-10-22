@@ -1,1 +1,0 @@
-{"type":"fix","semver":"patch","summary":"Require policy checks before queue admission, recover stale release candidates on a schedule, and pass a boolean to scheduled cache maintenance."}
