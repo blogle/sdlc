@@ -41,6 +41,32 @@ class ChangelogTests(unittest.TestCase):
 
 
 class RulesetTests(unittest.TestCase):
+    def test_attestation_timestamps_compare_instants_not_caller_timezones(self):
+        self.assertTrue(sdlc.same_timestamp("2026-10-22T14:39:02.216-07:00", "2026-10-22T21:39:02.216Z"))
+        self.assertFalse(sdlc.same_timestamp("2026-10-22T14:39:02.216-07:00", "2026-10-22T21:39:02.217Z"))
+        self.assertFalse(sdlc.same_timestamp(None, None))
+        self.assertFalse(sdlc.same_timestamp("", ""))
+        self.assertFalse(sdlc.same_timestamp("2026-10-22T21:39:02.216", "2026-10-22T21:39:02.216Z"))
+
+    def test_read_only_automated_merges_attestation_is_bound_to_exact_policy_and_revision(self):
+        import subprocess
+
+        primary = dict(sdlc._canonical_ruleset(), id=7, updated_at="now")
+        updates = dict(sdlc._canonical_ruleset("main-updates.json"), id=8, updated_at="now")
+        attestation = {
+            "automated_merges": {
+                "schema": 1, "repository": "owner/repo", "ruleset_id": 8,
+                "updated_at": "now", "bypass_actors": updates.pop("bypass_actors"),
+            },
+        }
+        read = lambda repo, **kwargs: subprocess.CompletedProcess([], 0, json.dumps(primary if kwargs["name"] == primary["name"] else updates), "")
+        with patch.object(sdlc, "_ruleset", side_effect=read), patch.dict(sdlc.os.environ, {"SDLC_RULESET_ATTESTATION": json.dumps(attestation)}), redirect_stdout(io.StringIO()):
+            sdlc.ruleset_command("check", "owner/repo")
+        attestation["automated_merges"]["updated_at"] = "stale"
+        with patch.object(sdlc, "_ruleset", side_effect=read), patch.dict(sdlc.os.environ, {"SDLC_RULESET_ATTESTATION": json.dumps(attestation)}), redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(ValueError, "ruleset is update"):
+                sdlc.ruleset_command("check", "owner/repo")
+
     def test_apply_installs_both_layers_idempotently_without_bypassing_checks(self):
         state = {}
         mutations = []
