@@ -1,1 +1,0 @@
-{"type":"fix","semver":"patch","summary":"Compare ruleset attestation timestamps by instant so GitHub App reads and administrator reads agree across timezones."}

@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.4.1] - 2026-10-22
+
+- **fix**: Preserve application-specific native Renovate JSON5 configuration while requiring the shared SDLC preset, avoiding conflicting generated config files.
+- **fix**: Compare ruleset attestation timestamps by instant so GitHub App reads and administrator reads agree across timezones.
+- **fix**: Verify immutable source archives by their exact Git tar payload across gzip implementations, while recording the downloaded asset digest.
+
 ## [1.4.0] - 2026-10-22
 
 - **fix**: Require policy checks before queue admission, recover stale release candidates on a schedule, and pass a boolean to scheduled cache maintenance.
