@@ -141,6 +141,25 @@ class RulesetTests(unittest.TestCase):
 
 
 class InstallTests(unittest.TestCase):
+    def test_install_preserves_native_json5_managers_and_requires_shared_preset(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.joinpath("flake.lock").write_text(json.dumps({"nodes": {
+                "root": {"inputs": {"sdlc": "contract"}},
+                "contract": {"locked": {"rev": "a" * 40}},
+            }}))
+            config = "{ // Keep application-specific managers\n extends: ['github>blogle/sdlc#v1'], enabledManagers: ['kustomize'], }\n"
+            path = root / "renovate.json5"
+            path.write_text(config)
+            with patch.object(sdlc, "ROOT", root), redirect_stdout(io.StringIO()):
+                sdlc.install_adapters()
+                sdlc.install_adapters(check=True)
+                self.assertFalse((root / "renovate.json").exists())
+                self.assertEqual(path.read_text(), config)
+                path.write_text("{extends: ['config:recommended']}")
+                with self.assertRaisesRegex(ValueError, "must extend"):
+                    sdlc.install_adapters(check=True)
+
     def test_install_generates_and_checks_pinned_adapters(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

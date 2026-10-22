@@ -398,6 +398,16 @@ def install_adapters(check=False):
         ".mergify.yml": (CONTRACT_ROOT / ".mergify.yml").read_text(),
         "renovate.json": json.dumps({"$schema": "https://docs.renovatebot.com/renovate-schema.json", "extends": ["github>blogle/sdlc#v1"]}, indent=2) + "\n",
     }
+    native_renovate = ROOT / "renovate.json5"
+    if native_renovate.exists():
+        import json5
+
+        config = json5.loads(native_renovate.read_text())
+        if not isinstance(config, dict) or "github>blogle/sdlc#v1" not in config.get("extends", []):
+            raise ValueError("renovate.json5 must extend github>blogle/sdlc#v1")
+        if (ROOT / "renovate.json").exists():
+            raise ValueError("both renovate.json and renovate.json5 exist; retain one native Renovate config")
+        del generated["renovate.json"]
     mismatches = []
     for relative, content in generated.items():
         path = ROOT / relative
