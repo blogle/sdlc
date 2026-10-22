@@ -1,0 +1,13 @@
+{
+  "name": "SDLC automated merges",
+  "target": "branch",
+  "enforcement": "active",
+  "bypass_actors": [
+    { "actor_id": 10562, "actor_type": "Integration", "bypass_mode": "pull_request" },
+    { "actor_id": 5257759, "actor_type": "Integration", "bypass_mode": "pull_request" }
+  ],
+  "conditions": {
+    "ref_name": { "include": ["~DEFAULT_BRANCH"], "exclude": [] }
+  },
+  "rules": [{ "type": "update" }]
+}

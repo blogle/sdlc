@@ -249,12 +249,12 @@ def changelog(action, version=None, date=None, json_output=False, selected=None)
         raise ValueError(f"unknown changelog action {action}")
 
 
-def _canonical_ruleset():
-    path = CONTRACT_ROOT / "rulesets/default-branch.json"
+def _canonical_ruleset(filename="default-branch.json"):
+    path = CONTRACT_ROOT / "rulesets" / filename
     return json.loads(path.read_text())
 
 
-def _ruleset(repo, read_only=False):
+def _ruleset(repo, read_only=False, name="SDLC default branch"):
     env = os.environ.copy()
     if read_only and env.get("SDLC_RULESET_TOKEN"):
         env["GH_TOKEN"] = env["SDLC_RULESET_TOKEN"]
@@ -262,9 +262,9 @@ def _ruleset(repo, read_only=False):
         ["gh", "api", f"repos/{repo}/rulesets"], check=True,
         capture_output=True, text=True, env=env,
     )
-    matches = [item for item in json.loads(result.stdout) if item.get("name") == "SDLC default branch"]
+    matches = [item for item in json.loads(result.stdout) if item.get("name") == name]
     if len(matches) > 1:
-        raise ValueError(f"multiple SDLC default branch rulesets exist on {repo}")
+        raise ValueError(f"multiple {name} rulesets exist on {repo}")
     if not matches:
         return None
     return subprocess.run(
@@ -304,12 +304,12 @@ def _matches_ruleset(actual, desired, allow_redacted_bypass=False):
     return len(actual_rules) == len(desired["rules"])
 
 
-def ruleset_command(action, repo, dry_run=False):
+def ruleset_command(action, repo, dry_run=False, *, filename="default-branch.json"):
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
         raise ValueError("--repo must be OWNER/NAME")
-    desired = _canonical_ruleset()
+    desired = _canonical_ruleset(filename)
     try:
-        current_raw = _ruleset(repo, read_only=(action == "check" or dry_run))
+        current_raw = _ruleset(repo, read_only=(action == "check" or dry_run), name=desired["name"])
     except subprocess.CalledProcessError:
         if dry_run:
             print(json.dumps({"repository": repo, "action": "read-unavailable", "ruleset": desired}, indent=2, sort_keys=True))
@@ -322,29 +322,39 @@ def ruleset_command(action, repo, dry_run=False):
             attestation = json.loads(os.environ.get("SDLC_RULESET_ATTESTATION", ""))
         except json.JSONDecodeError:
             attestation = None
+    if filename != "default-branch.json" and isinstance(attestation, dict):
+        attestation = attestation.get("automated_merges")
     attested_redaction = bool(
         isinstance(attestation, dict)
         and attestation.get("schema") == 1
         and attestation.get("repository") == repo
         and attestation.get("ruleset_id") == current.get("id")
         and attestation.get("updated_at") == current.get("updated_at")
-        and attestation.get("bypass_actors") == []
+        and attestation.get("bypass_actors") == desired["bypass_actors"]
     ) if current is not None else False
-    equal = current is not None and _matches_ruleset(current, desired, allow_redacted_bypass=attested_redaction)
+    comparable = dict(current, bypass_actors=desired["bypass_actors"]) if attested_redaction and current.get("bypass_actors") is None else current
+    equal = comparable is not None and _matches_ruleset(comparable, desired)
     operation = "create" if current is None else ("no-op" if equal else "update")
     if action == "plan" or dry_run:
-        print(json.dumps({"repository": repo, "action": operation, "ruleset": desired}, indent=2, sort_keys=True))
+        plan = {"repository": repo, "action": operation, "ruleset": desired}
+        if filename == "default-branch.json":
+            plan["automated_merges"] = _canonical_ruleset("main-updates.json")
+        print(json.dumps(plan, indent=2, sort_keys=True))
         return
     if action == "check":
         if not equal:
             raise ValueError(f"canonical SDLC ruleset is {operation} on {repo}; run `sdlc ruleset apply --repo {repo}`")
         print(f"canonical ruleset matches for {repo}")
+        if filename == "default-branch.json":
+            ruleset_command(action, repo, dry_run, filename="main-updates.json")
         return
     if not equal:
         endpoint = f"repos/{repo}/rulesets" if current is None else f"repos/{repo}/rulesets/{current['id']}"
         method = "POST" if current is None else "PUT"
         subprocess.run(["gh", "api", "--method", method, endpoint, "--input", "-"], input=json.dumps(desired), text=True, check=True)
-    ruleset_command("check", repo)
+    if filename == "default-branch.json":
+        ruleset_command("apply", repo, filename="main-updates.json")
+    ruleset_command("check", repo, filename=filename)
 
 
 def install_adapters(check=False):

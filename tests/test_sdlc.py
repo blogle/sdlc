@@ -41,6 +41,31 @@ class ChangelogTests(unittest.TestCase):
 
 
 class RulesetTests(unittest.TestCase):
+    def test_apply_installs_both_layers_idempotently_without_bypassing_checks(self):
+        state = {}
+        mutations = []
+
+        def read(repo, read_only=False, name="SDLC default branch"):
+            value = state.get(name)
+            return __import__("subprocess").CompletedProcess([], 0, json.dumps(value), "") if value else None
+
+        def write(command, **kwargs):
+            value = json.loads(kwargs["input"])
+            mutations.append(value)
+            state[value["name"]] = dict(value, id=len(state) + 1)
+
+        with patch.object(sdlc, "_ruleset", side_effect=read), patch.object(sdlc.subprocess, "run", side_effect=write), redirect_stdout(io.StringIO()):
+            sdlc.ruleset_command("apply", "owner/repo")
+            sdlc.ruleset_command("apply", "owner/repo")
+            sdlc.ruleset_command("check", "owner/repo")
+        self.assertEqual(len(mutations), 2)
+        self.assertEqual(state["SDLC default branch"]["bypass_actors"], [])
+        self.assertEqual(state["SDLC automated merges"]["rules"], [{"type": "update"}])
+        state["SDLC automated merges"]["bypass_actors"].append({"actor_id": 1, "actor_type": "Team", "bypass_mode": "always"})
+        with patch.object(sdlc, "_ruleset", side_effect=read), redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(ValueError, "ruleset is update"):
+                sdlc.ruleset_command("check", "owner/repo")
+
     def test_contract_projection_ignores_github_metadata_but_detects_policy_drift(self):
         desired = sdlc._canonical_ruleset()
         actual = json.loads(json.dumps(desired))
@@ -78,7 +103,8 @@ class RulesetTests(unittest.TestCase):
         del actual["bypass_actors"]
         response = __import__("subprocess").CompletedProcess([], 0, json.dumps(actual), "")
         attestation = json.dumps({"schema": 1, "repository": "owner/repo", "ruleset_id": 7, "updated_at": "now", "bypass_actors": []})
-        with patch.object(sdlc, "_ruleset", return_value=response), patch.dict(sdlc.os.environ, {"SDLC_RULESET_ATTESTATION": attestation}), redirect_stdout(io.StringIO()) as out:
+        automated = __import__("subprocess").CompletedProcess([], 0, json.dumps(sdlc._canonical_ruleset("main-updates.json")), "")
+        with patch.object(sdlc, "_ruleset", side_effect=[response, automated]), patch.dict(sdlc.os.environ, {"SDLC_RULESET_ATTESTATION": attestation}), redirect_stdout(io.StringIO()) as out:
             sdlc.ruleset_command("check", "owner/repo")
         self.assertIn("matches", out.getvalue())
 
