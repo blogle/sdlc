@@ -182,7 +182,7 @@ def verify_protection(protection: Mapping[str, Any], required_checks: Iterable[s
     if not isinstance(attestation, Mapping):
         raise GateError("canonical ruleset bypass actors are not attested; refusing release merge")
     ruleset = active[0]
-    if attestation.get("ruleset_id") != ruleset.get("id") or attestation.get("updated_at") != ruleset.get("updated_at"):
+    if attestation.get("ruleset_id") != ruleset.get("id") or not coordinator.same_timestamp(attestation.get("updated_at"), ruleset.get("updated_at")):
         raise GateError("canonical ruleset attestation does not match its current identity")
     if attestation.get("bypass_actors") != []:
         raise GateError("release merge requires zero protection bypass actors")
@@ -239,7 +239,7 @@ def _protection(repo: str, branch: str) -> Mapping[str, Any]:
             raise GateError("canonical ruleset bypass actors are malformed; refusing release merge")
         if attestation is None or attestation.get("repository") != repo or attestation.get("schema") != 1 or attestation.get("bypass_actors") != []:
             raise GateError("canonical ruleset bypass actors are not visible; refusing release merge")
-        if attestation.get("ruleset_id") != detail.get("id") or attestation.get("updated_at") != detail.get("updated_at"):
+        if attestation.get("ruleset_id") != detail.get("id") or not coordinator.same_timestamp(attestation.get("updated_at"), detail.get("updated_at")):
             raise GateError("canonical ruleset attestation does not match its current identity")
         if actors and actors != []:
             raise GateError("canonical ruleset has bypass actors; refusing release merge")
