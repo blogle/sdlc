@@ -19,7 +19,7 @@
           pkgs = nixpkgs.legacyPackages.${system};
           sdlcCli = pkgs.writeShellApplication {
             name = "sdlc";
-            runtimeInputs = [ pkgs.coreutils pkgs.git pkgs.gh pkgs.jq pkgs.nix pkgs.python3 ];
+            runtimeInputs = [ pkgs.coreutils pkgs.git pkgs.gh pkgs.jq pkgs.nix (pkgs.python3.withPackages (ps: [ ps.json5 ])) ];
             text = ''
               export SDLC_SOURCE_PATH=${./.}
               export PYTHONPATH=${./src}:''${PYTHONPATH:-}
@@ -48,12 +48,12 @@
             packages = sdlcLib.devTools {
               inherit pkgs;
               sdlcCli = self.packages.${system}.sdlc;
-            } ++ [ pkgs.just pkgs.python3 pkgs.gh pkgs.actionlint pkgs.renovate ];
+            } ++ [ pkgs.just (pkgs.python3.withPackages (ps: [ ps.json5 ])) pkgs.gh pkgs.actionlint pkgs.renovate ];
           };
         });
       checks = eachSystem (system:
         let pkgs = nixpkgs.legacyPackages.${system};
-            test = pkgs.runCommand "sdlc-tests" { nativeBuildInputs = [ pkgs.git pkgs.python3 ]; } ''
+            test = pkgs.runCommand "sdlc-tests" { nativeBuildInputs = [ pkgs.git (pkgs.python3.withPackages (ps: [ ps.json5 ])) ]; } ''
               cd ${./.}
               python3 -m unittest discover -s tests -v
               touch $out
