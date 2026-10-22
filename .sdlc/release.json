@@ -1,34 +1,26 @@
 {
-  "changelog_sha256": "054558bd57cf67cde5aaba123dfa23a07c862d6b3666eb811d0c15ce0062e823",
+  "changelog_sha256": "bd35a2af24d0f0a8213e04cdba17caf0f65641233d55d1e8cf0a9baf27fb73c5",
   "fragments": [
     {
-      "blob_sha": "c18c448cd81843a1e845905c48d3c20fe0319d00",
-      "path": ".changes/delivery-recovery.json"
+      "blob_sha": "8facbfa02bda4a279636d51b674f2ac490efbb77",
+      "path": ".changes/native-renovate-config.json"
     },
     {
-      "blob_sha": "dd7c6db3015d5fac063b3e8f3691b6fb8d07c583",
-      "path": ".changes/fleet-contract.json"
+      "blob_sha": "6a0e6d6a0d3c3887202aa5cc07dfb68be2a8e14d",
+      "path": ".changes/ruleset-timezones.json"
     },
     {
-      "blob_sha": "bf96fdd207d5ed4ec605367f5d24dc70aab6a026",
-      "path": ".changes/onboard-cutover.json"
-    },
-    {
-      "blob_sha": "e1c9e51ed055ecd1036fd26d9a628babf62c6cb0",
-      "path": ".changes/release-bootstrap.json"
-    },
-    {
-      "blob_sha": "b85909b37b4a4d3f69c8e467693d074fa9883eea",
-      "path": ".changes/thin-consumer-api.json"
+      "blob_sha": "4a83f1059f05dc963870785760bb3fef74679a12",
+      "path": ".changes/source-archive-verification.json"
     }
   ],
-  "generated_tree": "d8b29215858c27c999cc696bd8a95f009f20c47c5e996beb0ed5f2982110cbc0",
-  "prior_released_boundary": "0be598d4a41ae499252d8df362f1f7db6379c82b",
+  "generated_tree": "5a6ae62fac02e922aecd88db02fd0f0f429039144249217c9a86b295b868e138",
+  "prior_released_boundary": "8fbfec120bc3d661a9e8f9d91a075975325dd3ef",
   "publication": {
-    "source_main_sha": "8fbfec120bc3d661a9e8f9d91a075975325dd3ef",
-    "version": "1.4.0"
+    "source_main_sha": "750bb47d2bc90b3026383050f529f9233e890c79",
+    "version": "1.4.1"
   },
   "schema": 1,
-  "source_main_sha": "8fbfec120bc3d661a9e8f9d91a075975325dd3ef",
-  "version": "1.4.0"
+  "source_main_sha": "750bb47d2bc90b3026383050f529f9233e890c79",
+  "version": "1.4.1"
 }
