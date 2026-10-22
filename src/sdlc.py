@@ -305,7 +305,7 @@ def _matches_ruleset(actual, desired, allow_redacted_bypass=False):
     if not isinstance(actual, dict):
         return False
     if allow_redacted_bypass and actual.get("bypass_actors") is None:
-        actual = dict(actual, bypass_actors=[])
+        actual = dict(actual, bypass_actors=desired.get("bypass_actors", []))
     for key, expected in desired.items():
         if key != "rules" and project(actual.get(key), expected) != project(expected, expected):
             return False
