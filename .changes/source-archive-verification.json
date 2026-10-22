@@ -1,0 +1,1 @@
+{"type":"fix","semver":"patch","summary":"Verify immutable source archives by their exact Git tar payload across gzip implementations, while recording the downloaded asset digest."}

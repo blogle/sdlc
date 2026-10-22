@@ -1,4 +1,5 @@
 import hashlib
+import gzip
 import importlib.util
 import json
 import os
@@ -169,6 +170,9 @@ shutil.copyfile(os.environ["FAKE_ASSET"], os.path.join(target, asset))
             root = Path(temp) / "repo"
             root.mkdir()
             source, merged, asset = self._self_source_release(root)
+            original = asset.read_bytes()
+            asset.write_bytes(gzip.compress(gzip.decompress(original), compresslevel=1, mtime=1))
+            self.assertNotEqual(asset.read_bytes(), original)
             fake_bin = Path(temp) / "bin"
             fake_bin.mkdir()
             self._fake_gh(fake_bin)
@@ -193,7 +197,7 @@ shutil.copyfile(os.environ["FAKE_ASSET"], os.path.join(target, asset))
             root = Path(temp) / "repo"
             root.mkdir()
             source, merged, asset = self._self_source_release(root)
-            asset.write_bytes(asset.read_bytes() + b"tampered")
+            asset.write_bytes(gzip.compress(gzip.decompress(asset.read_bytes()).replace(b"# Changelog", b"# Tampered!")))
             fake_bin = Path(temp) / "bin"
             fake_bin.mkdir()
             self._fake_gh(fake_bin)
@@ -358,8 +362,8 @@ shutil.copyfile(os.environ["FAKE_ASSET"], os.path.join(target, asset))
         self.assertIn("gh release download", workflow)
         self.assertIn("gh release upload", workflow)
         self.assertIn("git archive --format=tar.gz", workflow)
-        self.assertIn('cmp -- ".sdlc/$asset.expected" ".sdlc/$asset"', workflow)
-        self.assertIn("durable source asset bytes changed", workflow)
+        self.assertIn('gzip -dc ".sdlc/$asset" | cmp -- .sdlc/source.expected.tar -', workflow)
+        self.assertIn("durable source asset contents changed", workflow)
         self.assertIn("sdlc-source-${version}-${MERGED_SHA}.tar.gz", workflow)
         self.assertIn("isDraft", workflow)
         self.assertIn("published immutable asset digest is missing", workflow)
