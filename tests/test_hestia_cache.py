@@ -67,3 +67,5 @@ class SharedCiContractTests(unittest.TestCase):
         self.assertIn("queue-name = validated candidates", policy)
         self.assertIn("check-success = @mergify/Mergify Merge Queue", policy)
         self.assertIn("check-success = @sdlc-release/sdlc / release-gate", policy)
+        self.assertIn("auto_merge_conditions:", policy)
+        self.assertNotIn("pull_request_rules:", policy)
