@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  schedule:
+    - cron: '17 * * * *'
   workflow_run:
     workflows: [SDLC rolling release reconcile, SDLC release merge]
     types: [completed]

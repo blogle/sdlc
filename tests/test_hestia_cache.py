@@ -57,12 +57,19 @@ class SharedCiContractTests(unittest.TestCase):
     def test_mergify_queues_after_fast_check_and_merges_after_verify(self):
         policy = (ROOT / ".mergify.yml").read_text()
         self.assertIn("check-success = @github-actions/sdlc / check", policy)
+        self.assertEqual(policy.count("check-success = @github-actions/sdlc / policy"), 3)
         self.assertIn("check-success = @github-actions/sdlc / verify", policy)
         self.assertIn("label != release", policy)
 
     def test_required_mergify_protection_blocks_direct_merge_routes(self):
         policy = (ROOT / ".mergify.yml").read_text()
         self.assertIn("merge_protections:", policy)
-        self.assertIn("queue-name = validated candidates", policy)
-        self.assertIn("check-success = @mergify/Mergify Merge Queue", policy)
+        self.assertNotIn("queue-name = validated candidates", policy)
+        self.assertNotIn("check-success = @mergify/Mergify Merge Queue", policy)
+        restriction = __import__("json").loads((ROOT / "rulesets/main-updates.json").read_text())
+        self.assertEqual(restriction["rules"], [{"type": "update"}])
+        self.assertEqual({actor["actor_id"] for actor in restriction["bypass_actors"]}, {10562, 5257759})
+        self.assertTrue(all(actor["bypass_mode"] == "pull_request" for actor in restriction["bypass_actors"]))
         self.assertIn("check-success = @sdlc-release/sdlc / release-gate", policy)
+        self.assertIn("auto_merge_conditions:", policy)
+        self.assertNotIn("pull_request_rules:", policy)
