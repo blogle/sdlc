@@ -13,9 +13,11 @@ test "$source_sha" = "$SDLC_RELEASE_SOURCE_SHA"
 asset="sdlc-source-${SDLC_RELEASE_VERSION}-${SDLC_RELEASE_MERGED_SHA}.tar.gz"
 temporary="$(mktemp -d)"
 trap 'rm -rf "$temporary"' EXIT
-git archive --format=tar.gz --output "$temporary/$asset.expected" "$SDLC_RELEASE_MERGED_SHA"
+git archive --format=tar --output "$temporary/source.expected.tar" "$SDLC_RELEASE_MERGED_SHA"
 gh release download "v$SDLC_RELEASE_VERSION" --pattern "$asset" --dir "$temporary"
-cmp -- "$temporary/$asset.expected" "$temporary/$asset"
+# The workflow runner and the Nix hook can use different zlib builds. Verify
+# the exact Git archive payload, then receipt the downloaded immutable bytes.
+gzip -dc "$temporary/$asset" | cmp -- "$temporary/source.expected.tar" -
 digest="$(sha256sum "$temporary/$asset" | cut -d' ' -f1)"
 
 mkdir -p "$(dirname "$SDLC_RELEASE_RECEIPTS")"
