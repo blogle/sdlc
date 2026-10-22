@@ -254,6 +254,19 @@ def _canonical_ruleset(filename="default-branch.json"):
     return json.loads(path.read_text())
 
 
+def same_timestamp(left, right):
+    """GitHub renders the same ruleset revision in the caller's timezone."""
+    if not isinstance(left, str) or not isinstance(right, str) or not left or not right:
+        return False
+    if left == right:
+        return True
+    try:
+        first, second = datetime.fromisoformat(left), datetime.fromisoformat(right)
+        return first.tzinfo is not None and second.tzinfo is not None and first == second
+    except ValueError:
+        return False
+
+
 def _ruleset(repo, read_only=False, name="SDLC default branch"):
     env = os.environ.copy()
     if read_only and env.get("SDLC_RULESET_TOKEN"):
@@ -329,7 +342,7 @@ def ruleset_command(action, repo, dry_run=False, *, filename="default-branch.jso
         and attestation.get("schema") == 1
         and attestation.get("repository") == repo
         and attestation.get("ruleset_id") == current.get("id")
-        and attestation.get("updated_at") == current.get("updated_at")
+        and same_timestamp(attestation.get("updated_at"), current.get("updated_at"))
         and attestation.get("bypass_actors") == desired["bypass_actors"]
     ) if current is not None else False
     comparable = dict(current, bypass_actors=desired["bypass_actors"]) if attested_redaction and current.get("bypass_actors") is None else current
