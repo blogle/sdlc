@@ -8,6 +8,7 @@
   "nix": {
     "enabled": true
   },
+  "labels": ["integration:review"],
   "packageRules": [
     {
       "description": "Coordinate the SDLC Nix input release with its reusable workflow tags",

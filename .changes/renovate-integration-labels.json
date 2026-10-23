@@ -1,0 +1,1 @@
+{"type":"fix","semver":"patch","summary":"Give generated Renovate pull requests the required review-mode integration label by default."}
