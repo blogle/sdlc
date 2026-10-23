@@ -110,6 +110,7 @@ class ReleaseLifecycleTests(unittest.TestCase):
                 "bypass_actors": [],
                 "rulesets": [{"id": 7, "name": "SDLC default branch", "enforcement": "active", "updated_at": "now"}],
                 "canonical_ruleset_matches": True,
+                "automated_merges_matches": True,
                 "ruleset_attestation": {"schema": 1, "repository": "blogle/example", "ruleset_id": 7, "updated_at": "now", "bypass_actors": []},
             }
             release_gate.evaluate_release_gate(

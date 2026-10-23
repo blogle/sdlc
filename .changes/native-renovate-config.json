@@ -1,0 +1,1 @@
+{"type":"fix","semver":"patch","summary":"Preserve application-specific native Renovate JSON5 configuration while requiring the shared SDLC preset, avoiding conflicting generated config files."}

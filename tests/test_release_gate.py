@@ -19,6 +19,7 @@ PROTECTION = {
     "bypass_actors": [],
     "rulesets": [{"id": 1, "name": "SDLC default branch", "enforcement": "active", "updated_at": "now", "bypass_actors": []}],
     "canonical_ruleset_matches": True,
+    "automated_merges_matches": True,
     "ruleset_attestation": {"schema": 1, "repository": "blogle/sdlc", "ruleset_id": 1, "updated_at": "now", "bypass_actors": []},
 }
 
@@ -201,12 +202,19 @@ class ReleaseGateTests(unittest.TestCase):
             "bypass_actors": [],
             "rulesets": [{"id": 7, "name": "SDLC default branch", "enforcement": "active", "updated_at": "now"}],
             "canonical_ruleset_matches": True,
+            "automated_merges_matches": True,
             "ruleset_attestation": {"schema": 1, "repository": "blogle/sdlc", "ruleset_id": 7, "updated_at": "now", "bypass_actors": []},
         }
         verify_protection(protection)
         protection["rulesets"][0]["updated_at"] = "later"
         with self.assertRaisesRegex(GateError, "attestation"):
             verify_protection(protection)
+
+    def test_release_gate_requires_separate_attested_automated_update_restriction(self):
+        protection = dict(PROTECTION, automated_merges_matches=False)
+        with self.assertRaisesRegex(GateError, "automated main-update restriction"):
+            verify_protection(protection)
+        self.assertEqual(PROTECTION["bypass_actors"], [])
 
     def test_required_contexts_must_be_pinned_to_github_actions(self):
         protection = dict(PROTECTION, check_apps={"sdlc / check": 7, "sdlc / policy": 15368, "Mergify Merge Protections": 10562})
@@ -221,18 +229,31 @@ class ReleaseGateTests(unittest.TestCase):
         desired = release_gate.coordinator._canonical_ruleset()
         detail = dict(desired, id=7, updated_at="now")
         detail.pop("bypass_actors")
+        update_desired = release_gate.coordinator._canonical_ruleset("main-updates.json")
+        update_detail = dict(update_desired, id=8, updated_at="2026-10-10T07:00:00Z")
+        update_detail.pop("bypass_actors")
 
         def response(endpoint):
             if endpoint == "repos/blogle/sdlc/rulesets?includes_parents=true":
-                return [{"id": 7, "name": "SDLC default branch", "enforcement": "active"}]
+                return [
+                    {"id": 7, "name": "SDLC default branch", "enforcement": "active"},
+                    {"id": 8, "name": "SDLC automated merges", "enforcement": "active"},
+                ]
             if endpoint == "repos/blogle/sdlc/branches/main/protection":
                 raise GateError("no classic protection")
-            return detail
+            return update_detail if endpoint.endswith("/8") else detail
 
-        attestation = json.dumps({"schema": 1, "repository": "blogle/sdlc", "ruleset_id": 7, "updated_at": "now", "bypass_actors": []})
+        attestation = json.dumps({
+            "schema": 1, "repository": "blogle/sdlc", "ruleset_id": 7, "updated_at": "now", "bypass_actors": [],
+            "automated_merges": {
+                "schema": 1, "repository": "blogle/sdlc", "ruleset_id": 8,
+                "updated_at": "2026-10-10T00:00:00-07:00", "bypass_actors": update_desired["bypass_actors"],
+            },
+        })
         with patch.object(release_gate, "_gh_json", side_effect=response), patch.dict(release_gate.os.environ, {"SDLC_RULESET_ATTESTATION": attestation}):
             protection = release_gate._protection("blogle/sdlc", "main")
         self.assertEqual(protection["bypass_actors"], [])
+        self.assertTrue(protection["automated_merges_matches"])
         verify_protection(protection)
 
     def test_ruleset_summary_is_not_used_as_full_protection_detail(self):
