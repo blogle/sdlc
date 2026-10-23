@@ -13,19 +13,19 @@ Consumers declare exactly three fields through `sdlc.lib.mkConsumer`:
 
 ```nix
 ci = {
-  fast = { fmt = checks.fmt; };
+  check = { fmt = checks.fmt; };
   verify = { tests = checks.tests; };
   publish = { type = "app"; program = "${publishHook}/bin/publish"; };
 };
 ```
 
-`fast` and `verify` are named sets of independently buildable Nix derivations. `publish` is an executable Nix app. The flake outputs are `ci.<system>.fast`, `ci.<system>.verify`, and `ci.<system>.publish`. Do not add `apps.sdlc-publish`, a package alias, a Just release recipe, a custom CI matrix, or synthetic stage derivations. SDLC owns evaluation, parallel scheduling, Hestia builds/caching, stable status aggregation, protection policy, release orchestration, and receipt validation.
+`check` and `verify` are named sets of independently buildable Nix derivations. `publish` is an executable Nix app. The flake outputs are `ci.<system>.check`, `ci.<system>.verify`, and `ci.<system>.publish`. Do not add `apps.sdlc-publish`, a package alias, a Just release recipe, a custom CI matrix, or synthetic stage derivations. SDLC owns evaluation, parallel scheduling, Hestia builds/caching, stable status aggregation, protection policy, release orchestration, and receipt validation.
 
 Anvil's accepted verification scope for this integration is Rust formatting, clippy and workspace tests; frontend tests/build; static checks; local-process E2E; and product image builds. Do not restore Kubernetes acceptance, VM, QEMU, nested OCI, or sandbox lifecycle suites in this lane. Follow-up coverage is tracked separately.
 
 ## CI, cache, and protection
 
-Use `nix develop` and the consuming repository's `justfile` for local work. Keep low-latency checks in `ci.fast`, full validation in `ci.verify`, and application publication in `ci.publish`. Each Nix check must remain independently buildable and diagnosable.
+Use `nix develop` and the consuming repository's `justfile` for local work. Keep low-latency checks in `ci.check`, full validation in `ci.verify`, and application publication in `ci.publish`. Each Nix check must remain independently buildable and diagnosable.
 
 Hestia is mandatory. Generated pinned callers invoke the shared reusable workflow; default-branch runs warm that repository's cache. Cache misses and evictions affect runtime, not correctness. Hestia is neither a durable artifact store nor cross-repository sharing.
 
@@ -47,6 +47,6 @@ The shared publisher checks out and validates the merged release tree, then reso
 
 ## Verification and handoff
 
-Run `nix develop -c just check`, `just ci-fast`, and relevant verify-stage checks. Use `actionlint` for workflow edits. Verify the pinned generated adapters and ensure changes to SDLC and consumers refer to the same commit. Do not claim hosted merge-candidate verification or cache reuse from an ordinary PR check; cite the exact hosted run that exercised it. Report operator-only dependencies separately from behavior proven by tests.
+Run `nix develop -c just check`, `just ci-check`, and relevant verify-stage checks. Use `actionlint` for workflow edits. Verify the pinned generated adapters and ensure changes to SDLC and consumers refer to the same commit. Do not claim hosted merge-candidate verification or cache reuse from an ordinary PR check; cite the exact hosted run that exercised it. Report operator-only dependencies separately from behavior proven by tests.
 
 Never pass private App keys to coding agents or commit secrets. Never recommend `nix --option build-users-group "" develop`.

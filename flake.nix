@@ -1,22 +1,24 @@
 {
   description = "Pinned fleet CI, policy, and rolling-release contract";
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs-latest.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs-stable.url = "github:NixOS/nixpkgs/nixos-26.05";
     mergify-nix = {
       url = "github:blogle/mergify-nix";
-      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.nixpkgs.follows = "nixpkgs-latest";
     };
   };
-  outputs = { self, nixpkgs, mergify-nix }:
+  outputs = { self, nixpkgs-latest, nixpkgs-stable, mergify-nix }:
     let
       systems = [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ];
-      eachSystem = nixpkgs.lib.genAttrs systems;
-      sdlcLib = import ./nix/lib.nix;
+      eachSystem = nixpkgs-latest.lib.genAttrs systems;
+      sdlcLib = import ./nix/lib.nix { inherit nixpkgs-latest nixpkgs-stable; };
     in {
       lib = sdlcLib;
+      inherit nixpkgs-latest nixpkgs-stable;
       packages = eachSystem (system:
         let
-          pkgs = nixpkgs.legacyPackages.${system};
+          pkgs = nixpkgs-latest.legacyPackages.${system};
           sdlcCli = pkgs.writeShellApplication {
             name = "sdlc";
             runtimeInputs = [ pkgs.coreutils pkgs.git pkgs.gh pkgs.jq pkgs.nix (pkgs.python3.withPackages (ps: [ ps.json5 ])) ];
@@ -36,13 +38,13 @@
       apps = eachSystem (system: {
           default = { type = "app"; program = "${self.packages.${system}.sdlc}/bin/sdlc"; };
         });
-      ci = nixpkgs.lib.genAttrs [ "x86_64-linux" ] (system:
+      ci = nixpkgs-latest.lib.genAttrs [ "x86_64-linux" ] (system:
         sdlcLib.mkConsumer (import ./ci.nix {
           inherit self system;
-          pkgs = nixpkgs.legacyPackages.${system};
+          pkgs = nixpkgs-latest.legacyPackages.${system};
         }));
       devShells = eachSystem (system:
-        let pkgs = nixpkgs.legacyPackages.${system};
+        let pkgs = nixpkgs-latest.legacyPackages.${system};
         in {
           default = pkgs.mkShell {
             packages = sdlcLib.devTools {
@@ -52,7 +54,7 @@
           };
         });
       checks = eachSystem (system:
-        let pkgs = nixpkgs.legacyPackages.${system};
+        let pkgs = nixpkgs-latest.legacyPackages.${system};
             test = pkgs.runCommand "sdlc-tests" { nativeBuildInputs = [ pkgs.git (pkgs.python3.withPackages (ps: [ ps.json5 ])) ]; } ''
               cd ${./.}
               python3 -m unittest discover -s tests -v

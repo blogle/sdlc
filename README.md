@@ -4,29 +4,36 @@
 
 ## Pin the shared flake
 
-SDLC owns the default fleet Nixpkgs pin. A consumer normally follows that input:
+SDLC exposes two pinned Nixpkgs sources: `nixpkgs-latest` tracks `nixos-unstable`, and `nixpkgs-stable` tracks the current stable NixOS release. Consumers need no separate top-level Nixpkgs input:
 
 ```nix
 inputs = {
-  sdlc.url = "github:blogle/sdlc/v1.0.0";
-  nixpkgs.follows = "sdlc/nixpkgs";
-
-  # Other project inputs follow the consumer's top-level Nixpkgs node.
+  sdlc.url = "github:blogle/sdlc/v2.0.0";
   crane.url = "github:ipetkov/crane";
-  crane.inputs.nixpkgs.follows = "nixpkgs";
+  crane.inputs.nixpkgs.follows = "sdlc/nixpkgs-latest";
 };
+
+outputs = { self, sdlc, ... }:
+  let
+    system = "x86_64-linux";
+    packageSets = sdlc.lib.importPackages {
+      inherit system;
+      latest = { overlays = [ homeOverlays ]; };
+      stable = { overlays = [ hostOverlays ]; };
+    };
+  in { /* use packageSets.latest and packageSets.stable */ };
 ```
 
-Run `nix flake lock` and commit the consumer lock. A later SDLC/Nixpkgs rollout is adopted only when that repository deliberately updates its lock, e.g. `nix flake lock --update-input sdlc`. Sharing the same Nixpkgs revision yields identical derivation inputs/store paths and improves local cross-repo reuse and potential future shared-cache hits. It does **not** make Hestia cross-repository or durable. A repository that truly requires its own Nixpkgs revision can set `nixpkgs.url = ...` and `sdlc.inputs.nixpkgs.follows = "nixpkgs"`; other inputs still follow the consumer's top-level `nixpkgs`.
+`importPackages` takes independent Nixpkgs import arguments—including `config` and `overlays`—for each package set. Consumers can also import `sdlc.nixpkgs-latest` or `sdlc.nixpkgs-stable` directly. Use `follows = "sdlc/nixpkgs-latest"` or `follows = "sdlc/nixpkgs-stable"` only for other flake inputs that should share that locked node. Update and commit the consumer lock to deliberately adopt a new SDLC pin. Identical Nixpkgs inputs can improve local derivation reuse; Hestia remains repository-scoped.
 
 The copy-pastable consumer input and `flake.lock` use a concrete SDLC release tag. Consumer workflows pin reusable workflows to the same full revision recorded in the lock. Nested reusable workflow calls use `uses: $/.github/workflows/stage.yml`, resolving at the exact outer workflow revision so one consumer pin atomically selects the whole SDLC workflow stack. Renovate groups the Nix input update with all reusable SDLC workflow ref updates. The shared Renovate preset remains a compatible policy channel; consumers review and adopt runtime changes through their pinned flake/workflow update.
 
 ## Nix contract and local commands
 
-Consumers declare independent derivations for the fast and verify stages and an app for publication:
+Consumers declare independent derivations for the `check` and `verify` stages and an app for publication:
 
 ```nix
-fast = {
+check = {
   fmt = checks.fmt;
   clippy = checks.clippy;
 };
@@ -44,11 +51,11 @@ publish = {
 };
 ```
 
-`sdlc.lib.mkConsumer` validates exactly `fast`, `verify`, and `publish`. The consumer flake exposes them as `ci.<system>.fast`, `ci.<system>.verify`, and `ci.<system>.publish`. SDLC privately evaluates and schedules named derivations through Hestia; every derivation remains independently buildable, diagnosable, and cacheable. Publication is an executable Nix app and has no `flake.apps` alias. The default-branch ruleset requires `sdlc / check` and `sdlc / policy` from GitHub Actions plus `Mergify Merge Protections` from Mergify. `sdlc / verify` runs on Mergify merge candidates and is enforced by the queue before Mergify reports its protection check as successful.
+`sdlc.lib.mkConsumer` validates exactly `check`, `verify`, and `publish`. The consumer flake exposes them as `ci.<system>.check`, `ci.<system>.verify`, and `ci.<system>.publish`. SDLC privately evaluates and schedules named derivations through Hestia; every derivation remains independently buildable, diagnosable, and cacheable. Publication is an executable Nix app and has no `flake.apps` alias. The default-branch ruleset requires `sdlc / check` and `sdlc / policy` from GitHub Actions plus `Mergify Merge Protections` from Mergify. `sdlc / verify` runs on Mergify merge candidates and is enforced by the queue before Mergify reports its protection check as successful.
 
 ```make
-ci-fast:
-    nix build --no-link .#ci.x86_64-linux.fast
+ci-check:
+    nix build --no-link .#ci.x86_64-linux.check
 
 ci-verify:
     nix build --no-link .#ci.x86_64-linux.verify
@@ -57,7 +64,7 @@ ci-verify:
 The consumer flake assembles the declared derivations behind the standard contract:
 
 ```nix
-ci = nixpkgs.lib.genAttrs [ "x86_64-linux" ] (system:
+ci = sdlc.nixpkgs-latest.lib.genAttrs [ "x86_64-linux" ] (system:
   let contract = import ./ci.nix { inherit pkgs system; };
   in sdlc.lib.mkConsumer contract);
 
@@ -65,7 +72,7 @@ packages = forAllSystems (system:
   { sdlc = sdlc.packages.${system}.sdlc; });
 
 devShells = forAllSystems (system:
-  let pkgs = nixpkgs.legacyPackages.${system};
+  let pkgs = (sdlc.lib.importPackages { inherit system; }).latest;
   in {
     default = pkgs.mkShell {
       packages = sdlc.lib.devTools {
@@ -138,7 +145,7 @@ The shareable preset is [`default.json`](default.json), the Renovate-native defa
 {"extends":["github>blogle/sdlc#v1"]}
 ```
 
-The preset extends `config:recommended`, enables Renovate's beta Nix manager, groups the `sdlc` flake input and `blogle/sdlc` reusable workflow refs into one PR, and does not enable automerge. Renovate's Nix manager updates the input and `flake.lock` natively; its `depName` is the flake input name (`sdlc`), and the preset uses `semver-coerced` because the `git-refs` datasource defaults to Git ref ordering. `helpers:pinGitHubActionDigests` hardens third-party actions while SDLC reusable workflows remain readable SemVer tags and synchronized with the flake input. Consumer lockfiles make Nixpkgs adoption deliberate: the grouped SDLC Renovate PR is also the fleet Nixpkgs rollout boundary because consumer Nixpkgs follows `sdlc/nixpkgs`. The floating `#v1` preset propagates compatible policy updates; consumers pin runtime SDLC refs to concrete `v1.x.y` tags. SDLC CI validates the preset with Renovate's native config validator.
+The preset extends `config:recommended`, enables Renovate's beta Nix manager, groups the `sdlc` flake input and `blogle/sdlc` reusable workflow refs into one PR, and does not enable automerge. Renovate's Nix manager updates the input and `flake.lock` natively; its `depName` is the flake input name (`sdlc`), and the preset uses `semver-coerced` because the `git-refs` datasource defaults to Git ref ordering. `helpers:pinGitHubActionDigests` hardens third-party actions while SDLC reusable workflows remain readable SemVer tags and synchronized with the flake input. Updating the SDLC pin advances both Nixpkgs channels in the consumer lockfile. The floating `#v1` preset propagates compatible policy updates; consumers pin runtime SDLC refs to concrete release tags.
 
 ## Skills and agent loop
 
@@ -146,4 +153,4 @@ The canonical skill is `skills/sdlc/SKILL.md`. The pinned Nix dev shell provides
 
 Fleet activation is an operator step, not an SDLC CLI command. An authorized administrator installs the release App with only the required repository permissions, provisions `SDLC_RELEASE_APP_ID`, `SDLC_RELEASE_APP_PRIVATE_KEY`, `SDLC_RELEASE_BOT_LOGIN`, and a current `SDLC_RULESET_ATTESTATION`, verifies required rulesets, and sets `SDLC_RELEASE_ACTIVATE=true` only after those checks succeed. Keep it false otherwise. Private keys are never checked in or passed to coding agents. No Anvil activation is implied by this source change.
 
-Agent loop: `nix develop`; inspect consumer `ci.nix` and `just --list`; implement Nix checks; run `just check` and `just ci-fast`; add a fragment only when warranted; open a PR with exact verification evidence and granted integration mode. `nix develop` is strongly preferred; never recommend `nix --option build-users-group "" develop`.
+Agent loop: `nix develop`; inspect consumer `ci.nix` and `just --list`; implement Nix checks; run `just check` and `just ci-check`; add a fragment only when warranted; open a PR with exact verification evidence and granted integration mode. `nix develop` is strongly preferred; never recommend `nix --option build-users-group "" develop`.

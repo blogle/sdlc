@@ -297,7 +297,7 @@ shutil.copyfile(os.environ["FAKE_ASSET"], os.path.join(target, asset))
             (root / "flake.nix").write_text(f'''{{
   inputs = {{
     sdlc.url = "path:{Path(__file__).parents[1]}";
-    nixpkgs.follows = "sdlc/nixpkgs";
+    nixpkgs.follows = "sdlc/nixpkgs-latest";
   }};
   outputs = {{ nixpkgs, sdlc, ... }}:
     let
@@ -307,7 +307,7 @@ shutil.copyfile(os.environ["FAKE_ASSET"], os.path.join(target, asset))
       publish = pkgs.writeShellScriptBin "publish" ''printf 'invoked\\n' > "$HOOK_OUTPUT"'';
     in {{
       ci.${{system}} = sdlc.lib.mkConsumer {{
-        fast = {{ fmt = check; }};
+        check = {{ fmt = check; }};
         verify = {{ tests = check; }};
         publish = {{ type = "app"; program = "${{publish}}/bin/publish"; }};
       }};
