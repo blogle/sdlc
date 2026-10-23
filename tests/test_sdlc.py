@@ -160,6 +160,18 @@ class InstallTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "must extend"):
                     sdlc.install_adapters(check=True)
 
+    def test_generated_renovate_config_defaults_to_review_authority(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.joinpath("flake.lock").write_text(json.dumps({"nodes": {
+                "root": {"inputs": {"sdlc": "contract"}},
+                "contract": {"locked": {"rev": "a" * 40}},
+            }}))
+            with patch.object(sdlc, "ROOT", root), redirect_stdout(io.StringIO()):
+                sdlc.install_adapters()
+            self.assertEqual(json.loads((root / "renovate.json").read_text())["labels"], ["integration:review"])
+        self.assertEqual(json.loads((Path(__file__).parents[1] / "default.json").read_text())["labels"], ["integration:review"])
+
     def test_install_generates_and_checks_pinned_adapters(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

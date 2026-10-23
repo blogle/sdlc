@@ -8,6 +8,11 @@ ROOT = Path(__file__).parents[1]
 
 
 class SharedCiContractTests(unittest.TestCase):
+    def test_shared_renovate_preset_defaults_dependency_prs_to_review_authority(self):
+        import json
+        preset = json.loads((ROOT / "default.json").read_text())
+        self.assertEqual(preset["labels"], ["integration:review"])
+
     def test_reusable_workflow_defines_fast_verify_and_policy_jobs(self):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
         self_workflow = (ROOT / ".github/workflows/ci-self.yml").read_text()

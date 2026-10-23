@@ -396,7 +396,7 @@ def install_adapters(check=False):
         ".github/workflows/sdlc-release-merge.yml": release_merge_workflow,
         ".github/workflows/sdlc-cache-gc.yml": cache_gc_workflow,
         ".mergify.yml": (CONTRACT_ROOT / ".mergify.yml").read_text(),
-        "renovate.json": json.dumps({"$schema": "https://docs.renovatebot.com/renovate-schema.json", "extends": ["github>blogle/sdlc#v1"]}, indent=2) + "\n",
+        "renovate.json": json.dumps({"$schema": "https://docs.renovatebot.com/renovate-schema.json", "extends": ["github>blogle/sdlc#v1"], "labels": ["integration:review"]}, indent=2) + "\n",
     }
     native_renovate = ROOT / "renovate.json5"
     if native_renovate.exists():
