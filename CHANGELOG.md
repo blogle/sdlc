@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.4.2] - 2026-10-23
+
+- **fix**: Verify the App-only main-update ruleset independently from required-check bypass actors during release authorization.
+- **fix**: Preserve application-specific native Renovate JSON5 configuration while requiring the shared SDLC preset, avoiding conflicting generated config files.
+
 ## [1.4.1] - 2026-10-22
 
 - **fix**: Preserve application-specific native Renovate JSON5 configuration while requiring the shared SDLC preset, avoiding conflicting generated config files.
