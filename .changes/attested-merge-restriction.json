@@ -1,0 +1,1 @@
+{"type":"fix","semver":"patch","summary":"Verify the App-only main-update ruleset independently from required-check bypass actors during release authorization."}

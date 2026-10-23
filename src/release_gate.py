@@ -191,8 +191,8 @@ def verify_protection(protection: Mapping[str, Any], required_checks: Iterable[s
         raise GateError("release merge requires zero protection bypass actors")
     if protection.get("strict") is True:
         raise GateError("global strict freshness is enabled; release gate will not change repository policy")
-    if protection.get("bypass_actors"):
-        raise GateError("release merge requires zero protection bypass actors")
+    if protection.get("automated_merges_matches") is not True:
+        raise GateError("automated main-update restriction or its attestation is missing or stale")
     missing = set(required_checks) - set(protection.get("contexts", ()))
     if missing:
         raise GateError(f"protected required checks are absent: {sorted(missing)}")
@@ -218,8 +218,8 @@ def _protection(repo: str, branch: str) -> Mapping[str, Any]:
         if isinstance(item, dict) and isinstance(item.get("context"), str)
     }
     strict = classic.get("required_status_checks", {}).get("strict")
-    bypass = []
     applicable = []
+    automated_matches = []
     attestation_raw = os.environ.get(RULESET_ATTESTATION_VARIABLE)
     try:
         attestation = json.loads(attestation_raw) if attestation_raw else None
@@ -229,10 +229,28 @@ def _protection(repo: str, branch: str) -> Mapping[str, Any]:
         raise GateError("canonical ruleset bypass actors are not visible; refusing release merge")
     for summary in rulesets:
         detail = _gh_json(f"repos/{repo}/rulesets/{summary['id']}") if summary.get("id") else summary
-        if detail.get("enforcement") != "active" or detail.get("name") != "SDLC default branch" or detail.get("source", repo) != repo:
+        if detail.get("enforcement") != "active" or detail.get("source", repo) != repo:
             continue
         includes = detail.get("conditions", {}).get("ref_name", {}).get("include", ())
         if "~DEFAULT_BRANCH" not in includes and f"refs/heads/{branch}" not in includes:
+            continue
+        if detail.get("name") == "SDLC automated merges":
+            actors = detail.get("bypass_actors")
+            desired = coordinator._canonical_ruleset("main-updates.json")
+            binding = (attestation or {}).get("automated_merges")
+            if not isinstance(binding, Mapping) or binding.get("schema") != 1 or binding.get("repository") != repo:
+                raise GateError("automated main-update ruleset bypass actors are not attested")
+            if binding.get("ruleset_id") != detail.get("id") or not coordinator.same_timestamp(binding.get("updated_at"), detail.get("updated_at")):
+                raise GateError("automated main-update ruleset attestation does not match its current identity")
+            if binding.get("bypass_actors") != desired.get("bypass_actors"):
+                raise GateError("automated main-update attestation has an unexpected bypass actor set")
+            if actors is not None and actors != desired.get("bypass_actors"):
+                raise GateError("automated main-update ruleset has an unexpected bypass actor set")
+            if not coordinator._matches_ruleset(detail, desired, allow_redacted_bypass=actors is None):
+                raise GateError("live automated main-update restriction differs from the pinned SDLC policy")
+            automated_matches.append(detail)
+            continue
+        if detail.get("name") != "SDLC default branch":
             continue
         actors = detail.get("bypass_actors")
         if actors is not None and not isinstance(actors, list):
@@ -250,7 +268,6 @@ def _protection(repo: str, branch: str) -> Mapping[str, Any]:
         ):
             raise GateError("live canonical ruleset differs from the pinned SDLC policy")
         applicable.append(detail)
-        bypass.extend(actors or [])
         for rule in detail.get("rules", ()):
             if rule.get("type") != "required_status_checks":
                 continue
@@ -260,7 +277,7 @@ def _protection(repo: str, branch: str) -> Mapping[str, Any]:
                 contexts.add(context)
                 check_apps[context] = item.get("integration_id")
             strict = strict or params.get("strict_required_status_checks_policy", False)
-    return {"classic": bool(classic), "rulesets": applicable, "canonical_ruleset_matches": len(applicable) == 1, "contexts": contexts, "check_apps": check_apps, "strict": strict, "bypass_actors": bypass, "ruleset_attestation": attestation}
+    return {"classic": bool(classic), "rulesets": applicable, "canonical_ruleset_matches": len(applicable) == 1, "automated_merges_matches": len(automated_matches) == 1, "contexts": contexts, "check_apps": check_apps, "strict": strict, "bypass_actors": [], "ruleset_attestation": attestation}
 
 
 def _authenticated_app(release_bot_login: str, app_slug: str, repository: str) -> tuple[str, str]:
