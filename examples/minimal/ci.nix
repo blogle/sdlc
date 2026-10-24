@@ -1,6 +1,6 @@
 { self, system }:
 {
-  fast = {
+  check = {
     format = self.checks.${system}.format;
   };
   verify = {

@@ -10,7 +10,7 @@ let
     program = "${publishHook}/bin/sdlc-publish";
   };
 in {
-  fast = {
+  check = {
     syntax = self.checks.${system}.syntax;
     config = self.checks.${system}.config;
   };

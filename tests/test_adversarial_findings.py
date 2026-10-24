@@ -22,17 +22,17 @@ class ConsumerLibraryTests(unittest.TestCase):
         expression = '''
           let
             flake = builtins.getFlake (toString ./.);
-            pkgs = flake.inputs.nixpkgs.legacyPackages.x86_64-linux;
+            pkgs = flake.inputs.nixpkgs-latest.legacyPackages.x86_64-linux;
             check = pkgs.runCommand "contract-test" {} "touch $out";
             app = { type = "app"; program = "${check}/bin/publish"; };
             result = flake.lib.mkConsumer {
-              fast = { fmt = check; clippy = check; };
+              check = { fmt = check; clippy = check; };
               verify = { tests = check; integration = check; };
               publish = app;
             };
           in
-            assert result.fast.fmt == check;
-            assert result.fast.clippy == check;
+            assert result.check.fmt == check;
+            assert result.check.clippy == check;
             assert result.verify.tests == check;
             assert result.verify.integration == check;
             assert result.publish == app;
@@ -47,16 +47,16 @@ class ConsumerLibraryTests(unittest.TestCase):
         base = '''
           let
             lib = (builtins.getFlake (toString ./.)).lib;
-            check = (builtins.getFlake (toString ./.)).inputs.nixpkgs.legacyPackages.x86_64-linux.runCommand "contract-test" {} "touch $out";
+            check = (builtins.getFlake (toString ./.)).inputs.nixpkgs-latest.legacyPackages.x86_64-linux.runCommand "contract-test" {} "touch $out";
             app = { type = "app"; program = "publish"; };
           in %s
         '''
         expressions = (
-            base % 'builtins.deepSeq (lib.mkConsumer { fast = {}; verify = { test = check; }; publish = app; }) true',
-            base % 'builtins.deepSeq (lib.mkConsumer { fast = { fmt = check; }; verify = { test = check; }; publish = app; extra = true; }) true',
-            base % 'builtins.deepSeq (lib.mkConsumer { fast = { fmt = check; }; verify = { test = check; }; }) true',
-            base % 'builtins.deepSeq (lib.mkConsumer { fast = { fmt = check; }; verify = { test = check; }; publish = { type = "app"; program = "publish"; }; }) true',
-            base % 'builtins.deepSeq (lib.mkConsumer { fast = { fmt = check; }; verify = { test = check; }; publish = app // { extra = true; }; }) true',
+            base % 'builtins.deepSeq (lib.mkConsumer { check = {}; verify = { test = check; }; publish = app; }) true',
+            base % 'builtins.deepSeq (lib.mkConsumer { check = { fmt = check; }; verify = { test = check; }; publish = app; extra = true; }) true',
+            base % 'builtins.deepSeq (lib.mkConsumer { check = { fmt = check; }; verify = { test = check; }; }) true',
+            base % 'builtins.deepSeq (lib.mkConsumer { check = { fmt = check; }; verify = { test = check; }; publish = { type = "app"; program = "publish"; }; }) true',
+            base % 'builtins.deepSeq (lib.mkConsumer { check = { fmt = check; }; verify = { test = check; }; publish = app // { extra = true; }; }) true',
         )
         for expression in expressions:
             with self.subTest(expression=expression):
