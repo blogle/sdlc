@@ -29,6 +29,17 @@ jobs:
         run: |
           set -euo pipefail
           test "$STAGE_RESULT" = success
+  pr-fast-context:
+    # Temporary bridge for consumers still carrying the legacy pr-fast ruleset context.
+    name: pr-fast
+    if: always() && github.event_name == 'pull_request'
+    needs: [check]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Preserve legacy admission context
+        env:
+          STAGE_RESULT: ${{ needs.check.result }}
+        run: test "$STAGE_RESULT" = success
   verify:
     if: >-
       github.event_name == 'merge_group' ||
