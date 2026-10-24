@@ -1,7 +1,7 @@
 { self, system }:
 {
-  fast = {
-    format = self.checks.${system}.fast;
+  check = {
+    format = self.checks.${system}.check;
     contract = self.checks.${system}.contract;
   };
   verify = {

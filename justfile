@@ -15,7 +15,7 @@ check:
     nix run nixpkgs#yq-go -- eval -e '.concurrency."cancel-in-progress" == false and (.concurrency | has("queue") | not)' .github/workflows/release-reconcile.yml >/dev/null
     nix run .#sdlc -- changelog check
     nix-instantiate --eval --strict tests/consumer-contract.nix
-    nix eval --json .#ci.x86_64-linux --apply builtins.attrNames | jq -e '. == ["fast", "publish", "verify"]' >/dev/null
+    nix eval --json .#ci.x86_64-linux --apply builtins.attrNames | jq -e '. == ["check", "publish", "verify"]' >/dev/null
     nix flake check --no-build
     nix build --no-link .#checks.x86_64-linux.test
 
@@ -30,10 +30,10 @@ skills:
 test:
     python3 -m unittest discover -s tests -v
 
-ci-fast:
-    nix build --no-link .#ci.x86_64-linux.fast
+ci-check:
+    nix build --no-link .#ci.x86_64-linux.check
 
-ci-candidate:
+ci-verify:
     nix build --no-link .#ci.x86_64-linux.verify
 
 changelog *args:

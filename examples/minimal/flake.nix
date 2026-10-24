@@ -2,13 +2,13 @@
   description = "Minimal consumer of the shared SDLC flake library";
   inputs = {
     # This path input makes this checked-in fixture testable in the SDLC repo.
-    # Consumers use github:blogle/sdlc/v1.0.0 and keep the exact revision in flake.lock.
+    # Consumers use the v2 release tag and keep the exact revision in flake.lock.
     sdlc.url = "path:../..";
-    nixpkgs.follows = "sdlc/nixpkgs";
   };
-  outputs = { self, nixpkgs, sdlc }:
+  outputs = { self, sdlc }:
     let
       systems = [ "x86_64-linux" ];
+      nixpkgs = sdlc.nixpkgs-latest;
     in {
       checks = nixpkgs.lib.genAttrs systems (system:
         let
@@ -28,7 +28,7 @@
           ci = import ./ci.nix { inherit self system; };
           pkgs = nixpkgs.legacyPackages.${system};
           publish = { type = "app"; program = "${pkgs.writeShellScriptBin "publish" "echo publication hook"}/bin/publish"; };
-        in sdlc.lib.mkConsumer (ci // { inherit publish; }));
+        in sdlc.lib.mkConsumer ((ci // { inherit publish; })));
       packages = nixpkgs.lib.genAttrs systems (system:
         let pkgs = nixpkgs.legacyPackages.${system};
         in {

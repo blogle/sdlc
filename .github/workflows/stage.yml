@@ -40,7 +40,7 @@ jobs:
       - uses: Mic92/hestia/matrix@v3
         id: hestia
         with:
-          flake: .#ci.x86_64-linux.${{ inputs.stage == 'check' && 'fast' || 'verify' }}
+          flake: .#ci.x86_64-linux.${{ inputs.stage }}
           nix-eval-jobs: "nix run github:blogle/sdlc/${{ inputs.sdlc_ref }}#nix-eval-jobs --"
   build:
     needs: evaluate

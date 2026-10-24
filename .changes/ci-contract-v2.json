@@ -1,0 +1,5 @@
+{
+  "type": "breaking",
+  "semver": "major",
+  "summary": "Align the Nix consumer contract with check and verify stages and expose pinned latest and stable Nixpkgs channels"
+}

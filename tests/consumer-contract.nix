@@ -1,5 +1,6 @@
 let
-  lib = import ../nix/lib.nix;
+  flake = builtins.getFlake (toString ../.);
+  lib = flake.lib;
   derivation = name: builtins.derivation {
     inherit name;
     system = "x86_64-linux";
@@ -9,7 +10,7 @@ let
   publisher = derivation "contract-publisher";
   app = { type = "app"; program = "${publisher}/bin/publish"; };
   result = lib.mkConsumer {
-    fast = {
+    check = {
       fmt = derivation "fmt";
       clippy = derivation "clippy";
     };
@@ -20,7 +21,7 @@ let
     publish = app;
   };
 in
-assert builtins.attrNames result.fast == [ "clippy" "fmt" ];
+assert builtins.attrNames result.check == [ "clippy" "fmt" ];
 assert builtins.attrNames result.verify == [ "integration" "tests" ];
 assert result.publish == app;
 assert builtins.hasContext result.publish.program;

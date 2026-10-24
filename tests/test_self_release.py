@@ -38,6 +38,14 @@ class SelfReleaseDogfoodTests(unittest.TestCase):
         self.assertNotIn("cancel-in-progress: true", leaf)
         self.assertIn("sdlc-release-publish-${{ github.repository }}", publisher)
 
+    def test_compatible_v2_channel_advances_only_after_successful_source_publication(self):
+        publisher = (ROOT / ".github/workflows/release-publish.yml").read_text()
+        marker = "Advance the compatible v2 channel after a successful SDLC release"
+        self.assertIn("if: github.repository == 'blogle/sdlc'", publisher)
+        self.assertIn('[[ "${version%%.*}" == 2 ]] || exit 0', publisher)
+        self.assertIn('git push --force-with-lease="refs/heads/v2:$expected"', publisher)
+        self.assertGreater(publisher.index(marker), publisher.index("Record completed publication"))
+
     def test_release_merge_without_fragments_is_a_successful_noop_before_publication(self):
         reconcile = (ROOT / "src/release_reconcile.py").read_text()
         body = reconcile[reconcile.index("def reconcile") :]
