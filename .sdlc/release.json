@@ -1,22 +1,18 @@
 {
-  "changelog_sha256": "dd4d7ca357cc90b6a056ae7864ed559aa2a14daaf8e6e7286e1ac6ca909cf838",
+  "changelog_sha256": "214b11f46d901c9ac902f60e853e9125903bcdeb2b1cacefcb6e2088d90bec14",
   "fragments": [
     {
-      "blob_sha": "c129f9d229c439a7f24e01b6619830b75f483097",
-      "path": ".changes/attested-merge-restriction.json"
-    },
-    {
-      "blob_sha": "8facbfa02bda4a279636d51b674f2ac490efbb77",
-      "path": ".changes/native-renovate-config.json"
+      "blob_sha": "5e934371d2f8b29712153b0fa78861d08a122682",
+      "path": ".changes/ci-contract-v2.json"
     }
   ],
-  "generated_tree": "8f5b4042a48e5db795bdf13f6a4364360d175c8dbd9fd1922f7a031ba83665e6",
-  "prior_released_boundary": "750bb47d2bc90b3026383050f529f9233e890c79",
+  "generated_tree": "020ed3a84d65e2ad06f5271b54bdb08983a614e8ae4fe85c116574de68911214",
+  "prior_released_boundary": "8c06834f712eb9d208153c1fb86816394da974fc",
   "publication": {
-    "source_main_sha": "8c06834f712eb9d208153c1fb86816394da974fc",
-    "version": "1.4.2"
+    "source_main_sha": "261be7a45dc9e6c1c4479ce0cf0d7007ffe296e1",
+    "version": "2.0.0"
   },
   "schema": 1,
-  "source_main_sha": "8c06834f712eb9d208153c1fb86816394da974fc",
-  "version": "1.4.2"
+  "source_main_sha": "261be7a45dc9e6c1c4479ce0cf0d7007ffe296e1",
+  "version": "2.0.0"
 }
