@@ -1,5 +1,9 @@
 # Changelog
 
+## [2.0.0] - 2026-10-24
+
+- **breaking**: Align the Nix consumer contract with check and verify stages and expose pinned latest and stable Nixpkgs channels
+
 ## [1.4.2] - 2026-10-23
 
 - **fix**: Verify the App-only main-update ruleset independently from required-check bypass actors during release authorization.
