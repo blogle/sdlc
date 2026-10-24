@@ -8,7 +8,7 @@ SDLC exposes two pinned Nixpkgs sources: `nixpkgs-latest` tracks `nixos-unstable
 
 ```nix
 inputs = {
-  sdlc.url = "github:blogle/sdlc/v2.0.0";
+  sdlc.url = "github:blogle/sdlc/v2";
   crane.url = "github:ipetkov/crane";
   crane.inputs.nixpkgs.follows = "sdlc/nixpkgs-latest";
 };
@@ -24,7 +24,7 @@ outputs = { self, sdlc, ... }:
   in { /* use packageSets.latest and packageSets.stable */ };
 ```
 
-`importPackages` takes independent Nixpkgs import arguments—including `config` and `overlays`—for each package set. Consumers can also import `sdlc.nixpkgs-latest` or `sdlc.nixpkgs-stable` directly. Use `follows = "sdlc/nixpkgs-latest"` or `follows = "sdlc/nixpkgs-stable"` only for other flake inputs that should share that locked node. Update and commit the consumer lock to deliberately adopt a new SDLC pin. Identical Nixpkgs inputs can improve local derivation reuse; Hestia remains repository-scoped.
+`importPackages` takes independent Nixpkgs import arguments—including `config` and `overlays`—for each package set. Consumers can also import `sdlc.nixpkgs-latest` or `sdlc.nixpkgs-stable` directly. Use `follows = "sdlc/nixpkgs-latest"` or `follows = "sdlc/nixpkgs-stable"` only for other flake inputs that should share that locked node. The moving `v2` branch is the compatible update channel, while `flake.lock` records the exact revision. Run `nix run .#sdlc -- update` to advance that lock and regenerate pinned callers together. `sdlc / policy` fails if any caller drifts from the lock. Identical Nixpkgs inputs can improve local derivation reuse; Hestia remains repository-scoped.
 
 The copy-pastable consumer input and `flake.lock` use a concrete SDLC release tag. Consumer workflows pin reusable workflows to the same full revision recorded in the lock. Nested reusable workflow calls use `uses: $/.github/workflows/stage.yml`, resolving at the exact outer workflow revision so one consumer pin atomically selects the whole SDLC workflow stack. Renovate groups the Nix input update with all reusable SDLC workflow ref updates. The shared Renovate preset remains a compatible policy channel; consumers review and adopt runtime changes through their pinned flake/workflow update.
 

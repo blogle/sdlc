@@ -141,12 +141,43 @@ class RulesetTests(unittest.TestCase):
 
 
 class InstallTests(unittest.TestCase):
+    def test_update_advances_lock_then_generates_and_checks_pinned_callers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(sdlc, "ROOT", root), patch.object(sdlc.subprocess, "run") as run:
+                sdlc.update_sdlc()
+            self.assertEqual(
+                [call.args[0] for call in run.call_args_list],
+                [
+                    ["nix", "flake", "update", "sdlc"],
+                    ["nix", "run", ".#sdlc", "--", "install"],
+                    ["nix", "run", ".#sdlc", "--", "install", "--check"],
+                ],
+            )
+            self.assertTrue(all(call.kwargs == {"cwd": root, "check": True} for call in run.call_args_list))
+
+    def test_install_rejects_non_v2_sdlc_refs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.joinpath("flake.lock").write_text(json.dumps({"nodes": {
+                "root": {"inputs": {"sdlc": "contract"}},
+                "contract": {
+                    "original": {"type": "github", "owner": "blogle", "repo": "sdlc", "ref": "c4bd995"},
+                    "locked": {"rev": "a" * 40},
+                },
+            }}))
+            with patch.object(sdlc, "ROOT", root), self.assertRaisesRegex(ValueError, "github:blogle/sdlc/v2"):
+                sdlc.install_adapters()
+
     def test_install_preserves_native_json5_managers_and_requires_shared_preset(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             root.joinpath("flake.lock").write_text(json.dumps({"nodes": {
                 "root": {"inputs": {"sdlc": "contract"}},
-                "contract": {"locked": {"rev": "a" * 40}},
+                "contract": {
+                    "original": {"type": "github", "owner": "blogle", "repo": "sdlc", "ref": "v2"},
+                    "locked": {"rev": "a" * 40},
+                },
             }}))
             config = "{ // Keep application-specific managers\n extends: ['github>blogle/sdlc#v1'], enabledManagers: ['kustomize'], }\n"
             path = root / "renovate.json5"
@@ -165,7 +196,10 @@ class InstallTests(unittest.TestCase):
             root = Path(directory)
             root.joinpath("flake.lock").write_text(json.dumps({"nodes": {
                 "root": {"inputs": {"sdlc": "contract"}},
-                "contract": {"locked": {"rev": "a" * 40}},
+                "contract": {
+                    "original": {"type": "github", "owner": "blogle", "repo": "sdlc", "ref": "v2"},
+                    "locked": {"rev": "a" * 40},
+                },
             }}))
             sdlc.ROOT = root
             with redirect_stdout(io.StringIO()):

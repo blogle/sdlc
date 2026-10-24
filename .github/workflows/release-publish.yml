@@ -204,3 +204,17 @@ jobs:
           name: release-ledger-${{ inputs.merged_sha }}-${{ github.run_id }}-published
           path: .sdlc/release-ledger.json
           retention-days: 90
+      - name: Advance the compatible v2 channel after a successful SDLC release
+        if: github.repository == 'blogle/sdlc'
+        env:
+          GH_TOKEN: ${{ steps.release-app.outputs.token }}
+          MERGED_SHA: ${{ inputs.merged_sha }}
+        run: |
+          set -euo pipefail
+          version="$(jq -r .version .sdlc/release.json)"
+          [[ "${version%%.*}" == 2 ]] || exit 0
+          gh auth setup-git
+          git fetch origin refs/heads/v2
+          expected="$(git rev-parse FETCH_HEAD)"
+          git push --force-with-lease="refs/heads/v2:$expected" \
+            origin "$MERGED_SHA:refs/heads/v2"
