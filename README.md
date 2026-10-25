@@ -149,7 +149,7 @@ The preset extends `config:recommended`, enables Renovate's beta Nix manager, gr
 
 ## Skills and agent loop
 
-The canonical skill is `skills/sdlc/SKILL.md`. The pinned Nix dev shell provides the official Vercel `skills` CLI; consumer `just skills` uses `skills add https://github.com/blogle/sdlc/tree/v1/skills/sdlc --skill sdlc --agent opencode --yes`, and `just skills-update` uses native `skills update -p -y`. The Mergify skills use the same official CLI from `Mergifyio/mergify-cli`; Mergify CLI packaging is separate.
+The canonical skill is `skills/sdlc/SKILL.md`. The pinned Nix dev shell provides the official Vercel `skills` CLI; consumer `just skills` uses `skills add https://github.com/blogle/sdlc/tree/v2/skills/sdlc --skill sdlc --agent opencode --yes`, and `just skills-update` uses native `skills update -p -y`. The Mergify skills use the same official CLI from `Mergifyio/mergify-cli`; Mergify CLI packaging is separate.
 
 Fleet activation is an operator step, not an SDLC CLI command. An authorized administrator installs the release App with only the required repository permissions, provisions `SDLC_RELEASE_APP_ID`, `SDLC_RELEASE_APP_PRIVATE_KEY`, `SDLC_RELEASE_BOT_LOGIN`, and a current `SDLC_RULESET_ATTESTATION`, verifies required rulesets, and sets `SDLC_RELEASE_ACTIVATE=true` only after those checks succeed. Keep it false otherwise. Private keys are never checked in or passed to coding agents. No Anvil activation is implied by this source change.
 
