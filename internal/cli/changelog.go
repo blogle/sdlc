@@ -55,20 +55,37 @@ func runChangelog(cmd *cobra.Command, action, version, date string, jsonOutput b
 		planned := ""
 		if bump != "" {
 			planned, err = planVersion(root, bump)
-			if err != nil { return err }
+			if err != nil {
+				return err
+			}
 		}
 		if jsonOutput {
 			return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{"release": len(entries) > 0, "bump": nullable(bump), "version": nullable(planned)})
 		}
-		if bump == "" { _, err = fmt.Fprintln(cmd.OutOrStdout(), "no changelog fragments; no release") } else { _, err = fmt.Fprintf(cmd.OutOrStdout(), "release %s (%s)\n\n%s\n", planned, bump, changelog.Render(entries)) }
+		if bump == "" {
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), "no changelog fragments; no release")
+		} else {
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "release %s (%s)\n\n%s\n", planned, bump, changelog.Render(entries))
+		}
 		return err
 	case "finalize":
-		if len(entries) == 0 { _, err = fmt.Fprintln(cmd.OutOrStdout(), "no changelog fragments; no release"); return err }
-		if err := changelog.ValidateVersion(version); err != nil { return err }
-		if date == "" { date = time.Now().UTC().Format("2006-01-02") }
+		if len(entries) == 0 {
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), "no changelog fragments; no release")
+			return err
+		}
+		if err := changelog.ValidateVersion(version); err != nil {
+			return err
+		}
+		if date == "" {
+			date = time.Now().UTC().Format("2006-01-02")
+		}
 		return finalize(root, version, date, entries, cmd)
 	case "generate":
-		return fmt.Errorf("release snapshot generation is not yet available")
+		head, err := git(root, "rev-parse", "HEAD")
+		if err != nil {
+			return err
+		}
+		return runSnapshot(cmd, head, date, jsonOutput)
 	default:
 		return fmt.Errorf("unknown changelog action %s", action)
 	}
@@ -77,14 +94,27 @@ func runChangelog(cmd *cobra.Command, action, version, date string, jsonOutput b
 func finalize(root, version, date string, entries []changelog.Entry, cmd *cobra.Command) error {
 	path := filepath.Join(root, "CHANGELOG.md")
 	old, err := os.ReadFile(path)
-	if err != nil && !os.IsNotExist(err) { return err }
-	if err := os.WriteFile(path, changelog.FinalizeBytes(old, version, date, entries), 0o644); err != nil { return err }
-	for _, entry := range entries { if err := os.Remove(filepath.Join(root, entry.Path)); err != nil { return err } }
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.WriteFile(path, changelog.FinalizeBytes(old, version, date, entries), 0o644); err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if err := os.Remove(filepath.Join(root, entry.Path)); err != nil {
+			return err
+		}
+	}
 	_, err = fmt.Fprintf(cmd.OutOrStdout(), "finalized %d fragment(s) as %s\n", len(entries), version)
 	return err
 }
 
-func nullable(value string) any { if value == "" { return nil }; return value }
+func nullable(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
 
 var tagVersion = regexp.MustCompile(`^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
 
@@ -92,16 +122,22 @@ func planVersion(root, bump string) (string, error) {
 	command := exec.Command("git", "tag", "--list", "v[0-9]*")
 	command.Dir = root
 	output, err := command.Output()
-	if err != nil { output = nil }
+	if err != nil {
+		output = nil
+	}
 	var previous string
 	for _, tag := range strings.Fields(string(output)) {
-		if tagVersion.MatchString(tag) && greaterVersion(tag, previous) { previous = tag }
+		if tagVersion.MatchString(tag) && greaterVersion(tag, previous) {
+			previous = tag
+		}
 	}
 	return changelog.NextVersion(previous, bump)
 }
 
 func greaterVersion(left, right string) bool {
-	if right == "" { return true }
+	if right == "" {
+		return true
+	}
 	a, b := tagVersion.FindStringSubmatch(left), tagVersion.FindStringSubmatch(right)
 	for i := 1; i <= 3; i++ {
 		if a[i] != b[i] {

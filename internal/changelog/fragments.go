@@ -42,7 +42,11 @@ func ReadFragments(root string, selected []string) ([]Entry, error) {
 		if _, ok := rank[fragment.Semver]; !ok || strings.TrimSpace(fragment.Type) == "" || strings.TrimSpace(fragment.Summary) == "" {
 			return nil, fmt.Errorf("%s: invalid type, semver, or summary", path)
 		}
-		entries = append(entries, Entry{Path: filepath.ToSlash(path), Fragment: fragment, Raw: raw})
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, Entry{Path: filepath.ToSlash(relative), Fragment: fragment, Raw: raw})
 	}
 	return entries, nil
 }
@@ -103,6 +107,15 @@ func FinalizeBytes(old []byte, version, date string, entries []Entry) []byte {
 		result += "\n" + strings.TrimLeft(rest, "\n")
 	}
 	return []byte(result)
+}
+
+func ReleaseChangelog(root, version, date string, entries []Entry) ([]byte, error) {
+	path := filepath.Join(root, "CHANGELOG.md")
+	old, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	return FinalizeBytes(old, version, date, entries), nil
 }
 
 func ValidateVersion(version string) error {

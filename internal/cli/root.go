@@ -10,5 +10,6 @@ func New() *cobra.Command {
 		SilenceErrors: true,
 	}
 	root.AddCommand(changelogCommand())
+	root.AddCommand(releaseCommand())
 	return root
 }
