@@ -18,6 +18,17 @@
       eachSystem = nixpkgs-latest.lib.genAttrs systems;
       sdlcLib = import ./nix/lib.nix { inherit nixpkgs-latest nixpkgs-stable; };
       agentSkills = agent-skills-nix.lib.agent-skills;
+      developmentTools = pkgs: [
+        pkgs.go
+        pkgs.git
+        pkgs.gh
+        pkgs.nix
+        pkgs.just
+        pkgs.actionlint
+        pkgs.renovate
+        pkgs.golangci-lint
+        (pkgs.python3.withPackages (ps: [ ps.json5 ]))
+      ];
       skillsInstallCheck = system:
         let
           pkgs = nixpkgs-latest.legacyPackages.${system};
@@ -53,18 +64,24 @@
       packages = eachSystem (system:
         let
           pkgs = nixpkgs-latest.legacyPackages.${system};
-          sdlcCli = pkgs.writeShellApplication {
+          sdlcCli = pkgs.buildGoModule {
+            pname = "sdlc-cli";
+            version = "0.0.0-dev";
+            src = ./.;
+            vendorHash = "sha256-m5mBubfbXXqXKsygF5j7cHEY+bXhAMcXUts5KBKoLzM=";
+            subPackages = [ "cmd/sdlc" ];
+            nativeBuildInputs = [ pkgs.git ];
+          };
+          sdlc = pkgs.writeShellApplication {
             name = "sdlc";
-            runtimeInputs = [ pkgs.coreutils pkgs.git pkgs.gh pkgs.jq pkgs.nix (pkgs.python3.withPackages (ps: [ ps.json5 ])) ];
+            runtimeInputs = [ pkgs.coreutils pkgs.git pkgs.gh pkgs.jq pkgs.nix ];
             text = ''
-              export SDLC_SOURCE_PATH=${./.}
-              export PYTHONPATH=${./src}:''${PYTHONPATH:-}
-              exec python3 ${./src/sdlc.py} "$@"
+              exec ${sdlcCli}/bin/sdlc "$@"
             '';
           };
         in {
-          default = sdlcCli;
-          sdlc = sdlcCli;
+          default = sdlc;
+          inherit sdlc;
           skills = pkgs.skills;
           mergify-cli = mergify-nix.packages.${system}.mergify-cli;
           nix-eval-jobs = pkgs.nix-eval-jobs;
@@ -84,7 +101,7 @@
             packages = sdlcLib.devTools {
               inherit pkgs;
               sdlcCli = self.packages.${system}.sdlc;
-            } ++ [ pkgs.just (pkgs.python3.withPackages (ps: [ ps.json5 ])) pkgs.gh pkgs.actionlint pkgs.renovate ];
+            } ++ developmentTools pkgs;
           };
         });
       checks = eachSystem (system:
