@@ -1,18 +1,18 @@
 {
-  "changelog_sha256": "214b11f46d901c9ac902f60e853e9125903bcdeb2b1cacefcb6e2088d90bec14",
+  "changelog_sha256": "41cecc7aaca86c17d97ba4bb7052f788721da490f664804746bdb01765059d72",
   "fragments": [
     {
-      "blob_sha": "5e934371d2f8b29712153b0fa78861d08a122682",
-      "path": ".changes/ci-contract-v2.json"
+      "blob_sha": "e7b9a428bd49520f9e3786dcf44f06d8990021a2",
+      "path": ".changes/agent-skills-library.json"
     }
   ],
-  "generated_tree": "020ed3a84d65e2ad06f5271b54bdb08983a614e8ae4fe85c116574de68911214",
-  "prior_released_boundary": "8c06834f712eb9d208153c1fb86816394da974fc",
+  "generated_tree": "45590c05f6b5689cf169580150353401cd4f82148f5b300d9e4d36c8c7312a8a",
+  "prior_released_boundary": "261be7a45dc9e6c1c4479ce0cf0d7007ffe296e1",
   "publication": {
-    "source_main_sha": "261be7a45dc9e6c1c4479ce0cf0d7007ffe296e1",
-    "version": "2.0.0"
+    "source_main_sha": "32b0bfb5536e0d835e2d3060eb617a0bd5b6d50b",
+    "version": "2.1.0"
   },
   "schema": 1,
-  "source_main_sha": "261be7a45dc9e6c1c4479ce0cf0d7007ffe296e1",
-  "version": "2.0.0"
+  "source_main_sha": "32b0bfb5536e0d835e2d3060eb617a0bd5b6d50b",
+  "version": "2.1.0"
 }
