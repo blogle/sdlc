@@ -17,7 +17,9 @@ check:
     nix-instantiate --eval --strict tests/consumer-contract.nix
     nix eval --json .#ci.x86_64-linux --apply builtins.attrNames | jq -e '. == ["check", "publish", "verify"]' >/dev/null
     nix flake check --no-build
+    nix eval .#lib.skills --apply builtins.attrNames --json | python3 -c 'import json,sys; names=json.load(sys.stdin); assert {"discoverCatalog", "selectSkills", "mkBundle", "mkLocalInstallProgram"} <= set(names), names'
     nix build --no-link .#checks.x86_64-linux.test
+    nix build --no-link .#checks.x86_64-linux.skills-install
 
 validate-mergify:
     nix run .#mergify-cli -- config validate --config-file .mergify.yml
