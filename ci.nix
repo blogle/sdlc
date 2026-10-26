@@ -16,6 +16,7 @@ in {
   };
   verify = {
     tests = self.checks.${system}.test;
+    skills-install = self.checks.${system}.skills-install;
   };
   inherit publish;
 }
