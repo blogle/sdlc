@@ -34,3 +34,38 @@ func TestVerifyProtectionFailsClosedOnMissingAttestationAndAppBinding(t *testing
 		t.Fatal("wrong publishing App was accepted")
 	}
 }
+
+func TestVerifyReleaseGateRequiresTrustedBotCurrentParentAndGateChecks(t *testing.T) {
+	main, head := "main-sha", "candidate-sha"
+	protection := Protection{
+		Rulesets:         []map[string]any{{"name": "SDLC default branch", "enforcement": "active", "id": float64(12), "updated_at": "now", "bypass_actors": []any{}}},
+		CanonicalMatches: true, AutomatedMergesMatches: true,
+		Attestation: map[string]any{"ruleset_id": float64(12), "updated_at": "now", "bypass_actors": []any{}},
+		Contexts:    map[string]bool{}, CheckApps: map[string]int64{},
+	}
+	for name, id := range RequiredCheckApps {
+		protection.Contexts[name] = true
+		protection.CheckApps[name] = id
+	}
+	checks := []Check{
+		{Name: "sdlc / check", SHA: head, AppID: GitHubActionsAppID, Conclusion: "success", ID: 1, CompletedAt: "2026-01-01T00:00:00Z"},
+		{Name: "sdlc / policy", SHA: head, AppID: GitHubActionsAppID, Conclusion: "success", ID: 2, CompletedAt: "2026-01-01T00:00:00Z"},
+	}
+	pr := PullRequest{HeadSHA: head, HeadBranch: ReleaseBranch, HeadRepo: "owner/repo", AuthorLogin: "release[bot]", AuthorType: "Bot"}
+	manifest := &Manifest{Schema: 1, SourceMainSHA: main}
+	if err := VerifyReleaseGate(pr, "release[bot]", "release[bot]", "owner/repo", main, main, checks, manifest, protection); err != nil {
+		t.Fatal(err)
+	}
+	pr.AuthorType = "User"
+	if err := VerifyReleaseGate(pr, "release[bot]", "release[bot]", "owner/repo", main, main, checks, manifest, protection); err == nil {
+		t.Fatal("human-authored candidate was accepted")
+	}
+	pr.AuthorType = "Bot"
+	if err := VerifyReleaseGate(pr, "release[bot]", "release[bot]", "owner/repo", main, "stale-main", checks, manifest, protection); err == nil {
+		t.Fatal("candidate against stale main was accepted")
+	}
+	pr.HeadBranch = "feature"
+	if err := VerifyReleaseGate(pr, "", "", "", main, "", nil, nil, Protection{}); err != nil {
+		t.Fatalf("normal PR should be a no-op success: %v", err)
+	}
+}

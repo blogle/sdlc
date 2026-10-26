@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"regexp"
@@ -102,22 +103,11 @@ func reconcileSnapshot(worktree, repo, defaultBranch, branch, baseline string) (
 	if err := verifyPredecessor(repo, defaultBranch, baseline); err != nil {
 		return noReleaseCandidate, "", err
 	}
-	program, err := os.Executable()
+	manifest, err := generateSnapshot(worktree, baseline, "")
 	if err != nil {
-		return noReleaseCandidate, "", err
+		return noReleaseCandidate, "", fmt.Errorf("release reconcile stopped: deterministic snapshot generation failed: %w", err)
 	}
-	snapshot := exec.Command(program, "release", "snapshot", "--source-sha", baseline, "--json")
-	snapshot.Dir = worktree
-	output, err := snapshot.Output()
-	if err != nil {
-		return noReleaseCandidate, "", fmt.Errorf("release reconcile stopped: deterministic snapshot generation failed")
-	}
-	var result struct {
-		Release  bool            `json:"release"`
-		Manifest json.RawMessage `json:"manifest"`
-	}
-	var manifest map[string]json.RawMessage
-	if err := json.Unmarshal(output, &result); err != nil || !result.Release || len(result.Manifest) == 0 || string(result.Manifest) == "null" || json.Unmarshal(result.Manifest, &manifest) != nil || manifest == nil {
+	if manifest == nil {
 		return noReleaseCandidate, "", fmt.Errorf("release reconcile stopped: deterministic snapshot generation produced no manifest")
 	}
 	if _, err := gitAt(worktree, "config", "user.name", "sdlc-release[bot]"); err != nil {
@@ -149,6 +139,7 @@ func reconcileSnapshot(worktree, repo, defaultBranch, branch, baseline string) (
 		lease += old
 	}
 	push := exec.Command("git", "-C", worktree, "push", lease, "origin", "HEAD:refs/heads/"+branch)
+	push.Stdout, push.Stderr = io.Discard, io.Discard
 	if err := push.Run(); err != nil {
 		return branchLeaseLost, candidate, nil
 	}

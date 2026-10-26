@@ -117,7 +117,7 @@
         });
       checks = eachSystem (system:
         let pkgs = nixpkgs-latest.legacyPackages.${system};
-            test = pkgs.runCommand "sdlc-tests" { nativeBuildInputs = [ pkgs.git (pkgs.python3.withPackages (ps: [ ps.json5 ])) ]; } ''
+            test = pkgs.runCommand "sdlc-tests" { nativeBuildInputs = [ pkgs.git self.packages.${system}.sdlc (pkgs.python3.withPackages (ps: [ ps.json5 ])) ]; } ''
               cd ${./.}
               python3 -m unittest discover -s tests -v
               touch $out

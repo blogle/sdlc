@@ -492,20 +492,11 @@ func verifyCandidate(source, head string, manifest *release.Manifest) error {
 }
 
 func replayCandidate(source, head string, manifest *release.Manifest) error {
-	worktree, err := os.MkdirTemp("", "release-gate-")
+	firstManifest, err := replaySnapshot(source)
 	if err != nil {
 		return err
 	}
-	_ = os.Remove(worktree)
-	if _, err := git(".", "worktree", "add", "--detach", worktree, source); err != nil {
-		return err
-	}
-	defer func() { _, _ = git(".", "worktree", "remove", "--force", worktree) }()
-	firstManifest, err := replaySnapshot(worktree, source)
-	if err != nil {
-		return err
-	}
-	secondManifest, err := replaySnapshot(worktree, source)
+	secondManifest, err := replaySnapshot(source)
 	if err != nil {
 		return err
 	}
@@ -528,26 +519,26 @@ func replayCandidate(source, head string, manifest *release.Manifest) error {
 	return nil
 }
 
-func replaySnapshot(worktree, source string) (*release.Manifest, error) {
-	program, err := os.Executable()
+func replaySnapshot(source string) (*release.Manifest, error) {
+	worktree, err := os.MkdirTemp("", "release-gate-")
 	if err != nil {
 		return nil, err
 	}
-	command := exec.Command(program, "release", "snapshot", "--source-sha", source, "--json")
-	command.Dir = worktree
-	command.Env = os.Environ()
-	output, err := command.Output()
+	if err := os.Remove(worktree); err != nil {
+		return nil, err
+	}
+	if _, err := git(".", "worktree", "add", "--detach", worktree, source); err != nil {
+		return nil, err
+	}
+	defer func() { _, _ = git(".", "worktree", "remove", "--force", worktree) }()
+	manifest, err := generateSnapshot(worktree, source, "")
 	if err != nil {
-		return nil, fmt.Errorf("coordinator snapshot replay failed")
+		return nil, fmt.Errorf("coordinator snapshot replay failed: %w", err)
 	}
-	var replay struct {
-		Release  bool              `json:"release"`
-		Manifest *release.Manifest `json:"manifest"`
-	}
-	if err := json.Unmarshal(output, &replay); err != nil || !replay.Release || replay.Manifest == nil {
+	if manifest == nil {
 		return nil, fmt.Errorf("coordinator snapshot produced no release manifest")
 	}
-	return replay.Manifest, nil
+	return manifest, nil
 }
 
 func githubJSON(endpoint string) (map[string]any, error) {

@@ -13,6 +13,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const noFragmentValue = "\x00"
+
 func changelogCommand() *cobra.Command {
 	command := &cobra.Command{Use: "changelog", Short: "Validate and generate changelog releases"}
 	for _, action := range []string{"check", "plan", "finalize", "generate"} {
@@ -29,9 +31,14 @@ func changelogCommand() *cobra.Command {
 				return nil
 			},
 			RunE: func(cmd *cobra.Command, args []string) error {
-				selected = append(selected, args...)
-				if cmd.Flags().Changed("fragment") && len(selected) == 1 && selected[0] == "" {
-					selected = []string{}
+				if cmd.Flags().Changed("fragment") {
+					values := make([]string, 0, len(selected)+len(args))
+					for _, item := range selected {
+						if item != noFragmentValue {
+							values = append(values, item)
+						}
+					}
+					selected = append(values, args...)
 				}
 				return runChangelog(cmd, action, version, date, jsonOutput, selected)
 			},
@@ -40,7 +47,7 @@ func changelogCommand() *cobra.Command {
 		child.Flags().StringVar(&date, "date", "", "release date (YYYY-MM-DD)")
 		child.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON")
 		child.Flags().StringArrayVar(&selected, "fragment", nil, "limit to selected .changes fragments")
-		child.Flags().Lookup("fragment").NoOptDefVal = ""
+		child.Flags().Lookup("fragment").NoOptDefVal = noFragmentValue
 		command.AddCommand(child)
 	}
 	return command

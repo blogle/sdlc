@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/blogle/sdlc/internal/release"
 )
 
 func TestSnapshotGeneratesLegacyManifestAndConsumesFragments(t *testing.T) {
@@ -29,12 +31,13 @@ func TestSnapshotGeneratesLegacyManifestAndConsumesFragments(t *testing.T) {
 	gitTest(t, root, "commit", "-qm", "source")
 	source := strings.TrimSpace(gitTest(t, root, "rev-parse", "HEAD"))
 	gitTest(t, root, "tag", "v1.2.3")
+	sourceDate := strings.TrimSpace(gitTest(t, root, "show", "-s", "--format=%cs", source))
 
 	var output bytes.Buffer
 	command := releaseCommand()
 	command.SetOut(&output)
 	command.SetErr(&output)
-	command.SetArgs([]string{"snapshot", "--source-sha", source, "--date", "2026-10-26", "--json"})
+	command.SetArgs([]string{"snapshot", "--source-sha", source, "--json"})
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +58,7 @@ func TestSnapshotGeneratesLegacyManifestAndConsumesFragments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(changelog), "# Changelog\n\n## [1.2.4] - 2026-10-26\n\n- **fix**: native release\n"; got != want {
+	if got, want := string(changelog), "# Changelog\n\n## [1.2.4] - "+sourceDate+"\n\n- **fix**: native release\n"; got != want {
 		t.Fatalf("changelog bytes differ\nwant: %q\n got: %q", want, got)
 	}
 	manifest, err := os.ReadFile(filepath.Join(root, ".sdlc/release.json"))
@@ -74,6 +77,17 @@ func TestSnapshotGeneratesLegacyManifestAndConsumesFragments(t *testing.T) {
 	}
 	if identity.Version != "1.2.4" || identity.SourceMain != source || identity.Commit != merged {
 		t.Fatalf("unexpected validated identity: %#v", identity)
+	}
+	var manifestValue release.Manifest
+	manifestBytes, err := os.ReadFile(filepath.Join(root, ".sdlc/release.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(manifestBytes, &manifestValue); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyCandidate(source, merged, &manifestValue); err != nil {
+		t.Fatal(err)
 	}
 }
 

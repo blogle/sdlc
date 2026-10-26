@@ -228,33 +228,41 @@ func commandOutput(name string, args ...string) (string, error) {
 }
 
 func runSnapshot(cmd *cobra.Command, source, date string, jsonOutput bool) error {
-	if !fullSHA.MatchString(source) {
-		return fmt.Errorf("--source-sha must be a full commit SHA")
-	}
 	root, err := os.Getwd()
 	if err != nil {
 		return err
 	}
+	manifest, err := generateSnapshot(root, source, date)
+	if err != nil {
+		return err
+	}
+	return printSnapshot(cmd, manifest, jsonOutput)
+}
+
+func generateSnapshot(root, source, date string) (*release.Manifest, error) {
+	if !fullSHA.MatchString(source) {
+		return nil, fmt.Errorf("--source-sha must be a full commit SHA")
+	}
 	if _, err := git(root, "rev-parse", source); err != nil {
-		return fmt.Errorf("source SHA %s is not available", source)
+		return nil, fmt.Errorf("source SHA %s is not available", source)
 	}
 	head, err := git(root, "rev-parse", "HEAD")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if head != source {
-		return fmt.Errorf("snapshot must be generated from the source SHA checkout")
+		return nil, fmt.Errorf("snapshot must be generated from the source SHA checkout")
 	}
 	entries, err := changelog.ReadFragments(root, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(entries) == 0 {
-		return printSnapshot(cmd, nil, jsonOutput)
+		return nil, nil
 	}
-	previous, err := previousManifest(source)
+	previous, err := previousManifest(root, source)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	priorVersion := ""
 	var priorBoundary any
@@ -265,7 +273,9 @@ func runSnapshot(cmd *cobra.Command, source, date string, jsonOutput bool) error
 		}
 	}
 	if priorVersion == "" {
-		tags, _ := exec.Command("git", "tag", "--list", "v[0-9]*").Output()
+		command := exec.Command("git", "tag", "--list", "v[0-9]*")
+		command.Dir = root
+		tags, _ := command.Output()
 		var highest string
 		for _, tag := range strings.Fields(string(tags)) {
 			if fullCoordinatorSemVersion(tag) && greaterVersion(tag, highest) {
@@ -276,51 +286,53 @@ func runSnapshot(cmd *cobra.Command, source, date string, jsonOutput bool) error
 	}
 	version, err := changelog.NextVersion(priorVersion, changelog.Bump(entries))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if date == "" {
 		date, err = git(root, "show", "-s", "--format=%cs", source)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 	bindings := make([]release.FragmentBinding, 0, len(entries))
 	for _, entry := range entries {
 		blob, err := git(root, "rev-parse", source+":"+entry.Path)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		bindings = append(bindings, release.FragmentBinding{Path: entry.Path, BlobSHA: blob})
 	}
 	changelogBytes, err := changelog.ReleaseChangelog(root, version, date, entries)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	manifest := release.NewManifest(version, source, priorBoundary, bindings, changelogBytes)
 	manifestBytes, err := manifest.JSON()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := os.WriteFile(filepath.Join(root, "CHANGELOG.md"), changelogBytes, 0o644); err != nil {
-		return err
+		return nil, err
 	}
 	manifestPath := filepath.Join(root, ".sdlc", "release.json")
 	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
-		return err
+		return nil, err
 	}
 	if err := os.WriteFile(manifestPath, manifestBytes, 0o644); err != nil {
-		return err
+		return nil, err
 	}
 	for _, entry := range entries {
 		if err := os.Remove(filepath.Join(root, entry.Path)); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return printSnapshot(cmd, &manifest, jsonOutput)
+	return &manifest, nil
 }
 
-func previousManifest(source string) (*previousRelease, error) {
-	bytes, err := exec.Command("git", "show", source+":.sdlc/release.json").Output()
+func previousManifest(root, source string) (*previousRelease, error) {
+	command := exec.Command("git", "show", source+":.sdlc/release.json")
+	command.Dir = root
+	bytes, err := command.Output()
 	if err != nil {
 		return nil, nil
 	}
