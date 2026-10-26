@@ -91,8 +91,12 @@ func runRuleset(cmd *cobra.Command, action, repo string, dryRun bool, filename s
 	if action == "plan" || dryRun {
 		plan := map[string]any{"repository": repo, "action": operation, "ruleset": desired}
 		if filename == "default-branch.json" {
+			data, err := os.ReadFile(filepath.Join(contract, "rulesets", "main-updates.json"))
+			if err != nil {
+				return err
+			}
 			var automated any
-			if err := json.Unmarshal(mustRead(filepath.Join(contract, "rulesets", "main-updates.json")), &automated); err != nil {
+			if err := json.Unmarshal(data, &automated); err != nil {
 				return err
 			}
 			plan["automated_merges"] = automated
@@ -212,7 +216,6 @@ func writeJSON(cmd *cobra.Command, value any) error {
 	encoder.SetEscapeHTML(false)
 	return encoder.Encode(value)
 }
-func mustRead(path string) []byte { data, _ := os.ReadFile(path); return data }
 func cloneMap(source map[string]any) map[string]any {
 	result := make(map[string]any, len(source))
 	for key, value := range source {
