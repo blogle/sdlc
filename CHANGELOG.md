@@ -1,5 +1,9 @@
 # Changelog
 
+## [2.1.0] - 2026-10-26
+
+- **feature**: Re-export a pinned declarative agent-skills library for consumers
+
 ## [2.0.0] - 2026-10-24
 
 - **breaking**: Align the Nix consumer contract with check and verify stages and expose pinned latest and stable Nixpkgs channels

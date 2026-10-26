@@ -1,5 +1,0 @@
-{
-  "type": "feature",
-  "semver": "minor",
-  "summary": "Re-export a pinned declarative agent-skills library for consumers"
-}
