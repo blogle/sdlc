@@ -68,7 +68,7 @@
             pname = "sdlc-cli";
             version = "0.0.0-dev";
             src = ./.;
-            vendorHash = "sha256-m5mBubfbXXqXKsygF5j7cHEY+bXhAMcXUts5KBKoLzM=";
+            vendorHash = "sha256-e/PLJIjZ4Wol7BUvU2wgk8FTEt4sWBfQjRIaCu8Kq+M=";
             subPackages = [ "cmd/sdlc" ];
             nativeBuildInputs = [ pkgs.git ];
           };
@@ -76,6 +76,7 @@
             name = "sdlc";
             runtimeInputs = [ pkgs.coreutils pkgs.git pkgs.gh pkgs.jq pkgs.nix ];
             text = ''
+              export SDLC_SOURCE_PATH=${./.}
               exec ${sdlcCli}/bin/sdlc "$@"
             '';
           };
