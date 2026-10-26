@@ -15,6 +15,8 @@ import (
 )
 
 var fullSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
+var releaseVersion = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
+var coordinatorVersion = regexp.MustCompile(`^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
 
 func releaseCommand() *cobra.Command {
 	root := &cobra.Command{Use: "release", Short: "Coordinate and validate releases"}
@@ -36,13 +38,15 @@ func releaseCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return json.NewEncoder(cmd.OutOrStdout()).Encode(identity)
+			return writeCompactJSON(cmd.OutOrStdout(), identity)
 		},
 	}
 	root.AddCommand(publish)
 	root.AddCommand(ledgerCommand())
 	root.AddCommand(receiptsCommand())
 	root.AddCommand(invokeCommand())
+	root.AddCommand(gateCommand("gate"), gateCommand("merge"))
+	root.AddCommand(reconcileCommand())
 	return root
 }
 
@@ -164,7 +168,7 @@ func invokeConsumerPublish(consumerFlake, system string) error {
 	version := os.Getenv("SDLC_RELEASE_VERSION")
 	merged, source := os.Getenv("SDLC_RELEASE_MERGED_SHA"), os.Getenv("SDLC_RELEASE_SOURCE_SHA")
 	receipts := os.Getenv("SDLC_RELEASE_RECEIPTS")
-	if !fullSemVersion(version) {
+	if !releaseVersion.MatchString(version) {
 		return fmt.Errorf("SDLC_RELEASE_VERSION must be a semantic version")
 	}
 	if !fullSHA.MatchString(merged) {
@@ -256,13 +260,15 @@ func runSnapshot(cmd *cobra.Command, source, date string, jsonOutput bool) error
 	var priorBoundary any
 	if previous != nil {
 		priorVersion = previous.Version
-		priorBoundary = previous.SourceMainSHA
+		if previous.SourceMainSHA != "" {
+			priorBoundary = previous.SourceMainSHA
+		}
 	}
 	if priorVersion == "" {
 		tags, _ := exec.Command("git", "tag", "--list", "v[0-9]*").Output()
 		var highest string
 		for _, tag := range strings.Fields(string(tags)) {
-			if fullSemVersion(tag) && greaterVersion(tag, highest) {
+			if fullCoordinatorSemVersion(tag) && greaterVersion(tag, highest) {
 				highest = tag
 			}
 		}
@@ -313,24 +319,29 @@ func runSnapshot(cmd *cobra.Command, source, date string, jsonOutput bool) error
 	return printSnapshot(cmd, &manifest, jsonOutput)
 }
 
-func previousManifest(source string) (*release.Manifest, error) {
+func previousManifest(source string) (*previousRelease, error) {
 	bytes, err := exec.Command("git", "show", source+":.sdlc/release.json").Output()
 	if err != nil {
 		return nil, nil
 	}
-	var value release.Manifest
+	var value previousRelease
 	if err := json.Unmarshal(bytes, &value); err != nil {
 		return nil, fmt.Errorf(".sdlc/release.json at %s: invalid JSON: %w", source, err)
 	}
-	if !fullSemVersion(value.Version) {
+	if !fullCoordinatorSemVersion(value.Version) {
 		return nil, fmt.Errorf(".sdlc/release.json at %s: missing valid version", source)
 	}
 	return &value, nil
 }
 
+type previousRelease struct {
+	Version       string `json:"version"`
+	SourceMainSHA string `json:"source_main_sha"`
+}
+
 func printSnapshot(cmd *cobra.Command, manifest *release.Manifest, jsonOutput bool) error {
 	if jsonOutput {
-		return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{"release": manifest != nil, "manifest": manifest})
+		return writeCompactJSON(cmd.OutOrStdout(), map[string]any{"release": manifest != nil, "manifest": manifest})
 	}
 	if manifest == nil {
 		_, err := fmt.Fprintln(cmd.OutOrStdout(), "no changelog fragments; no release")
@@ -436,6 +447,5 @@ func gitTree(commit string) (map[string]string, error) {
 	return blobs, nil
 }
 
-func fullSemVersion(value string) bool {
-	return regexp.MustCompile(`^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`).MatchString(value)
-}
+func fullSemVersion(value string) bool            { return releaseVersion.MatchString(value) }
+func fullCoordinatorSemVersion(value string) bool { return coordinatorVersion.MatchString(value) }

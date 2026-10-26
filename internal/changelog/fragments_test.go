@@ -50,3 +50,15 @@ func TestNextVersionPreservesConsumerBumpSemantics(t *testing.T) {
 		}
 	}
 }
+
+func TestNextVersionDoesNotOverflowValidSemVerComponents(t *testing.T) {
+	previous := "999999999999999999999999999999999999999.0.0"
+	got, err := NextVersion(previous, "patch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "999999999999999999999999999999999999999.0.1"
+	if got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}

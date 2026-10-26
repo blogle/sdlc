@@ -62,12 +62,11 @@ func fragmentPaths(root string, selected []string) ([]string, error) {
 		paths = matches
 	} else {
 		for _, name := range selected {
-			clean := filepath.Clean(name)
-			parts := strings.Split(filepath.ToSlash(clean), "/")
+			parts := strings.Split(filepath.ToSlash(name), "/")
 			if filepath.IsAbs(name) || len(parts) != 2 || parts[0] != ".changes" || filepath.Ext(name) != ".json" {
 				return nil, fmt.Errorf("invalid fragment path %q; expected .changes/<name>.json", name)
 			}
-			paths = append(paths, filepath.Join(root, clean))
+			paths = append(paths, filepath.Join(root, filepath.Clean(name)))
 		}
 	}
 	sort.Strings(paths)
@@ -93,7 +92,7 @@ func Render(entries []Entry) string {
 }
 
 func FinalizeBytes(old []byte, version, date string, entries []Entry) []byte {
-	text := string(old)
+	text := strings.ReplaceAll(string(old), "\r\n", "\n")
 	if text == "" {
 		text = "# Changelog\n"
 	}

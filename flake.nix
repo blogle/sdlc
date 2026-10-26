@@ -70,11 +70,20 @@
             src = ./.;
             vendorHash = "sha256-e/PLJIjZ4Wol7BUvU2wgk8FTEt4sWBfQjRIaCu8Kq+M=";
             subPackages = [ "cmd/sdlc" ];
-            nativeBuildInputs = [ pkgs.git ];
+            nativeBuildInputs = [ pkgs.git pkgs.golangci-lint ];
+            checkPhase = ''
+              runHook preCheck
+              test -z "$(gofmt -l cmd internal)"
+              go test ./...
+              go vet ./...
+              export GOLANGCI_LINT_CACHE="$TMPDIR/golangci-lint"
+              golangci-lint run --enable-only exhaustive ./...
+              runHook postCheck
+            '';
           };
           sdlc = pkgs.writeShellApplication {
             name = "sdlc";
-            runtimeInputs = [ pkgs.coreutils pkgs.git pkgs.gh pkgs.jq pkgs.nix ];
+            runtimeInputs = [ pkgs.coreutils pkgs.gitMinimal pkgs.gh pkgs.nix ];
             text = ''
               export SDLC_SOURCE_PATH=${./.}
               exec ${sdlcCli}/bin/sdlc "$@"
@@ -83,6 +92,7 @@
         in {
           default = sdlc;
           inherit sdlc;
+          sdlc-cli = sdlcCli;
           skills = pkgs.skills;
           mergify-cli = mergify-nix.packages.${system}.mergify-cli;
           nix-eval-jobs = pkgs.nix-eval-jobs;
@@ -127,9 +137,10 @@
               touch $out
             '';
         in {
-          inherit test;
-          inherit syntax config;
-          skills-install = skillsInstallCheck system;
+            inherit test;
+            inherit syntax config;
+            go = self.packages.${system}.sdlc-cli;
+            skills-install = skillsInstallCheck system;
         });
     };
 }

@@ -1,6 +1,7 @@
 package release
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -11,8 +12,30 @@ import (
 )
 
 type FragmentBinding struct {
-	Path    string `json:"path"`
-	BlobSHA string `json:"blob_sha"`
+	Path          string          `json:"path"`
+	BlobSHA       string          `json:"blob_sha"`
+	UnknownFields map[string]bool `json:"-"`
+}
+
+func (binding *FragmentBinding) UnmarshalJSON(data []byte) error {
+	type fragmentJSON FragmentBinding
+	var decoded fragmentJSON
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	unknown := map[string]bool{}
+	for key := range fields {
+		if key != "path" && key != "blob_sha" {
+			unknown[key] = true
+		}
+	}
+	*binding = FragmentBinding(decoded)
+	binding.UnknownFields = unknown
+	return nil
 }
 
 type Manifest struct {
@@ -24,6 +47,29 @@ type Manifest struct {
 	ChangelogSHA256    string            `json:"changelog_sha256"`
 	GeneratedTree      string            `json:"generated_tree"`
 	Publication        map[string]string `json:"publication"`
+	UnknownFields      map[string]bool   `json:"-"`
+}
+
+func (manifest *Manifest) UnmarshalJSON(data []byte) error {
+	type manifestJSON Manifest
+	var decoded manifestJSON
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	known := map[string]bool{"schema": true, "version": true, "prior_released_boundary": true, "source_main_sha": true, "fragments": true, "changelog_sha256": true, "generated_tree": true, "publication": true}
+	unknown := map[string]bool{}
+	for key := range fields {
+		if !known[key] {
+			unknown[key] = true
+		}
+	}
+	*manifest = Manifest(decoded)
+	manifest.UnknownFields = unknown
+	return nil
 }
 
 type Identity struct {
@@ -32,7 +78,25 @@ type Identity struct {
 	SourceMain      string            `json:"source_main"`
 	Tree            string            `json:"tree"`
 	ChangelogDigest string            `json:"changelog_digest"`
-	Fragments       []FragmentBinding `json:"fragments"`
+	Fragments       []FragmentBinding `json:"-"`
+}
+
+func (identity Identity) MarshalJSON() ([]byte, error) {
+	fragments := make([][2]string, len(identity.Fragments))
+	for index, fragment := range identity.Fragments {
+		fragments[index] = [2]string{fragment.Path, fragment.BlobSHA}
+	}
+	value := map[string]any{
+		"version": identity.Version, "commit": identity.Commit, "source_main": identity.SourceMain,
+		"tree": identity.Tree, "changelog_digest": identity.ChangelogDigest, "fragments": fragments,
+	}
+	var output bytes.Buffer
+	encoder := json.NewEncoder(&output)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(value); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(output.Bytes(), []byte("\n")), nil
 }
 
 var shaPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)

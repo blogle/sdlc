@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -22,16 +21,26 @@ func changelogCommand() *cobra.Command {
 		var jsonOutput bool
 		var selected []string
 		child := &cobra.Command{
-			Use:  action,
-			Args: cobra.NoArgs,
-			RunE: func(cmd *cobra.Command, _ []string) error {
+			Use: action,
+			Args: func(cmd *cobra.Command, args []string) error {
+				if len(args) > 0 && !cmd.Flags().Changed("fragment") {
+					return fmt.Errorf("unknown argument %q", args[0])
+				}
+				return nil
+			},
+			RunE: func(cmd *cobra.Command, args []string) error {
+				selected = append(selected, args...)
+				if cmd.Flags().Changed("fragment") && len(selected) == 1 && selected[0] == "" {
+					selected = []string{}
+				}
 				return runChangelog(cmd, action, version, date, jsonOutput, selected)
 			},
 		}
 		child.Flags().StringVar(&version, "version", "", "release version")
 		child.Flags().StringVar(&date, "date", "", "release date (YYYY-MM-DD)")
 		child.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON")
-		child.Flags().StringSliceVar(&selected, "fragment", nil, "limit to selected .changes fragments")
+		child.Flags().StringArrayVar(&selected, "fragment", nil, "limit to selected .changes fragments")
+		child.Flags().Lookup("fragment").NoOptDefVal = ""
 		command.AddCommand(child)
 	}
 	return command
@@ -41,6 +50,13 @@ func runChangelog(cmd *cobra.Command, action, version, date string, jsonOutput b
 	root, err := os.Getwd()
 	if err != nil {
 		return err
+	}
+	if action == "generate" {
+		head, err := git(root, "rev-parse", "HEAD")
+		if err != nil {
+			return err
+		}
+		return runSnapshot(cmd, head, date, jsonOutput)
 	}
 	entries, err := changelog.ReadFragments(root, selected)
 	if err != nil {
@@ -60,7 +76,7 @@ func runChangelog(cmd *cobra.Command, action, version, date string, jsonOutput b
 			}
 		}
 		if jsonOutput {
-			return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{"release": len(entries) > 0, "bump": nullable(bump), "version": nullable(planned)})
+			return writeCompactJSON(cmd.OutOrStdout(), map[string]any{"release": len(entries) > 0, "bump": nullable(bump), "version": nullable(planned)})
 		}
 		if bump == "" {
 			_, err = fmt.Fprintln(cmd.OutOrStdout(), "no changelog fragments; no release")
@@ -81,11 +97,7 @@ func runChangelog(cmd *cobra.Command, action, version, date string, jsonOutput b
 		}
 		return finalize(root, version, date, entries, cmd)
 	case "generate":
-		head, err := git(root, "rev-parse", "HEAD")
-		if err != nil {
-			return err
-		}
-		return runSnapshot(cmd, head, date, jsonOutput)
+		return nil
 	default:
 		return fmt.Errorf("unknown changelog action %s", action)
 	}

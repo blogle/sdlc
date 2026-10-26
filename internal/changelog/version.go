@@ -2,31 +2,33 @@ package changelog
 
 import (
 	"fmt"
+	"math/big"
 	"regexp"
-	"strconv"
-	"strings"
 )
 
 var versionPattern = regexp.MustCompile(`^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
 
 func NextVersion(previous, bump string) (string, error) {
-	major, minor, patch := 0, 0, 0
+	major, minor, patch := new(big.Int), new(big.Int), new(big.Int)
 	if previous != "" {
 		parts := versionPattern.FindStringSubmatch(previous)
 		if parts == nil {
 			return "", fmt.Errorf("invalid previous release version %q", previous)
 		}
-		major, _ = strconv.Atoi(parts[1])
-		minor, _ = strconv.Atoi(parts[2])
-		patch, _ = strconv.Atoi(parts[3])
+		major.SetString(parts[1], 10)
+		minor.SetString(parts[2], 10)
+		patch.SetString(parts[3], 10)
 	}
 	switch bump {
 	case "major":
-		major, minor, patch = major+1, 0, 0
+		major.Add(major, big.NewInt(1))
+		minor.SetInt64(0)
+		patch.SetInt64(0)
 	case "minor":
-		minor, patch = minor+1, 0
+		minor.Add(minor, big.NewInt(1))
+		patch.SetInt64(0)
 	default:
-		patch++
+		patch.Add(patch, big.NewInt(1))
 	}
-	return strings.TrimPrefix(fmt.Sprintf("%d.%d.%d", major, minor, patch), "v"), nil
+	return fmt.Sprintf("%s.%s.%s", major, minor, patch), nil
 }

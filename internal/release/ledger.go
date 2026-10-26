@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 )
 
 type Ledger struct {
@@ -140,7 +141,7 @@ func ApplyReceipts(ledger *Ledger, receipts Receipts, identity Identity) error {
 	}
 	seen := map[string]bool{}
 	for _, artifact := range receipts.Artifacts {
-		if artifact.Name == "" || !regexp.MustCompile(`^sha256:[0-9a-f]{64}$`).MatchString(artifact.Digest) {
+		if strings.TrimSpace(artifact.Name) == "" || !regexp.MustCompile(`^sha256:[0-9a-f]{64}$`).MatchString(artifact.Digest) {
 			return fmt.Errorf("publication receipt artifact requires name and sha256 digest")
 		}
 		if seen[artifact.Name] {

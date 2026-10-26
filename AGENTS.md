@@ -6,19 +6,32 @@ manifest schema 1, and Nix `apiVersion = 2` as compatibility boundaries.
 
 ## Design and implementation
 
-- Give each domain concept one owner and one representation; keep handlers thin
-  and dependency direction explicit.
-- Separate observation of external state, pure decisions, and side effects.
-  Domain packages must not depend on Cobra or invoke git, GitHub, or Nix
-  implicitly.
-- Prefer small cohesive interfaces and straightforward data flow. Avoid generic
-  managers, registries, forwarding layers, and speculative abstractions.
-- Validate untrusted inputs at boundaries, represent exclusive outcomes
-  explicitly, and fail closed whenever a release invariant cannot be proved.
-- Keep compatibility tests for observable output, exit status, identity bytes,
-  digests, generated adapters, and negative security invariants.
-- Review the final diff for duplicated validation, leaked boundary knowledge,
-  unclear effects, dead code, and claims not supported by executed checks.
+- **One concept, one identity/home.** Keep vocabulary and representations
+  consistent; place behavior with its domain owner and avoid competing copies.
+- **Structure communicates architecture.** Use cohesive modules, small
+  intentional interfaces, predictable dependency direction, and private details.
+- **Minimize conceptual machinery.** Prefer direct code and existing primitives;
+  do not add speculative abstractions to optimize line count or uniformity.
+- **Boundaries remove knowledge.** Hide meaningful implementation details or
+  establish an invariant; avoid forwarding layers that reveal internals.
+- **Composition over coordination.** Combine primitives directly where natural;
+  avoid registries, factories, and orchestrators without a distinct job.
+- **Encode truth in structure.** Model mutually exclusive outcomes explicitly,
+  exhaustively handle variants, validate inputs, and fail closed on uncertainty.
+- **Give complexity an address.** Isolate necessary complexity beside the
+  invariant that governs it, and explain non-obvious correctness arguments.
+- **Execution is easy to follow.** Make data flow, effects, and control flow
+  explicit; avoid clever indirection and unrelated bundled operations.
+- **Correctness is demonstrable.** Preserve observable output, exit status,
+  identity bytes, digests, generated files, and negative security invariants in
+  deterministic tests. Claim only checks actually executed successfully.
+- **Remove what no longer earns its existence.** Delete obsolete production
+  code and dependencies after parity; reject dead wrappers and configurability.
+
+Separate observation of external state, pure decisions, and side effects. Domain
+packages must not depend on Cobra or invoke git, GitHub, or Nix implicitly.
+Review the final diff for duplicated validation, leaked boundary knowledge,
+unclear effects, dead code, and claims not supported by executed checks.
 
 ## Release constraints
 

@@ -4,6 +4,10 @@ default:
     @just --list
 
 check:
+    nix develop -c go test ./...
+    nix develop -c go vet ./...
+    nix develop -c golangci-lint run --enable-only exhaustive ./...
+    test -z "$(nix develop -c gofmt -l cmd/sdlc internal)"
     python3 -m unittest discover -s tests -v
     python3 -m py_compile src/sdlc.py
     python3 -m py_compile src/release_gate.py src/release_publisher.py src/release_reconcile.py
@@ -33,10 +37,10 @@ test:
     python3 -m unittest discover -s tests -v
 
 ci-check:
-    nix build --no-link .#ci.x86_64-linux.check
+    nix build --no-link .#ci.x86_64-linux.check.syntax .#ci.x86_64-linux.check.config
 
 ci-verify:
-    nix build --no-link .#ci.x86_64-linux.verify
+    nix build --no-link .#ci.x86_64-linux.verify.tests .#ci.x86_64-linux.verify.skills-install
 
 changelog *args:
     sdlc changelog {{args}}
