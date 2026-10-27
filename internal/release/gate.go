@@ -1,6 +1,7 @@
 package release
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 
@@ -45,13 +46,32 @@ type Check struct {
 }
 
 type Protection struct {
-	Rulesets               []map[string]any
-	CanonicalMatches       bool
-	AutomatedMergesMatches bool
-	Attestation            map[string]any
-	Strict                 bool
-	Contexts               map[string]bool
-	CheckApps              map[string]int64
+	Repository  string
+	Branch      string
+	Rulesets    []map[string]any
+	Attestation map[string]any
+	Strict      bool
+	Contexts    map[string]bool
+	CheckApps   map[string]int64
+}
+
+type CommitInfo struct {
+	SHA     string
+	Parents []string
+}
+
+type MergeEvidence struct {
+	PullRequest     PullRequest
+	Repository      string
+	ReleaseBotLogin string
+	ExpectedHeadSHA string
+	MainSHA         string
+	ParentSHA       string
+	AppSlug         string
+	Protection      Protection
+	CanonicalPolicy map[string]any
+	AutomatedPolicy map[string]any
+	Checks          []Check
 }
 
 func RequiredCheck(checks []Check, name, sha, appSlug string, appID int64) error {
@@ -86,41 +106,77 @@ func RequiredCheck(checks []Check, name, sha, appSlug string, appID int64) error
 	return nil
 }
 
-func VerifyProtection(protection Protection, required []string) error {
-	active := make([]map[string]any, 0)
-	for _, ruleset := range protection.Rulesets {
-		if ruleset["enforcement"] == "active" && ruleset["name"] == "SDLC default branch" {
-			active = append(active, ruleset)
+func VerifyProtection(protection Protection, required []string, canonicalPolicy, automatedPolicy map[string]any) error {
+	if protection.Contexts == nil {
+		protection.Contexts = map[string]bool{}
+	}
+	if protection.CheckApps == nil {
+		protection.CheckApps = map[string]int64{}
+	}
+	var canonical, automated []map[string]any
+	for _, item := range protection.Rulesets {
+		if item["enforcement"] != "active" || (item["source"] != nil && item["source"] != protection.Repository) || !appliesToBranch(item, protection.Branch) {
+			continue
+		}
+		switch item["name"] {
+		case "SDLC default branch":
+			canonical = append(canonical, item)
+		case "SDLC automated merges":
+			automated = append(automated, item)
 		}
 	}
-	if len(active) != 1 {
+	if len(canonical) != 1 {
 		return fmt.Errorf("exactly one active canonical SDLC ruleset is required")
-	}
-	if !protection.CanonicalMatches {
-		return fmt.Errorf("live canonical ruleset differs from the pinned SDLC policy")
 	}
 	if protection.Attestation == nil {
 		return fmt.Errorf("canonical ruleset bypass actors are not attested; refusing release merge")
 	}
-	canonicalRuleset := active[0]
-	if protection.Attestation["ruleset_id"] != canonicalRuleset["id"] || !sdlcruleset.SameTimestamp(protection.Attestation["updated_at"], canonicalRuleset["updated_at"]) {
-		return fmt.Errorf("canonical ruleset attestation does not match its current identity")
-	}
-	actors, ok := protection.Attestation["bypass_actors"].([]any)
-	if !ok || len(actors) != 0 {
-		return fmt.Errorf("release merge requires zero protection bypass actors")
-	}
-	visible := canonicalRuleset["bypass_actors"]
-	if visible != nil {
-		if visibleActors, ok := visible.([]any); !ok || len(visibleActors) != 0 {
+	canonicalActors := canonical[0]["bypass_actors"]
+	if canonicalActors != nil {
+		if visible, ok := canonicalActors.([]any); !ok || len(visible) != 0 {
 			return fmt.Errorf("release merge requires zero protection bypass actors")
 		}
+	}
+	if !sdlcruleset.AttestsBypassActors(canonical[0], canonicalPolicy, protection.Repository, protection.Attestation, false) {
+		return fmt.Errorf("canonical ruleset bypass actors are not attested; refusing release merge")
+	}
+	if !sdlcruleset.Matches(canonical[0], canonicalPolicy, canonicalActors == nil) {
+		return fmt.Errorf("live canonical ruleset differs from the pinned SDLC policy")
+	}
+	if len(automated) != 1 {
+		return fmt.Errorf("automated main-update restriction or its attestation is missing or stale")
+	}
+	automatedActors := automated[0]["bypass_actors"]
+	if !sdlcruleset.AttestsBypassActors(automated[0], automatedPolicy, protection.Repository, protection.Attestation, true) {
+		return fmt.Errorf("automated main-update ruleset bypass actors are not attested")
+	}
+	if automatedActors != nil && !equalJSON(automatedActors, automatedPolicy["bypass_actors"]) {
+		return fmt.Errorf("automated main-update ruleset has an unexpected bypass actor set")
+	}
+	if !sdlcruleset.Matches(automated[0], automatedPolicy, automatedActors == nil) {
+		return fmt.Errorf("live automated main-update restriction differs from the pinned SDLC policy")
 	}
 	if protection.Strict {
 		return fmt.Errorf("global strict freshness is enabled; release gate will not change repository policy")
 	}
-	if !protection.AutomatedMergesMatches {
-		return fmt.Errorf("automated main-update restriction or its attestation is missing or stale")
+	for _, rule := range objectArray(canonical[0]["rules"]) {
+		if rule["type"] != "required_status_checks" {
+			continue
+		}
+		parameters := object(rule["parameters"])
+		if strict, ok := parameters["strict_required_status_checks_policy"].(bool); ok {
+			protection.Strict = protection.Strict || strict
+		}
+		items, _ := parameters["required_status_checks"].([]any)
+		for _, raw := range items {
+			item := object(raw)
+			name := stringValue(item["context"])
+			protection.Contexts[name] = true
+			protection.CheckApps[name] = numericID(item["integration_id"])
+		}
+	}
+	if protection.Strict {
+		return fmt.Errorf("global strict freshness is enabled; release gate will not change repository policy")
 	}
 	for _, name := range required {
 		if !protection.Contexts[name] {
@@ -133,14 +189,64 @@ func VerifyProtection(protection Protection, required []string) error {
 	return nil
 }
 
-func VerifyReleaseGate(pr PullRequest, authenticatedLogin, releaseBotLogin, repository string, mainSHA string, parentSHA string, checks []Check, manifest *Manifest, protection Protection) error {
+func appliesToBranch(item map[string]any, branch string) bool {
+	conditions := object(object(item["conditions"])["ref_name"])
+	includes, _ := conditions["include"].([]any)
+	return contains(includes, "~DEFAULT_BRANCH") || contains(includes, "refs/heads/"+branch)
+}
+
+func object(value any) map[string]any {
+	result, _ := value.(map[string]any)
+	if result == nil {
+		return map[string]any{}
+	}
+	return result
+}
+
+func objectArray(value any) []map[string]any {
+	rows, _ := value.([]any)
+	result := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, object(row))
+	}
+	return result
+}
+
+func stringValue(value any) string { result, _ := value.(string); return result }
+func contains(values []any, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+func numericID(value any) int64 {
+	switch value := value.(type) {
+	case float64:
+		return int64(value)
+	case int:
+		return int64(value)
+	case int64:
+		return value
+	default:
+		return 0
+	}
+}
+func equalJSON(left, right any) bool {
+	a, _ := json.Marshal(left)
+	b, _ := json.Marshal(right)
+	return string(a) == string(b)
+}
+
+func VerifyReleaseGate(pr PullRequest, authenticatedLogin, releaseBotLogin, repository string, mainSHA string, parentSHA string, checks []Check, manifest *Manifest, protection Protection, canonicalPolicy, automatedPolicy map[string]any) error {
 	if pr.HeadBranch != ReleaseBranch {
 		return nil
 	}
 	if authenticatedLogin != releaseBotLogin || pr.AuthorLogin != releaseBotLogin || pr.AuthorType != "Bot" || pr.HeadRepo != repository {
 		return fmt.Errorf("release PR is not owned by the authenticated release App")
 	}
-	if err := VerifyProtection(protection, RequiredChecks); err != nil {
+	if err := VerifyProtection(protection, RequiredChecks, canonicalPolicy, automatedPolicy); err != nil {
 		return err
 	}
 	if parentSHA != mainSHA {
@@ -158,4 +264,26 @@ func VerifyReleaseGate(pr PullRequest, authenticatedLogin, releaseBotLogin, repo
 		return fmt.Errorf("manifest source_main_sha does not match current main")
 	}
 	return nil
+}
+
+func AuthorizeReleaseMerge(evidence MergeEvidence) error {
+	pr := evidence.PullRequest
+	if pr.HeadBranch != ReleaseBranch || pr.HeadSHA != evidence.ExpectedHeadSHA {
+		return fmt.Errorf("release head changed before merge")
+	}
+	if pr.AuthorLogin != evidence.ReleaseBotLogin || pr.AuthorType != "Bot" || pr.HeadRepo != evidence.Repository {
+		return fmt.Errorf("release PR is not owned by the release App")
+	}
+	if evidence.MainSHA != evidence.ParentSHA {
+		return fmt.Errorf("release head parent is not current main")
+	}
+	if err := VerifyProtection(evidence.Protection, RequiredChecks, evidence.CanonicalPolicy, evidence.AutomatedPolicy); err != nil {
+		return err
+	}
+	for _, name := range RequiredChecks {
+		if err := RequiredCheck(evidence.Checks, name, evidence.ExpectedHeadSHA, "", RequiredCheckApps[name]); err != nil {
+			return err
+		}
+	}
+	return RequiredCheck(evidence.Checks, ReleaseCheck, evidence.ExpectedHeadSHA, evidence.AppSlug, 0)
 }

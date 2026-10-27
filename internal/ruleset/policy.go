@@ -2,9 +2,41 @@ package ruleset
 
 import (
 	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"time"
 )
+
+type Policies struct {
+	DefaultBranch   map[string]any
+	AutomatedMerges map[string]any
+}
+
+func ReadPolicies(contractRoot string) (Policies, error) {
+	defaultPolicy, err := readPolicy(filepath.Join(contractRoot, "rulesets", "default-branch.json"))
+	if err != nil {
+		return Policies{}, err
+	}
+	automatedPolicy, err := readPolicy(filepath.Join(contractRoot, "rulesets", "main-updates.json"))
+	if err != nil {
+		return Policies{}, err
+	}
+	return Policies{DefaultBranch: defaultPolicy, AutomatedMerges: automatedPolicy}, nil
+}
+
+func readPolicy(path string) (map[string]any, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]any
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("%s: invalid policy JSON: %w", path, err)
+	}
+	return result, nil
+}
 
 func SameTimestamp(left, right any) bool {
 	a, okA := left.(string)

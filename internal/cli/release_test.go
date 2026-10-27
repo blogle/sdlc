@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	gitrepo "github.com/blogle/sdlc/internal/git"
 	"github.com/blogle/sdlc/internal/release"
 )
 
@@ -71,7 +72,7 @@ func TestSnapshotGeneratesLegacyManifestAndConsumesFragments(t *testing.T) {
 	gitTest(t, root, "add", ".")
 	gitTest(t, root, "commit", "-qm", "release")
 	merged := strings.TrimSpace(gitTest(t, root, "rev-parse", "HEAD"))
-	identity, err := validateCheckout(merged)
+	identity, err := gitrepo.Open(root).ValidateRelease(merged)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +87,7 @@ func TestSnapshotGeneratesLegacyManifestAndConsumesFragments(t *testing.T) {
 	if err := json.Unmarshal(manifestBytes, &manifestValue); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyCandidate(source, merged, &manifestValue); err != nil {
+	if err := release.VerifyCandidate(gitrepo.Open(root), source, merged, &manifestValue); err != nil {
 		t.Fatal(err)
 	}
 }

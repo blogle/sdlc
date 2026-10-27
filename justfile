@@ -9,8 +9,8 @@ check:
     nix develop -c golangci-lint run --enable-only exhaustive ./...
     test -z "$(nix develop -c gofmt -l cmd/sdlc internal)"
     python3 -m unittest discover -s tests -v
-    python3 -m py_compile src/sdlc.py
-    python3 -m py_compile src/release_gate.py src/release_publisher.py src/release_reconcile.py
+    python3 -m py_compile tests/fixtures/legacy/src/sdlc.py
+    python3 -m py_compile tests/fixtures/legacy/src/release_gate.py tests/fixtures/legacy/src/release_publisher.py tests/fixtures/legacy/src/release_reconcile.py
     bash -n scripts/sdlc-release-publish.sh
     python3 -m json.tool rulesets/default-branch.json >/dev/null
     actionlint .github/workflows/*.yml

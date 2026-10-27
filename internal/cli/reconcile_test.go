@@ -8,28 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	gitrepo "github.com/blogle/sdlc/internal/git"
 	"github.com/blogle/sdlc/internal/release"
 )
-
-func TestReconcileWithNoFragmentsRetiresInsteadOfCreatingCandidate(t *testing.T) {
-	root := t.TempDir()
-	bin := filepath.Join(t.TempDir(), "bin")
-	if err := os.MkdirAll(bin, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	gh := filepath.Join(bin, "gh")
-	if err := os.WriteFile(gh, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	outcome, candidate, err := reconcileSnapshot(root, "owner/repo", "main", "sdlc/release-next", "baseline")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if outcome != noReleaseCandidate || candidate != "" {
-		t.Fatalf("unexpected no-fragment result: %v %q", outcome, candidate)
-	}
-}
 
 func TestReconcileSnapshotPushesReplaceableCandidateWithLeaseAndIsIdempotent(t *testing.T) {
 	base := t.TempDir()
@@ -65,8 +46,8 @@ func TestReconcileSnapshotPushesReplaceableCandidateWithLeaseAndIsIdempotent(t *
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chdir(original) })
-	firstCandidate := reconcileCandidate(t, base, root, bare, baseline)
-	identity, err := validateCheckout(firstCandidate)
+	firstCandidate := reconcileCandidate(t, root, bare, baseline)
+	identity, err := gitrepo.Open(root).ValidateRelease(firstCandidate)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,32 +59,32 @@ func TestReconcileSnapshotPushesReplaceableCandidateWithLeaseAndIsIdempotent(t *
 	if err := json.Unmarshal([]byte(manifestBytes), &manifest); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyCandidate(baseline, firstCandidate, &manifest); err != nil {
+	if err := release.VerifyCandidate(gitrepo.Open(root), baseline, firstCandidate, &manifest); err != nil {
 		t.Fatal(err)
 	}
 
 	reconcileGit(t, root, "fetch", "origin", "main", "sdlc/release-next")
-	secondCandidate := reconcileCandidate(t, base, root, bare, baseline)
+	secondCandidate := reconcileCandidate(t, root, bare, baseline)
 	if secondCandidate != firstCandidate {
 		t.Fatalf("idempotent reconcile changed candidate: %s != %s", secondCandidate, firstCandidate)
 	}
 	reconcileGit(t, root, "--git-dir", bare, "update-ref", "refs/heads/sdlc/release-next", baseline)
-	if outcome, _ := reconcileAttempt(t, base, root, baseline); outcome != branchLeaseLost {
+	if outcome, _ := reconcileAttempt(t, root, baseline); outcome != release.ReleaseBranchLeaseLost {
 		t.Fatalf("stale lease replaced a concurrently changed branch: %v", outcome)
 	}
 	if got := strings.TrimSpace(reconcileGit(t, root, "--git-dir", bare, "rev-parse", "refs/heads/sdlc/release-next")); got != baseline {
 		t.Fatalf("lease failure mutated remote branch: %s", got)
 	}
 	reconcileGit(t, root, "fetch", "origin", "main", "sdlc/release-next")
-	if outcome, retryCandidate := reconcileAttempt(t, base, root, baseline); outcome != candidatePushed || retryCandidate != firstCandidate {
+	if outcome, retryCandidate := reconcileAttempt(t, root, baseline); outcome != release.ReleaseCandidatePushed || retryCandidate != firstCandidate {
 		t.Fatalf("candidate did not recover after fetching the concurrent branch: %v %s", outcome, retryCandidate)
 	}
 }
 
-func reconcileCandidate(t *testing.T, base, root, bare, baseline string) string {
+func reconcileCandidate(t *testing.T, root, bare, baseline string) string {
 	t.Helper()
-	outcome, candidate := reconcileAttempt(t, base, root, baseline)
-	if outcome != candidatePushed {
+	outcome, candidate := reconcileAttempt(t, root, baseline)
+	if outcome != release.ReleaseCandidatePushed {
 		t.Fatalf("candidate push failed: %v", outcome)
 	}
 	remote := exec.Command("git", "--git-dir", bare, "rev-parse", "refs/heads/sdlc/release-next")
@@ -114,27 +95,13 @@ func reconcileCandidate(t *testing.T, base, root, bare, baseline string) string 
 	return candidate
 }
 
-func reconcileAttempt(t *testing.T, base, root, baseline string) (reconcileOutcome, string) {
+func reconcileAttempt(t *testing.T, root, baseline string) (release.ReconcileOutcome, string) {
 	t.Helper()
-	worktree := filepath.Join(base, "worktree-"+strings.ReplaceAll(strings.TrimSpace(mustGit(t, root, "rev-parse", "HEAD")), "a", "x"))
-	_ = os.RemoveAll(worktree)
-	if _, err := git(".", "worktree", "add", "--detach", worktree, baseline); err != nil {
-		t.Fatal(err)
-	}
-	outcome, candidate, err := reconcileSnapshot(worktree, "owner/repo", "main", "sdlc/release-next", baseline)
-	removeErr := gitWorktreeRemove(worktree)
+	outcome, candidate, err := (reconcilePlatform{}).Candidate("owner/repo", "main", "sdlc/release-next", baseline)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if removeErr != nil {
-		t.Fatal(removeErr)
-	}
 	return outcome, candidate
-}
-
-func mustGit(t *testing.T, directory string, args ...string) string {
-	t.Helper()
-	return reconcileGit(t, directory, args...)
 }
 
 func reconcileGit(t *testing.T, directory string, args ...string) string {

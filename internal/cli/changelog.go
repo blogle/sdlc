@@ -3,13 +3,12 @@ package cli
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/blogle/sdlc/internal/changelog"
+	gitrepo "github.com/blogle/sdlc/internal/git"
 	"github.com/spf13/cobra"
 )
 
@@ -59,7 +58,7 @@ func runChangelog(cmd *cobra.Command, action, version, date string, jsonOutput b
 		return err
 	}
 	if action == "generate" {
-		head, err := git(root, "rev-parse", "HEAD")
+		head, err := gitrepo.Open(root).Text("rev-parse", "HEAD")
 		if err != nil {
 			return err
 		}
@@ -135,33 +134,10 @@ func nullable(value string) any {
 	return value
 }
 
-var tagVersion = regexp.MustCompile(`^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
-
 func planVersion(root, bump string) (string, error) {
-	command := exec.Command("git", "tag", "--list", "v[0-9]*")
-	command.Dir = root
-	output, err := command.Output()
+	output, err := gitrepo.Open(root).Text("tag", "--list", "v[0-9]*")
 	if err != nil {
-		output = nil
+		output = ""
 	}
-	var previous string
-	for _, tag := range strings.Fields(string(output)) {
-		if tagVersion.MatchString(tag) && greaterVersion(tag, previous) {
-			previous = tag
-		}
-	}
-	return changelog.NextVersion(previous, bump)
-}
-
-func greaterVersion(left, right string) bool {
-	if right == "" {
-		return true
-	}
-	a, b := tagVersion.FindStringSubmatch(left), tagVersion.FindStringSubmatch(right)
-	for i := 1; i <= 3; i++ {
-		if a[i] != b[i] {
-			return len(a[i]) > len(b[i]) || len(a[i]) == len(b[i]) && a[i] > b[i]
-		}
-	}
-	return false
+	return changelog.NextVersion(changelog.HighestVersion(strings.Fields(output)), bump)
 }

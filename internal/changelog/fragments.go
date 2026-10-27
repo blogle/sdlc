@@ -97,7 +97,10 @@ func FinalizeBytes(old []byte, version, date string, entries []Entry) []byte {
 		text = "# Changelog\n"
 	}
 	title, rest, found := strings.Cut(text, "\n")
-	if !found || !strings.HasPrefix(title, "# ") {
+	if !found {
+		rest = ""
+	}
+	if !strings.HasPrefix(title, "# ") {
 		title, rest = "# Changelog", text
 	}
 	section := fmt.Sprintf("\n## [%s] - %s\n\n%s\n", strings.TrimPrefix(version, "v"), date, Render(entries))

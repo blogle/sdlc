@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/blogle/sdlc/internal/github"
 )
 
 func TestCheckAPIConsumesAllPagesAndRejectsDuplicates(t *testing.T) {
@@ -12,7 +14,7 @@ func TestCheckAPIConsumesAllPagesAndRejectsDuplicates(t *testing.T) {
 	page2 := `{"check_runs":[{"id":2,"name":"sdlc / check","head_sha":"head","status":"completed","conclusion":"failure","completed_at":"2026-01-02T00:00:00Z","app":{"id":15368,"slug":"github-actions"}}]}]`
 	bin := fakeGH(t, page1+page2)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	checks, err := checksFor("owner/repo", "head")
+	checks, err := (github.Client{}).ChecksFor("owner/repo", "head")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,7 +24,7 @@ func TestCheckAPIConsumesAllPagesAndRejectsDuplicates(t *testing.T) {
 	dup := `[ {"check_runs":[{"id":1,"name":"a","head_sha":"head","app":{}}]}, {"check_runs":[{"id":1,"name":"b","head_sha":"head","app":{}}]} ]`
 	bin = fakeGH(t, dup)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	if _, err := checksFor("owner/repo", "head"); err == nil {
+	if _, err := (github.Client{}).ChecksFor("owner/repo", "head"); err == nil {
 		t.Fatal("duplicate paginated check IDs were accepted")
 	}
 }
@@ -30,14 +32,14 @@ func TestCheckAPIConsumesAllPagesAndRejectsDuplicates(t *testing.T) {
 func TestAuthenticatedAppRequiresMatchingBotAndInstallationRepository(t *testing.T) {
 	bin := fakeGH(t, `{"repositories":[{"full_name":"owner/repo"}]}`)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	login, slug, err := authenticatedApp("releaser[bot]", "releaser", "owner/repo")
+	login, slug, err := (github.Client{}).AuthenticateInstallation("releaser[bot]", "releaser", "owner/repo")
 	if err != nil || login != "releaser[bot]" || slug != "releaser" {
 		t.Fatalf("trusted installation rejected: %s %s %v", login, slug, err)
 	}
-	if _, _, err := authenticatedApp("human", "releaser", "owner/repo"); err == nil {
+	if _, _, err := (github.Client{}).AuthenticateInstallation("human", "releaser", "owner/repo"); err == nil {
 		t.Fatal("wrong bot identity was accepted")
 	}
-	if _, _, err := authenticatedApp("releaser[bot]", "releaser", "owner/other"); err == nil {
+	if _, _, err := (github.Client{}).AuthenticateInstallation("releaser[bot]", "releaser", "owner/other"); err == nil {
 		t.Fatal("installation without repository access was accepted")
 	}
 }

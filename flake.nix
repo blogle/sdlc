@@ -125,7 +125,7 @@
             syntax = pkgs.runCommand "sdlc-syntax" { nativeBuildInputs = [ pkgs.python3 ]; } ''
               python3 - <<'PY'
               from pathlib import Path
-              for path in Path("${./src}").glob("*.py"):
+              for path in Path("${./tests/fixtures/legacy/src}").glob("*.py"):
                   compile(path.read_text(), str(path), "exec")
               PY
               touch $out

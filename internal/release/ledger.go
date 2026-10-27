@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 )
 
@@ -25,6 +24,10 @@ type Ledger struct {
 }
 
 var hex256 = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+func ValidSHA256Digest(value string) bool {
+	return regexp.MustCompile(`^sha256:[0-9a-f]{64}$`).MatchString(value)
+}
 
 func LoadLedger(path string, identity Identity) (*Ledger, error) {
 	data, err := os.ReadFile(path)
@@ -163,11 +166,8 @@ func sameFragments(left, right [][2]string) bool {
 	if len(left) != len(right) {
 		return false
 	}
-	leftCopy, rightCopy := append([][2]string(nil), left...), append([][2]string(nil), right...)
-	sort.Slice(leftCopy, func(i, j int) bool { return leftCopy[i][0] < leftCopy[j][0] })
-	sort.Slice(rightCopy, func(i, j int) bool { return rightCopy[i][0] < rightCopy[j][0] })
-	for i := range leftCopy {
-		if leftCopy[i] != rightCopy[i] {
+	for i := range left {
+		if left[i] != right[i] {
 			return false
 		}
 	}

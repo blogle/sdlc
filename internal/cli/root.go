@@ -2,10 +2,10 @@ package cli
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 
 	"github.com/blogle/sdlc/internal/consumer"
+	nixcli "github.com/blogle/sdlc/internal/nix"
 	"github.com/spf13/cobra"
 )
 
@@ -48,18 +48,6 @@ func installCommand() *cobra.Command {
 
 func updateCommand() *cobra.Command {
 	return &cobra.Command{Use: "update", Args: cobra.NoArgs, Short: "advance the SDLC v2 lock and regenerate pinned callers", RunE: func(_ *cobra.Command, _ []string) error {
-		if err := runCommand("nix", "flake", "update", "sdlc"); err != nil {
-			return err
-		}
-		if err := runCommand("nix", "run", ".#sdlc", "--", "install"); err != nil {
-			return err
-		}
-		return runCommand("nix", "run", ".#sdlc", "--", "install", "--check")
+		return nixcli.UpdateSDLC()
 	}}
-}
-
-func runCommand(name string, args ...string) error {
-	command := exec.Command(name, args...)
-	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
-	return command.Run()
 }

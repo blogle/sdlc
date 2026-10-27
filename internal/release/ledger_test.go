@@ -68,3 +68,20 @@ func TestReceiptsRequireExactIdentityAndUniqueArtifacts(t *testing.T) {
 		t.Fatal("receipt for another source was accepted")
 	}
 }
+
+func TestLoadLedgerRejectsReorderedIdentityFragments(t *testing.T) {
+	identity := testIdentity()
+	identity.Fragments = []FragmentBinding{
+		{Path: ".changes/a.json", BlobSHA: strings.Repeat("a", 40)},
+		{Path: ".changes/b.json", BlobSHA: strings.Repeat("b", 40)},
+	}
+	path := filepath.Join(t.TempDir(), "ledger.json")
+	ledger := NewLedger(identity)
+	ledger.Fragments[0], ledger.Fragments[1] = ledger.Fragments[1], ledger.Fragments[0]
+	if err := ledger.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadLedger(path, identity); err == nil {
+		t.Fatal("reordered fragment identity was accepted")
+	}
+}

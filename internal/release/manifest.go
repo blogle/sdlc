@@ -103,6 +103,9 @@ var shaPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var digestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var semverPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
 
+func ValidSHA(value string) bool            { return shaPattern.MatchString(value) }
+func ValidReleaseVersion(value string) bool { return semverPattern.MatchString(value) }
+
 type Tree struct {
 	Parent       string
 	TreeSHA      string
@@ -175,12 +178,22 @@ func ValidateFragmentBindings(bindings []FragmentBinding) error {
 	return nil
 }
 
-func ValidateIdentity(manifest Manifest, mergedSHA string, tree Tree) (Identity, error) {
+func ValidateManifestStructure(manifest Manifest) error {
 	if manifest.Schema != 1 {
-		return Identity{}, fmt.Errorf("release manifest schema must be 1")
+		return fmt.Errorf("release manifest schema must be 1")
 	}
 	if !semverPattern.MatchString(manifest.Version) {
-		return Identity{}, fmt.Errorf("release manifest has an invalid semantic version")
+		return fmt.Errorf("release manifest has an invalid semantic version")
+	}
+	if len(manifest.Fragments) == 0 {
+		return fmt.Errorf("release manifest must contain fragments")
+	}
+	return ValidateFragmentBindings(manifest.Fragments)
+}
+
+func ValidateIdentity(manifest Manifest, mergedSHA string, tree Tree) (Identity, error) {
+	if err := ValidateManifestStructure(manifest); err != nil {
+		return Identity{}, err
 	}
 	if !shaPattern.MatchString(mergedSHA) {
 		return Identity{}, fmt.Errorf("merged commit must be a 40-character lowercase SHA")
@@ -193,12 +206,6 @@ func ValidateIdentity(manifest Manifest, mergedSHA string, tree Tree) (Identity,
 	}
 	if !shaPattern.MatchString(tree.TreeSHA) {
 		return Identity{}, fmt.Errorf("actual merged tree must be a 40-character lowercase SHA")
-	}
-	if len(manifest.Fragments) == 0 {
-		return Identity{}, fmt.Errorf("release manifest must contain fragments")
-	}
-	if err := ValidateFragmentBindings(manifest.Fragments); err != nil {
-		return Identity{}, err
 	}
 	for _, fragment := range manifest.Fragments {
 		if tree.SourceBlobs[fragment.Path] != fragment.BlobSHA {

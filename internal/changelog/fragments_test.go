@@ -15,6 +15,15 @@ func TestFinalizeBytesMatchesLegacyOutput(t *testing.T) {
 	}
 }
 
+func TestFinalizeHeaderWithoutTrailingNewlineIsNotDuplicated(t *testing.T) {
+	entries := []Entry{{Fragment: Fragment{Type: "fix", Summary: "only one title"}}}
+	got := string(FinalizeBytes([]byte("# Changelog"), "1.0.1", "2026-10-26", entries))
+	want := "# Changelog\n\n## [1.0.1] - 2026-10-26\n\n- **fix**: only one title\n"
+	if got != want {
+		t.Fatalf("changelog header duplicated or changed\nwant: %q\n got: %q", want, got)
+	}
+}
+
 func TestReadFragmentsSortsAndRejectsInvalidInput(t *testing.T) {
 	root := t.TempDir()
 	directory := filepath.Join(root, ".changes")

@@ -6,11 +6,12 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import legacy_oracle
 from src import sdlc
 
 
-ROOT = Path(__file__).parents[1]
-sys.path.insert(0, str(ROOT / "src"))
+ROOT = legacy_oracle.ROOT
+sys.path.insert(0, str(legacy_oracle.LEGACY / "src"))
 sys.modules["sdlc"] = sdlc
 import release_publisher
 

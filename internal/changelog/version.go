@@ -8,6 +8,33 @@ import (
 
 var versionPattern = regexp.MustCompile(`^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
 
+func ValidVersion(version string) bool { return versionPattern.MatchString(version) }
+
+func HighestVersion(tags []string) string {
+	highest := ""
+	for _, tag := range tags {
+		if versionPattern.MatchString(tag) && greaterVersion(tag, highest) {
+			highest = tag
+		}
+	}
+	return highest
+}
+
+func greaterVersion(left, right string) bool {
+	if right == "" {
+		return true
+	}
+	a, b := versionPattern.FindStringSubmatch(left), versionPattern.FindStringSubmatch(right)
+	for i := 1; i <= 3; i++ {
+		if a[i] != b[i] {
+			leftValue, _ := new(big.Int).SetString(a[i], 10)
+			rightValue, _ := new(big.Int).SetString(b[i], 10)
+			return leftValue.Cmp(rightValue) > 0
+		}
+	}
+	return false
+}
+
 func NextVersion(previous, bump string) (string, error) {
 	major, minor, patch := new(big.Int), new(big.Int), new(big.Int)
 	if previous != "" {
