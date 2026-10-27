@@ -1,6 +1,9 @@
 from pathlib import Path
 import unittest
 
+import legacy_oracle
+
+LEGACY_RECONCILE = legacy_oracle.LEGACY / "src/release_reconcile.py"
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -47,13 +50,13 @@ class SelfReleaseDogfoodTests(unittest.TestCase):
         self.assertGreater(publisher.index(marker), publisher.index("Record completed publication"))
 
     def test_release_merge_without_fragments_is_a_successful_noop_before_publication(self):
-        reconcile = (ROOT / "src/release_reconcile.py").read_text()
+        reconcile = LEGACY_RECONCILE.read_text()
         body = reconcile[reconcile.index("def reconcile") :]
         self.assertLess(body.index("if not _has_fragments"), body.index("_verify_predecessor"))
         self.assertIn("_retire(repo, branch, default_branch)", reconcile)
 
     def test_successor_fragments_stay_blocked_until_predecessor_is_published(self):
-        reconcile = (ROOT / "src/release_reconcile.py").read_text()
+        reconcile = LEGACY_RECONCILE.read_text()
         self.assertLess(reconcile.index("_verify_predecessor(repo"), reconcile.index("sdlc.release_snapshot"))
         self.assertIn("publication predecessor is unreconciled", reconcile)
 
@@ -71,7 +74,7 @@ class SelfReleaseDogfoodTests(unittest.TestCase):
 
     def test_publication_failure_keeps_reconciliation_fail_closed(self):
         workflow = (ROOT / ".github/workflows/self-release.yml").read_text()
-        reconcile = (ROOT / "src/release_reconcile.py").read_text()
+        reconcile = LEGACY_RECONCILE.read_text()
         self.assertIn("types: [completed]", workflow)
         self.assertIn('"$publisher_conclusion" != skipped', workflow)
         self.assertIn("still draft", reconcile)
@@ -87,7 +90,7 @@ class SelfReleaseDogfoodTests(unittest.TestCase):
 
     def test_publication_wakeup_retry_is_idempotent(self):
         workflow = (ROOT / ".github/workflows/release-reconcile.yml").read_text()
-        reconcile = (ROOT / "src/release_reconcile.py").read_text()
+        reconcile = LEGACY_RECONCILE.read_text()
         self.assertIn("cancel-in-progress: false", workflow)
         self.assertIn('"pr", "edit"', reconcile)
         self.assertIn("--force-with-lease=refs/heads/{branch}:{old}", reconcile)

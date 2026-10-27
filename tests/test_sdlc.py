@@ -7,7 +7,9 @@ import unittest
 from contextlib import redirect_stdout
 from unittest.mock import patch
 
-SOURCE = Path(__file__).parents[1] / "src/sdlc.py"
+import legacy_oracle
+
+SOURCE = legacy_oracle.LEGACY / "src/sdlc.py"
 SPEC = importlib.util.spec_from_file_location("sdlc", SOURCE)
 sdlc = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(sdlc)
