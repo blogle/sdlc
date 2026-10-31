@@ -64,7 +64,7 @@ func reconcileOne(remote Remote, request Request, action Action) (Result, error)
 		return Result{}, err
 	}
 	equal := current != nil && Matches(current, request.Desired, false)
-	if action == CheckAction && current != nil && request.Attestation != nil {
+	if (action == CheckAction || action == ApplyAction) && current != nil && request.Attestation != nil {
 		equal = MatchesWithAttestation(current, request.Desired, request.Repository, request.Attestation, request.Filename != "default-branch.json")
 	}
 	operation := "create"
@@ -109,7 +109,6 @@ func reconcileOne(remote Remote, request Request, action Action) (Result, error)
 			return result, err
 		}
 	}
-	request.Attestation = nil
 	child, err := reconcileOne(remote, request, CheckAction)
 	result.Checked = append(result.Checked, child.Checked...)
 	return result, err

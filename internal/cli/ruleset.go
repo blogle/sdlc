@@ -69,7 +69,7 @@ func reconcileRuleset(action, repository string, dryRun bool) (ruleset.Result, e
 		return ruleset.Result{}, err
 	}
 	var attestation map[string]any
-	if action == "check" {
+	if action == "check" || action == "apply" {
 		_ = json.Unmarshal([]byte(os.Getenv("SDLC_RULESET_ATTESTATION")), &attestation)
 	}
 	return ruleset.Reconcile(github.Client{RulesetToken: os.Getenv("SDLC_RULESET_TOKEN")}, ruleset.Request{

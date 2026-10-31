@@ -77,6 +77,23 @@ func TestRulesetHandlersPlanCheckAndApplyCanonicalPolicies(t *testing.T) {
 			t.Fatalf("idempotent apply repeated mutations, got %d writes", got)
 		}
 	})
+
+	t.Run("apply preserves an attested unchanged redacted ruleset without writing", func(t *testing.T) {
+		_, logPath := makeRulesetFixtures(t, true)
+		// Existing API objects retain their identities and timestamps while GitHub
+		// redacts bypass_actors from the response.
+		writeRepoFile(t, os.Getenv("GH_FIXTURES"), "default.applied", "")
+		writeRepoFile(t, os.Getenv("GH_FIXTURES"), "automated.applied", "")
+		command := New()
+		command.SetArgs([]string{"ruleset", "apply", "--repo", "owner/repo"})
+		if err := command.Execute(); err != nil {
+			t.Fatal(err)
+		}
+		calls := readIntegrationFile(t, logPath)
+		if bytes.Contains(calls, []byte("--method POST")) || bytes.Contains(calls, []byte("--method PUT")) {
+			t.Fatalf("valid attestation should avoid rewriting unchanged rulesets: %s", calls)
+		}
+	})
 }
 
 func readIntegrationFile(t *testing.T, path string) []byte {
