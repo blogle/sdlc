@@ -391,6 +391,21 @@ shutil.copyfile(os.environ["FAKE_ASSET"], os.path.join(target, asset))
         workflow = (Path(__file__).parents[1] / ".github/workflows/release-publish.yml").read_text()
         self.assertIn('nix run "$SDLC_FLAKE"#sdlc -- ruleset check', workflow)
 
+    def test_release_workflows_normalize_pinned_sdlc_refs(self):
+        root = Path(__file__).parents[1] / ".github/workflows"
+        normalization = "inputs.sdlc_ref == '' && github.workspace || startsWith(inputs.sdlc_ref, 'github:') && inputs.sdlc_ref || format('github:blogle/sdlc/{0}', inputs.sdlc_ref)"
+        expected = {
+            "release-reconcile.yml": 1,
+            "release-gate.yml": 2,
+            "release-merge.yml": 1,
+            "release-publish.yml": 5,
+        }
+        for filename, count in expected.items():
+            with self.subTest(workflow=filename):
+                workflow = (root / filename).read_text()
+                self.assertEqual(workflow.count(normalization), count)
+                self.assertIn('nix run "$SDLC_FLAKE"#sdlc', workflow)
+
 
 if __name__ == "__main__":
     unittest.main()
