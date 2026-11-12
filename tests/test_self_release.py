@@ -26,7 +26,13 @@ class SelfReleaseDogfoodTests(unittest.TestCase):
         self.assertNotIn("publish_version", workflow)
         self.assertIn("if: inputs.merged_sha == ''", workflow)
         self.assertIn("if: inputs.merged_sha != ''", workflow)
-        self.assertNotIn("packages: write", workflow)
+        self.assertIn("permissions:\n  contents: read\n  packages: write", workflow)
+        reconcile = workflow.split("  reconcile:\n", 1)[1].split("  publish:\n", 1)[0]
+        publish = workflow.split("  publish:\n", 1)[1]
+        self.assertNotIn("packages: write", reconcile)
+        self.assertIn("packages: write", publish)
+        self.assertIn("vars.SDLC_RELEASE_ACTIVATE == 'true'", reconcile)
+        self.assertIn("inputs.activate && vars.SDLC_RELEASE_ACTIVATE == 'true'", publish)
         self.assertNotIn("packages: read", workflow)
 
     def test_only_leaf_reconciler_owns_recovery_serialization(self):

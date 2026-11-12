@@ -28,6 +28,7 @@ on:
 
 permissions:
   contents: read
+  packages: write
 
 concurrency:
   group: sdlc-release-publish-${{ github.repository }}
@@ -39,6 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      packages: write
     steps:
       - uses: actions/create-github-app-token@v1
         id: release-app
@@ -47,7 +49,6 @@ jobs:
           private-key: ${{ secrets.SDLC_RELEASE_APP_PRIVATE_KEY }}
           permission-administration: read
           permission-contents: write
-          permission-packages: write
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.merged_sha }}
@@ -154,6 +155,7 @@ jobs:
       - name: Publish exact tag and durable asset through consumer contract
         env:
           GH_TOKEN: ${{ steps.release-app.outputs.token }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SDLC_RELEASE_LEDGER: .sdlc/release-ledger.json
           SDLC_FLAKE: ${{ inputs.sdlc_ref == '' && github.workspace || startsWith(inputs.sdlc_ref, 'github:') && inputs.sdlc_ref || format('github:blogle/sdlc/{0}', inputs.sdlc_ref) }}
           MERGED_SHA: ${{ inputs.merged_sha }}
@@ -166,7 +168,7 @@ jobs:
           export SDLC_RELEASE_MERGED_SHA="$MERGED_SHA"
           export SDLC_RELEASE_SOURCE_SHA="$source_sha"
           export SDLC_RELEASE_RECEIPTS=.sdlc/publication-receipts.json
-          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$RELEASE_BOT_LOGIN" --password-stdin
+          printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           nix run "$SDLC_FLAKE"#sdlc -- release invoke \
             --consumer-flake "$GITHUB_WORKSPACE" \
             --system x86_64-linux

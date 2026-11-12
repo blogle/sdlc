@@ -218,6 +218,7 @@ class InstallTests(unittest.TestCase):
             merge = (root / ".github/workflows/sdlc-release-merge.yml").read_text()
             self.assertIn("release-merge.yml@" + "a" * 40, merge)
             self.assertIn("workflows: [SDLC release gate]", merge)
+            self.assertIn("permissions:\n  checks: read\n  contents: read\n  packages: write\n  pull-requests: read", merge)
             cache_workflow = (root / ".github/workflows/sdlc-cache-gc.yml").read_text()
             self.assertIn("hestia-gc.yml@" + "a" * 40, cache_workflow)
             self.assertIn("actions: write", cache_workflow)
