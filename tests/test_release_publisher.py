@@ -391,6 +391,32 @@ shutil.copyfile(os.environ["FAKE_ASSET"], os.path.join(target, asset))
         workflow = (Path(__file__).parents[1] / ".github/workflows/release-publish.yml").read_text()
         self.assertIn('nix run "$SDLC_FLAKE"#sdlc -- ruleset check', workflow)
 
+    def test_package_push_uses_repository_token_and_preserves_app_api_identity(self):
+        root = Path(__file__).parents[1] / ".github/workflows"
+        merge = (root / "release-merge.yml").read_text()
+        release = (root / "release.yml").read_text()
+        publish = (root / "release-publish.yml").read_text()
+
+        self.assertIn("packages: write", merge.split("jobs:", 1)[0])
+        publish_caller = merge.split("  publish:\n", 1)[1]
+        self.assertIn("packages: write", publish_caller.split("    uses:", 1)[0])
+        self.assertNotIn("packages: write", merge.split("  merge:\n", 1)[1].split("  publish:\n", 1)[0])
+
+        self.assertIn("packages: write", release.split("permissions:\n", 1)[1].split("jobs:", 1)[0])
+        reconcile = release.split("  reconcile:\n", 1)[1].split("  publish:\n", 1)[0]
+        self.assertNotIn("packages: write", reconcile)
+        release_publisher = release.split("  publish:\n", 1)[1]
+        self.assertIn("packages: write", release_publisher.split("    uses:", 1)[0])
+
+        self.assertIn("packages: write", publish.split("permissions:\n", 1)[1].split("concurrency:", 1)[0])
+        self.assertIn("GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}", publish)
+        self.assertNotIn("permission-packages: write", publish)
+        self.assertIn('docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin', publish)
+        docker_step = publish.split("- name: Publish exact tag and durable asset through consumer contract", 1)[1]
+        docker_step = docker_step.split("- name: Record completed publication", 1)[0]
+        self.assertIn('GH_TOKEN: ${{ steps.release-app.outputs.token }}', docker_step)
+        self.assertIn('printf \'%s\' "$GITHUB_TOKEN" | docker login', docker_step)
+
     def test_release_workflows_normalize_pinned_sdlc_refs(self):
         root = Path(__file__).parents[1] / ".github/workflows"
         normalization = "inputs.sdlc_ref == '' && github.workspace || startsWith(inputs.sdlc_ref, 'github:') && inputs.sdlc_ref || format('github:blogle/sdlc/{0}', inputs.sdlc_ref)"
