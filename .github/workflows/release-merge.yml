@@ -25,6 +25,7 @@ concurrency:
 permissions:
   contents: read
   checks: read
+  packages: write
   pull-requests: read
 
 jobs:
@@ -109,6 +110,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      packages: write
     uses: ./.github/workflows/release.yml
     with:
       merged_sha: ${{ needs.merge.outputs.merged_sha }}
