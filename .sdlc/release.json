@@ -1,18 +1,18 @@
 {
-  "changelog_sha256": "67769dfb2276c7e24e0721588f0ef715d752d25653fbbe4f43576d3d67d432b7",
+  "changelog_sha256": "89c25d1d25f1ea78db25053c526465ab9c1203d1f5e0cbc403815357f648d655",
   "fragments": [
     {
-      "blob_sha": "8931cdcfd6e9244d3fbd748c4da19559500bf30e",
-      "path": ".changes/pinned-release-flake-ref.json"
+      "blob_sha": "4451d7a1fa78e7bed10b33ff5cdf03cba9d4146c",
+      "path": ".changes/ghcr-package-token.json"
     }
   ],
-  "generated_tree": "b93744b5aed89c7f7220245db826be1cc9ae46f32e32b1fdd79fa42807056fc2",
-  "prior_released_boundary": "32b0bfb5536e0d835e2d3060eb617a0bd5b6d50b",
+  "generated_tree": "f57f862248865e6e5c863c899f0bca419673ab5de48f801e73ac70f7f8188868",
+  "prior_released_boundary": "7d8c16a09b0a18e5e6631636890f36a7ae6264a7",
   "publication": {
-    "source_main_sha": "7d8c16a09b0a18e5e6631636890f36a7ae6264a7",
-    "version": "2.1.1"
+    "source_main_sha": "4870be7aab64d6321b0fe24181cdaa1f66274301",
+    "version": "2.1.2"
   },
   "schema": 1,
-  "source_main_sha": "7d8c16a09b0a18e5e6631636890f36a7ae6264a7",
-  "version": "2.1.1"
+  "source_main_sha": "4870be7aab64d6321b0fe24181cdaa1f66274301",
+  "version": "2.1.2"
 }

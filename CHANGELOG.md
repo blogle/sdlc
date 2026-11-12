@@ -1,5 +1,9 @@
 # Changelog
 
+## [2.1.2] - 2026-11-12
+
+- **fix**: Use the repository token to authenticate GHCR package publication
+
 ## [2.1.1] - 2026-11-12
 
 - **fix**: Resolve pinned SDLC revisions as flake references in release workflows
