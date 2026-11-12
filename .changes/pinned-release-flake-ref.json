@@ -1,0 +1,5 @@
+{
+  "type": "fix",
+  "semver": "patch",
+  "summary": "Resolve pinned SDLC revisions as flake references in release workflows"
+}
