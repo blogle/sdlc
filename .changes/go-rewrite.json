@@ -1,0 +1,5 @@
+{
+  "type": "build",
+  "semver": "patch",
+  "summary": "Rewrite the SDLC CLI in Go while preserving the v2 consumer contract"
+}

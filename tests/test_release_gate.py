@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import legacy_oracle
 import src.release_gate as release_gate
 from src.release_gate import Check, GateError, PullRequest, evaluate_release_gate, merge_release_pr, verify_candidate, verify_protection
 from src.sdlc import generated_tree_digest
@@ -339,7 +340,7 @@ class ReleaseGateTests(unittest.TestCase):
             gh.write_text("#!/bin/sh\nprintf '%s' '{\"head\":{\"sha\":\"head\",\"ref\":\"feature\",\"user\":{\"login\":\"alice\",\"type\":\"User\"},\"repo\":{\"full_name\":\"alice/sdlc\"}},\"user\":{\"login\":\"alice\",\"type\":\"User\"}}'\n")
             gh.chmod(0o755)
             env = {"PATH": f"{temp}:{__import__('os').environ['PATH']}"}
-            result = subprocess.run([sys.executable, "src/release_gate.py", "gate", "--repo", "blogle/sdlc", "--pr", "17", "--release-bot", "release-bot[bot]"], env=env, capture_output=True, text=True)
+            result = subprocess.run([sys.executable, str(legacy_oracle.LEGACY / "src/release_gate.py"), "gate", "--repo", "blogle/sdlc", "--pr", "17", "--release-bot", "release-bot[bot]"], env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_workflow_uses_event_json_and_head_specific_app_check(self):

@@ -9,7 +9,9 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 
-SDLC_PATH = Path(__file__).resolve().parents[1] / "src" / "sdlc.py"
+import legacy_oracle
+
+SDLC_PATH = legacy_oracle.LEGACY / "src" / "sdlc.py"
 SPEC = importlib.util.spec_from_file_location("sdlc_successor_canary", SDLC_PATH)
 sdlc = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(sdlc)

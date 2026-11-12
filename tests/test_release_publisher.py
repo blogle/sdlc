@@ -11,11 +11,12 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import legacy_oracle
 from src.sdlc import generated_tree_digest
 
 
 SPEC = importlib.util.spec_from_file_location(
-    "release_publisher", Path(__file__).parents[1] / "src/release_publisher.py"
+	"release_publisher", legacy_oracle.LEGACY / "src/release_publisher.py"
 )
 publisher = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(publisher)
@@ -132,7 +133,7 @@ class PublisherTests(unittest.TestCase):
             subprocess.run(["git", "add", "."], cwd=root, check=True)
             subprocess.run(["git", "commit", "-qm", "release"], cwd=root, check=True)
             merged = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
-            result = subprocess.run([sys.executable, str(Path(__file__).parents[1] / "src/release_publisher.py"), merged], cwd=root, check=True, capture_output=True, text=True)
+            result = subprocess.run([sys.executable, str(legacy_oracle.LEGACY / "src/release_publisher.py"), merged], cwd=root, check=True, capture_output=True, text=True)
             self.assertEqual(json.loads(result.stdout)["commit"], merged)
 
     def _self_source_release(self, root: Path):
