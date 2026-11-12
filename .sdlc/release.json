@@ -1,18 +1,18 @@
 {
-  "changelog_sha256": "41cecc7aaca86c17d97ba4bb7052f788721da490f664804746bdb01765059d72",
+  "changelog_sha256": "67769dfb2276c7e24e0721588f0ef715d752d25653fbbe4f43576d3d67d432b7",
   "fragments": [
     {
-      "blob_sha": "e7b9a428bd49520f9e3786dcf44f06d8990021a2",
-      "path": ".changes/agent-skills-library.json"
+      "blob_sha": "8931cdcfd6e9244d3fbd748c4da19559500bf30e",
+      "path": ".changes/pinned-release-flake-ref.json"
     }
   ],
-  "generated_tree": "45590c05f6b5689cf169580150353401cd4f82148f5b300d9e4d36c8c7312a8a",
-  "prior_released_boundary": "261be7a45dc9e6c1c4479ce0cf0d7007ffe296e1",
+  "generated_tree": "b93744b5aed89c7f7220245db826be1cc9ae46f32e32b1fdd79fa42807056fc2",
+  "prior_released_boundary": "32b0bfb5536e0d835e2d3060eb617a0bd5b6d50b",
   "publication": {
-    "source_main_sha": "32b0bfb5536e0d835e2d3060eb617a0bd5b6d50b",
-    "version": "2.1.0"
+    "source_main_sha": "7d8c16a09b0a18e5e6631636890f36a7ae6264a7",
+    "version": "2.1.1"
   },
   "schema": 1,
-  "source_main_sha": "32b0bfb5536e0d835e2d3060eb617a0bd5b6d50b",
-  "version": "2.1.0"
+  "source_main_sha": "7d8c16a09b0a18e5e6631636890f36a7ae6264a7",
+  "version": "2.1.1"
 }

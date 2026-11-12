@@ -1,5 +1,9 @@
 # Changelog
 
+## [2.1.1] - 2026-11-12
+
+- **fix**: Resolve pinned SDLC revisions as flake references in release workflows
+
 ## [2.1.0] - 2026-10-26
 
 - **feature**: Re-export a pinned declarative agent-skills library for consumers
