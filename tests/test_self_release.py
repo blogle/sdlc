@@ -12,6 +12,7 @@ class SelfReleaseDogfoodTests(unittest.TestCase):
         self.assertIn("push:\n    branches: [main]", caller)
         self.assertIn("uses: ./.github/workflows/release-reconcile.yml", caller)
         self.assertIn('sdlc_ref: ""', caller)
+        self.assertIn("inputs.sdlc_ref == '' && github.workspace", reconcile)
         self.assertIn("secrets: inherit", caller)
         self.assertNotIn("git push", caller)
         self.assertNotIn("gh release", caller)
