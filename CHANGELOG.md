@@ -1,5 +1,9 @@
 # Changelog
 
+## [2.1.4] - 2026-11-13
+
+- **fix**: Allow an audited draft predecessor to retire without replaying its release identity
+
 ## [2.1.3] - 2026-11-13
 
 - **fix**: Fix historical release snapshot replay when descendant version tags exist
