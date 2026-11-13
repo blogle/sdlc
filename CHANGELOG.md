@@ -1,5 +1,9 @@
 # Changelog
 
+## [2.1.5] - 2026-11-13
+
+- **fix**: Grant package write permission to the generated rolling release caller
+
 ## [2.1.4] - 2026-11-13
 
 - **fix**: Allow an audited draft predecessor to retire without replaying its release identity
