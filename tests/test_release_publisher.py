@@ -391,6 +391,20 @@ shutil.copyfile(os.environ["FAKE_ASSET"], os.path.join(target, asset))
         workflow = (Path(__file__).parents[1] / ".github/workflows/release-publish.yml").read_text()
         self.assertIn('nix run "$SDLC_FLAKE"#sdlc -- ruleset check', workflow)
 
+    def test_default_branch_identity_reaches_downstream_checkout_validation(self):
+        root = Path(__file__).parents[1]
+        workflow = (root / ".github/workflows/release-publish.yml").read_text()
+        verify = workflow.split("- name: Verify canonical protection and actual merged identity", 1)[1]
+        verify = verify.split("- name: Prepare one immutable source artifact", 1)[0]
+        self.assertIn("DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}", verify)
+        self.assertIn('printf \'SDLC_RELEASE_MAIN_SHA=%s\\n\' "$SDLC_RELEASE_MAIN_SHA" >> "$GITHUB_ENV"', verify)
+        self.assertIn('printf \'DEFAULT_BRANCH=%s\\n\' "$DEFAULT_BRANCH" >> "$GITHUB_ENV"', verify)
+
+        persist = workflow.split("- name: Persist artifact bytes without overwriting", 1)[1]
+        persist = persist.split("- name: Save publication audit ledger", 1)[0]
+        self.assertIn('release ledger artifact', persist)
+        self.assertIn("identity = validate_checkout(commit)", (root / "src/release_publisher.py").read_text())
+
     def test_package_push_uses_repository_token_and_preserves_app_api_identity(self):
         root = Path(__file__).parents[1] / ".github/workflows"
         merge = (root / "release-merge.yml").read_text()
