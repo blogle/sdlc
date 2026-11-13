@@ -18,10 +18,14 @@ import subprocess
 import tempfile
 from typing import Any, Callable, Iterable, Mapping
 
-try:
-    import sdlc as coordinator
-except ModuleNotFoundError:
+if __package__:
     from . import sdlc as coordinator
+    from . import release_reconcile
+    from . import abandoned_release as retirement
+else:
+    import sdlc as coordinator
+    import release_reconcile
+    import abandoned_release as retirement
 
 verify_release_tree = coordinator.verify_release_tree
 
@@ -453,6 +457,8 @@ def _gate_command(args: argparse.Namespace) -> int:
     repo = _gh_json(f"repos/{args.repo}")
     main = _gh_json(f"repos/{args.repo}/commits/{repo['default_branch']}")
     commit = _gh_json(f"repos/{args.repo}/commits/{pr.head_sha}")
+    # Read the predecessor and retirement marker from this exact live main.
+    _git("fetch", "--tags", "origin", main["sha"])
     if args.historical_merged_sha:
         manifest = _manifest_at(args.repo, pr.head_sha)
         source_sha = manifest.get("source_main_sha") if manifest else None
@@ -462,6 +468,7 @@ def _gate_command(args: argparse.Namespace) -> int:
         parents = merged.get("parents") or []
         if len(parents) != 1 or parents[0].get("sha") != source_sha:
             raise GateError("historical squash merge does not match manifest source_main_sha")
+        retirement.reject_abandoned(main["sha"], manifest.get("version"), source_sha, args.historical_merged_sha)
         verify_protection(_protection(args.repo, repo["default_branch"]))
         historical_checks = _checks(args.repo, pr.head_sha)
         for name in REQUIRED_CHECKS:
@@ -469,6 +476,7 @@ def _gate_command(args: argparse.Namespace) -> int:
         _required_check(historical_checks, RELEASE_CHECK, pr.head_sha, slug)
         verify_candidate(source_sha, args.historical_merged_sha, manifest)
         return 0
+    release_reconcile._verify_predecessor(args.repo, repo["default_branch"], main["sha"])
     evaluate_release_gate(
         pr=pr,
         authenticated_login=login,
@@ -495,6 +503,8 @@ def _merge_command(args: argparse.Namespace) -> int:
     api = GithubMergeApi(args.repo, repository["default_branch"], slug)
     expected = args.expected_head or pr.head_sha
     current_main = api.main_sha()
+    _git("fetch", "--tags", "origin", current_main)
+    release_reconcile._verify_predecessor(args.repo, repository["default_branch"], current_main)
     verify_candidate(current_main, expected, _manifest_at(args.repo, expected))
     api_result = merge_release_pr(api=api, pr_number=args.pr, expected_head_sha=expected, current_main_sha=current_main, release_bot_login=args.release_bot)
     if not api_result.get("merged"):
@@ -516,7 +526,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         return _gate_command(args) if args.command == "gate" else _merge_command(args)
-    except (GateError, OSError, subprocess.CalledProcessError) as exc:
+    except (GateError, retirement.RetirementError, ValueError, OSError, subprocess.CalledProcessError) as exc:
         print(f"release-gate: {exc}", file=os.sys.stderr)
         return 1
 
