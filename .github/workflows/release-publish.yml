@@ -70,6 +70,9 @@ jobs:
           git fetch origin "$DEFAULT_BRANCH" --tags
           test "$(git rev-parse HEAD)" = "$MERGED_SHA"
           git merge-base --is-ancestor "$MERGED_SHA" FETCH_HEAD
+          SDLC_RELEASE_MAIN_SHA="$(git rev-parse FETCH_HEAD)"
+          export SDLC_RELEASE_MAIN_SHA
+          printf 'SDLC_RELEASE_MAIN_SHA=%s\n' "$SDLC_RELEASE_MAIN_SHA" >> "$GITHUB_ENV"
           nix run "$SDLC_FLAKE"#sdlc -- release publish "$MERGED_SHA" > identity.json
       - name: Prepare one immutable source artifact
         env:
