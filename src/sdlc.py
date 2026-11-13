@@ -80,14 +80,14 @@ def _manifest_at(ref="HEAD"):
     return manifest
 
 
-def _version_after(previous, bump):
+def _version_after(previous, bump, source_sha):
     if previous:
         match = VERSION_RE.match(str(previous))
         if not match:
             raise ValueError(f"invalid previous release version {previous!r}")
         major, minor, patch = map(int, match.groups())
     else:
-        major, minor, patch = max(_tag_versions(), default=(0, 0, 0))
+        major, minor, patch = max(_tag_versions(source_sha), default=(0, 0, 0))
     if bump == "major":
         return f"{major + 1}.0.0"
     if bump == "minor":
@@ -95,9 +95,9 @@ def _version_after(previous, bump):
     return f"{major}.{minor}.{patch + 1}"
 
 
-def _tag_versions():
+def _tag_versions(source_sha):
     try:
-        tags = _git("tag", "--list", "v[0-9]*").splitlines()
+        tags = _git("tag", "--merged", source_sha, "--list", "v[0-9]*").splitlines()
     except (FileNotFoundError, subprocess.CalledProcessError):
         return []
     return [tuple(map(int, VERSION_RE.match(tag).groups())) for tag in tags if VERSION_RE.match(tag)]
@@ -176,7 +176,7 @@ def release_snapshot(source_sha, date=None):
         return None
     previous = _manifest_at(source_sha)
     bump = bump_intent(entries)
-    version = _version_after(previous.get("version") if previous else None, bump)
+    version = _version_after(previous.get("version") if previous else None, bump, source_sha)
     release_date = date or _git("show", "-s", "--format=%cs", source_sha)
     bindings = []
     for path, item in entries:

@@ -1,0 +1,1 @@
+{"semver":"patch","summary":"Fix historical release snapshot replay when descendant version tags exist","type":"fix"}
