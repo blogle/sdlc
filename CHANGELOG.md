@@ -1,5 +1,9 @@
 # Changelog
 
+## [2.1.3] - 2026-11-13
+
+- **fix**: Fix historical release snapshot replay when descendant version tags exist
+
 ## [2.1.2] - 2026-11-12
 
 - **fix**: Use the repository token to authenticate GHCR package publication
