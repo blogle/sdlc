@@ -73,6 +73,7 @@ jobs:
           SDLC_RELEASE_MAIN_SHA="$(git rev-parse FETCH_HEAD)"
           export SDLC_RELEASE_MAIN_SHA
           printf 'SDLC_RELEASE_MAIN_SHA=%s\n' "$SDLC_RELEASE_MAIN_SHA" >> "$GITHUB_ENV"
+          printf 'DEFAULT_BRANCH=%s\n' "$DEFAULT_BRANCH" >> "$GITHUB_ENV"
           nix run "$SDLC_FLAKE"#sdlc -- release publish "$MERGED_SHA" > identity.json
       - name: Prepare one immutable source artifact
         env:
