@@ -1,18 +1,18 @@
 {
-  "changelog_sha256": "138b4d8e544411ed5ee02307b61da26254bc64672bc390df842c3e66a8d33b64",
+  "changelog_sha256": "3d5d696cc224c4fa58974f8e8803901f54b182fb972fe2695013aa0895a77fe9",
   "fragments": [
     {
-      "blob_sha": "f2a0026fd779c4b08407f329aceec8764df4afcb",
-      "path": ".changes/audited-incomplete-release.json"
+      "blob_sha": "608eb5eae2511640e9e884b11013a4ef1130bdc5",
+      "path": ".changes/rolling-release-packages-permission.json"
     }
   ],
-  "generated_tree": "8f3d61626634b40bad0226300d4ef77bbd2750c6fd3bfe1970f922e2885932d6",
-  "prior_released_boundary": "7b57ebda0bfb7089b78471947ac66a1a9fd8d981",
+  "generated_tree": "c52ca8ce673a8824ab5565fcd745de4736584a300b7fca188bab6622cde79aea",
+  "prior_released_boundary": "648b0473d9bd50747683a2131dbc505b6b93e6df",
   "publication": {
-    "source_main_sha": "648b0473d9bd50747683a2131dbc505b6b93e6df",
-    "version": "2.1.4"
+    "source_main_sha": "c2f0f9076d302c509992784874086422a9acc0fc",
+    "version": "2.1.5"
   },
   "schema": 1,
-  "source_main_sha": "648b0473d9bd50747683a2131dbc505b6b93e6df",
-  "version": "2.1.4"
+  "source_main_sha": "c2f0f9076d302c509992784874086422a9acc0fc",
+  "version": "2.1.5"
 }

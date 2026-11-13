@@ -1,5 +1,0 @@
-{
-  "type": "fix",
-  "semver": "patch",
-  "summary": "Grant package write permission to the generated rolling release caller"
-}
