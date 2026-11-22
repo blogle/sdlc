@@ -1,0 +1,1 @@
+{"type":"fix","semver":"patch","summary":"make failed release lineage reconciliation actionable without weakening predecessor checks"}

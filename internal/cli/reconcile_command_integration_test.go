@@ -62,6 +62,40 @@ func TestReconcileCommandRetiresNoFragmentsAndBlocksUnpublishedPredecessor(t *te
 			t.Fatal("predecessor failure pushed a candidate")
 		}
 	})
+
+	t.Run("mismatched tag parent and divergent history block candidate and PR mutation", func(t *testing.T) {
+		_, _ = makeRulesetFixtures(t, false)
+		fixtures := os.Getenv("GH_FIXTURES")
+		writeRepoFile(t, fixtures, "default.applied", "")
+		writeRepoFile(t, fixtures, "automated.applied", "")
+		mutation := filepath.Join(fixtures, "pr-mutation")
+		t.Setenv("GH_PR_MUTATION", mutation)
+		root, bare, tagSHA, sourceSHA, baseline := makeMismatchedPredecessorRepository(t)
+		writeRepoFile(t, fixtures, "release.json", `{"isDraft":false,"isPrerelease":false,"assets":[]}`)
+		inRepository(t, root)
+		t.Setenv("GITHUB_REPOSITORY", "owner/repo")
+		t.Setenv("SDLC_DEFAULT_BRANCH", "main")
+		t.Setenv("SDLC_RELEASE_BRANCH", "sdlc/release-next")
+
+		command := New()
+		command.SetArgs([]string{"release", "reconcile", "--repo", "owner/repo"})
+		err := command.Execute()
+		if err == nil ||
+			!strings.Contains(err.Error(), "tag does not identify the manifest's merged commit") ||
+			!strings.Contains(err.Error(), tagSHA) ||
+			!strings.Contains(err.Error(), sourceSHA) {
+			t.Fatalf("mismatched predecessor was not diagnosed with observed identities: %v", err)
+		}
+		if _, err := os.Stat(mutation); !os.IsNotExist(err) {
+			t.Fatal("mismatched predecessor mutated the release PR")
+		}
+		if refExists(bare, "refs/heads/sdlc/release-next") {
+			t.Fatal("mismatched predecessor pushed a candidate")
+		}
+		if got := strings.TrimSpace(repoGit(t, root, "rev-parse", "origin/main")); got != baseline {
+			t.Fatalf("main moved during failed reconciliation: %s", got)
+		}
+	})
 }
 
 func TestReconcileCommandPushesCandidateAndMaintainsReleasePR(t *testing.T) {
@@ -128,6 +162,46 @@ func makeRemoteRepository(t *testing.T, withPredecessor bool) (string, string, s
 	repoGit(t, root, "push", "-u", "origin", "main")
 	repoGit(t, root, "fetch", "origin", "main")
 	return root, bare, strings.TrimSpace(repoGit(t, root, "rev-parse", "origin/main"))
+}
+
+func makeMismatchedPredecessorRepository(t *testing.T) (root, bare, tagSHA, sourceSHA, baseline string) {
+	t.Helper()
+	base := t.TempDir()
+	root, bare = filepath.Join(base, "working"), filepath.Join(base, "remote.git")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	repoGit(t, root, "init", "-q", "-b", "main")
+	repoGit(t, root, "config", "user.name", "Reconcile Lineage Test")
+	repoGit(t, root, "config", "user.email", "reconcile-lineage@example.invalid")
+	writeRepoFile(t, root, "CHANGELOG.md", "# Changelog\n")
+	repoGit(t, root, "add", ".")
+	repoGit(t, root, "commit", "-qm", "source")
+	sourceSHA = strings.TrimSpace(repoGit(t, root, "rev-parse", "HEAD"))
+	writeRepoFile(t, root, ".sdlc/release.json", `{"version":"1.0.0","source_main_sha":"`+sourceSHA+`"}`)
+	writeRepoFile(t, root, ".changes/next.json", `{"type":"fix","semver":"patch","summary":"successor"}`)
+	repoGit(t, root, "add", ".")
+	repoGit(t, root, "commit", "-qm", "main successor")
+	baseline = strings.TrimSpace(repoGit(t, root, "rev-parse", "HEAD"))
+
+	repoGit(t, root, "checkout", "--orphan", "divergent")
+	repoGit(t, root, "rm", "-rf", ".")
+	writeRepoFile(t, root, "CHANGELOG.md", "# Changelog\n")
+	repoGit(t, root, "add", ".")
+	repoGit(t, root, "commit", "-qm", "divergent source")
+	writeRepoFile(t, root, ".sdlc/release.json", `{"version":"1.0.0","source_main_sha":"`+sourceSHA+`"}`)
+	repoGit(t, root, "add", ".")
+	repoGit(t, root, "commit", "-qm", "divergent release")
+	repoGit(t, root, "tag", "v1.0.0")
+	tagSHA = strings.TrimSpace(repoGit(t, root, "rev-parse", "v1.0.0"))
+	repoGit(t, root, "checkout", "main")
+
+	repoGit(t, base, "init", "--bare", "-q", bare)
+	repoGit(t, root, "remote", "add", "origin", bare)
+	repoGit(t, root, "push", "-u", "origin", "main")
+	repoGit(t, root, "push", "origin", "v1.0.0")
+	repoGit(t, root, "fetch", "origin", "main")
+	return root, bare, tagSHA, sourceSHA, baseline
 }
 
 func inRepository(t *testing.T, root string) {

@@ -154,6 +154,7 @@ case "$args" in
   *"auth setup-git"*) exit 0 ;;
   *"pr list"*) printf '%s' "$GH_PR_NUMBER" ;;
   *"pr close"*|*"pr create"*|*"pr edit"*) printf '%s\n' "$args" > "$GH_PR_MUTATION" ;;
+  *"release view"*) cat "$GH_FIXTURES/release.json" ;;
   *"--method POST"*"/rulesets"*)
     payload=$(cat)
     case "$payload" in
