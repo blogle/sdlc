@@ -70,7 +70,7 @@ func TestReconcileCommandRetiresNoFragmentsAndBlocksUnpublishedPredecessor(t *te
 		writeRepoFile(t, fixtures, "automated.applied", "")
 		mutation := filepath.Join(fixtures, "pr-mutation")
 		t.Setenv("GH_PR_MUTATION", mutation)
-		root, bare, tagSHA, sourceSHA, baseline := makeMismatchedPredecessorRepository(t)
+		root, bare, tagSHA, tagParent, sourceSHA, baseline := makeMismatchedPredecessorRepository(t)
 		writeRepoFile(t, fixtures, "release.json", `{"isDraft":false,"isPrerelease":false,"assets":[]}`)
 		inRepository(t, root)
 		t.Setenv("GITHUB_REPOSITORY", "owner/repo")
@@ -83,6 +83,7 @@ func TestReconcileCommandRetiresNoFragmentsAndBlocksUnpublishedPredecessor(t *te
 		if err == nil ||
 			!strings.Contains(err.Error(), "tag does not identify the manifest's merged commit") ||
 			!strings.Contains(err.Error(), tagSHA) ||
+			!strings.Contains(err.Error(), tagParent) ||
 			!strings.Contains(err.Error(), sourceSHA) {
 			t.Fatalf("mismatched predecessor was not diagnosed with observed identities: %v", err)
 		}
@@ -94,6 +95,12 @@ func TestReconcileCommandRetiresNoFragmentsAndBlocksUnpublishedPredecessor(t *te
 		}
 		if got := strings.TrimSpace(repoGit(t, root, "rev-parse", "origin/main")); got != baseline {
 			t.Fatalf("main moved during failed reconciliation: %s", got)
+		}
+		if tagParent == sourceSHA {
+			t.Fatal("fixture did not mismatch the tag parent and manifest source")
+		}
+		if command := exec.Command("git", "-C", root, "merge-base", tagSHA, baseline); command.Run() == nil {
+			t.Fatal("fixture unexpectedly gave the divergent tag and main a common ancestor")
 		}
 	})
 }
@@ -164,7 +171,7 @@ func makeRemoteRepository(t *testing.T, withPredecessor bool) (string, string, s
 	return root, bare, strings.TrimSpace(repoGit(t, root, "rev-parse", "origin/main"))
 }
 
-func makeMismatchedPredecessorRepository(t *testing.T) (root, bare, tagSHA, sourceSHA, baseline string) {
+func makeMismatchedPredecessorRepository(t *testing.T) (root, bare, tagSHA, tagParent, sourceSHA, baseline string) {
 	t.Helper()
 	base := t.TempDir()
 	root, bare = filepath.Join(base, "working"), filepath.Join(base, "remote.git")
@@ -194,6 +201,7 @@ func makeMismatchedPredecessorRepository(t *testing.T) (root, bare, tagSHA, sour
 	repoGit(t, root, "commit", "-qm", "divergent release")
 	repoGit(t, root, "tag", "v1.0.0")
 	tagSHA = strings.TrimSpace(repoGit(t, root, "rev-parse", "v1.0.0"))
+	tagParent = strings.TrimSpace(repoGit(t, root, "rev-parse", tagSHA+"^"))
 	repoGit(t, root, "checkout", "main")
 
 	repoGit(t, base, "init", "--bare", "-q", bare)
@@ -201,7 +209,7 @@ func makeMismatchedPredecessorRepository(t *testing.T) (root, bare, tagSHA, sour
 	repoGit(t, root, "push", "-u", "origin", "main")
 	repoGit(t, root, "push", "origin", "v1.0.0")
 	repoGit(t, root, "fetch", "origin", "main")
-	return root, bare, tagSHA, sourceSHA, baseline
+	return root, bare, tagSHA, tagParent, sourceSHA, baseline
 }
 
 func inRepository(t *testing.T, root string) {

@@ -29,3 +29,37 @@ The reviewed recovery route is:
 
 This procedure deliberately contains no production GitHub writes or tag
 recovery automation.
+
+## Evidence for the Anvil incident
+
+1. **Predecessor check:** `internal/cli/reconcile.go` gathers
+   `v<version>`, its peeled commit and parent, the tagged manifest, default
+   branch ancestry, and publication state; `internal/release/predecessor.go`
+   rejects the exact `tagParent != source_main_sha` condition before snapshot
+   generation. In Anvil, runs
+   [45008926162](https://github.com/blogle/anvil/actions/runs/45008926162)
+   and
+   [45051502828](https://github.com/blogle/anvil/actions/runs/45051502828)
+   report the same failure. The observed manifest source is
+   `e7800b33fb83a213dafd1b061acb15c4d8a8a7ba`; `v0.1.0` peels to
+   `17b4640ff5b27d3282cef9ac9e9a384c223ee4e6`, whose parent is
+   `dbd012db5dbefe2212e6d42534931f31ea0ee8da`. The reported compare result
+   is no common ancestor between the tag commit and `main`.
+2. **Regression:** `internal/cli/reconcile_command_integration_test.go`,
+   `TestReconcileCommandRetiresNoFragmentsAndBlocksUnpublishedPredecessor`
+   models a mismatched parent and orphaned history with local Git and the
+   fake `gh` adapter. It passed and asserts no candidate ref, no PR mutation,
+   and no movement of `main`.
+3. **Recovery and safety:** this document records the reviewed route above;
+   no production GitHub write, tag replacement, publication, or live recovery
+   was performed. The existing predecessor checks remain fail-closed.
+4. **Verification:** the focused regression passed with
+   `nix --extra-experimental-features 'nix-command flakes' develop -c go test
+   ./internal/cli -run
+   'TestReconcileCommand(RetiresNoFragmentsAndBlocksUnpublishedPredecessor|PushesCandidateAndMaintainsReleasePR)$'
+   -count=1 -v`. `NIX_CONFIG='extra-experimental-features = nix-command flakes'
+   nix develop -c just check` was also run, but is unverified: 84 of 85
+   Python tests passed and the remaining self-consumer publisher test failed
+   because its fixture's `gh` script could not execute `/usr/bin/env` inside
+   this host's Nix shell. Go tests, vet, exhaustive lint, and formatting all
+   passed.
