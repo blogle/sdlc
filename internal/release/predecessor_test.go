@@ -44,4 +44,28 @@ func TestVerifyPredecessorRequiresCompletedPublicationWithoutRetirement(t *testi
 	}
 }
 
+func TestVerifyPredecessorRejectsRetirementMarkerOnCompletedPublication(t *testing.T) {
+	source := strings.Repeat("a", 40)
+	tag := strings.Repeat("b", 40)
+	manifest := []byte(`{"version":"1.2.3","source_main_sha":"` + source + `"}` + "\n")
+	completed := false
+	prerelease := false
+	facts := PredecessorFacts{TagSHA: tag, TagParent: source, TaggedManifest: manifest, OnDefaultBranch: true}
+	base := Predecessor{Version: "1.2.3", SourceMainSHA: source}
+
+	for name, marker := range map[string][]byte{
+		"valid":     []byte(`{"schema":1,"version":"1.2.3","source_main_sha":"` + source + `","merged_sha":"` + tag + `","reason":"audited incomplete release"}`),
+		"malformed": []byte(`{"schema":1}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := VerifyPredecessor(base, facts, manifest, PublicationState{
+				IsDraft: &completed, IsPrerelease: &prerelease, RetirementMarker: marker,
+			})
+			if err == nil {
+				t.Fatal("marked completed publication was accepted")
+			}
+		})
+	}
+}
+
 func boolPtr(value bool) *bool { return &value }

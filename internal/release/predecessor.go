@@ -64,12 +64,17 @@ func VerifyPredecessor(predecessor Predecessor, facts PredecessorFacts, mainMani
 	if publication.IsDraft == nil || publication.IsPrerelease == nil {
 		return fmt.Errorf("release reconcile stopped: release %s is still draft or prerelease", tag)
 	}
-	if *publication.IsDraft {
-		if publication.RetirementMarker == nil {
-			return fmt.Errorf("release reconcile stopped: release %s is still draft or prerelease", tag)
+	if publication.RetirementMarker != nil {
+		if !*publication.IsDraft {
+			return fmt.Errorf("release reconcile stopped: release %s has a retirement marker but is not draft", tag)
 		}
 		if err := ParseRetirementMarker(publication.RetirementMarker, predecessor.Version, predecessor.SourceMainSHA, facts.TagSHA); err != nil {
 			return err
+		}
+	}
+	if *publication.IsDraft {
+		if publication.RetirementMarker == nil {
+			return fmt.Errorf("release reconcile stopped: release %s is still draft or prerelease", tag)
 		}
 		return nil
 	} else if *publication.IsPrerelease {
