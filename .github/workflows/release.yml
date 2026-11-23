@@ -41,11 +41,15 @@ on:
 
 permissions:
   contents: read
+  packages: write
   pull-requests: read
 
 jobs:
   reconcile:
     if: inputs.merged_sha == '' && vars.SDLC_RELEASE_ACTIVATE == 'true'
+    permissions:
+      contents: read
+      pull-requests: read
     uses: ./.github/workflows/release-reconcile.yml
     with:
       sdlc_ref: ${{ inputs.sdlc_ref }}
@@ -53,6 +57,9 @@ jobs:
 
   publish:
     if: inputs.merged_sha != '' && inputs.activate && vars.SDLC_RELEASE_ACTIVATE == 'true'
+    permissions:
+      contents: read
+      packages: write
     uses: ./.github/workflows/release-publish.yml
     with:
       merged_sha: ${{ inputs.merged_sha }}

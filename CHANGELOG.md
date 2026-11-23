@@ -1,5 +1,25 @@
 # Changelog
 
+## [2.1.5] - 2026-11-13
+
+- **fix**: Grant package write permission to the generated rolling release caller
+
+## [2.1.4] - 2026-11-13
+
+- **fix**: Allow an audited draft predecessor to retire without replaying its release identity
+
+## [2.1.3] - 2026-11-13
+
+- **fix**: Fix historical release snapshot replay when descendant version tags exist
+
+## [2.1.2] - 2026-11-12
+
+- **fix**: Use the repository token to authenticate GHCR package publication
+
+## [2.1.1] - 2026-11-12
+
+- **fix**: Resolve pinned SDLC revisions as flake references in release workflows
+
 ## [2.1.0] - 2026-10-26
 
 - **feature**: Re-export a pinned declarative agent-skills library for consumers

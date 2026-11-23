@@ -40,3 +40,31 @@ The manifest becomes authoritative only after its candidate commit merges.
 Successor allocation uses the latest manifest as the previous release boundary,
 but blocks only when its exact version tag or completed publication ledger is
 missing. Manifest existence alone is not an unpublished-state indicator.
+
+## Audited retirement of an incomplete draft
+
+If a predecessor is tagged but its GitHub Release remains a draft, a reviewed
+commit on the protected default branch may add exactly
+`.sdlc/abandoned-releases/<version>.json` for that predecessor:
+
+```json
+{
+  "schema": 1,
+  "version": "0.1.0",
+  "source_main_sha": "<40 lowercase hex characters>",
+  "merged_sha": "<40 lowercase hex characters>",
+  "reason": "Why this exact draft cannot be completed"
+}
+```
+
+The reason must contain non-whitespace text and be at most 500 characters.
+No extra fields are accepted. Reconciliation and the trusted successor gate
+read the committed marker on current main, check the tag's peeled commit and
+parent, require byte-for-byte agreement of the tagged and current predecessor
+manifests, prove the tag is an ancestor of current main, and query the live
+GitHub Release to confirm it is still draft. A missing or invalid marker
+continues to block a draft predecessor. Published predecessors follow the
+ordinary complete-publication path. Historical merge recovery and publication
+refuse the exact retired identity; the tag, draft Release, and any source
+assets remain untouched. The successor version advances from the predecessor
+manifest (for example, a patch after 0.1.0 is 0.1.1).
