@@ -122,7 +122,7 @@ func reconcileSnapshot(worktree, repo, defaultBranch, branch, baseline string) (
 
 func verifyPredecessor(repo, defaultBranch, baseline string) error {
 	repository := gitrepo.Open(".")
-	manifestRaw, err := repository.Bytes("show", "origin/"+defaultBranch+":.sdlc/release.json")
+	manifestRaw, err := repository.Bytes("show", baseline+":.sdlc/release.json")
 	if err != nil {
 		return nil
 	}
@@ -130,23 +130,14 @@ func verifyPredecessor(repo, defaultBranch, baseline string) error {
 	if err != nil {
 		return err
 	}
-	tag := "v" + manifest.Version
-	tagSHA, err := repository.Text("rev-list", "-n1", "refs/tags/"+tag)
+	facts, err := repository.PredecessorFacts(manifest.Version, baseline)
 	if err != nil {
-		tagSHA = ""
+		return err
 	}
-	if tagSHA == "" {
-		return release.VerifyPredecessor(manifest, "", "", nil, manifestRaw, false, release.PublicationState{})
+	tag := "v" + manifest.Version
+	if facts.TagSHA == "" {
+		return release.VerifyPredecessor(manifest, facts, manifestRaw, release.PublicationState{})
 	}
-	parent, parentErr := repository.Text("rev-parse", tagSHA+"^")
-	if parentErr != nil {
-		parent = ""
-	}
-	tagged, taggedErr := repository.Bytes("show", tagSHA+":.sdlc/release.json")
-	if taggedErr != nil {
-		tagged = nil
-	}
-	_, ancestorErr := repository.Text("merge-base", "--is-ancestor", tagSHA, baseline)
 	state, err := (github.Client{}).PublishedRelease(tag, repo)
 	if err != nil {
 		return fmt.Errorf("release reconcile stopped: release %s has no completed publication ledger", tag)
@@ -155,15 +146,10 @@ func verifyPredecessor(repo, defaultBranch, baseline string) error {
 	if err != nil {
 		return err
 	}
-	if err := release.VerifyDraftRetirementMarker(marker, found, manifest.Version, manifest.SourceMainSHA, tagSHA, state.IsDraft); err != nil {
-		if found {
-			return err
-		}
-	}
 	if found {
-		return nil
+		state.RetirementMarker = marker
 	}
-	return release.VerifyPredecessor(manifest, tagSHA, parent, tagged, manifestRaw, ancestorErr == nil, state)
+	return release.VerifyPredecessor(manifest, facts, manifestRaw, state)
 }
 
 func retireReleasePR(repo, branch, defaultBranch string) error {

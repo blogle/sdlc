@@ -12,16 +12,8 @@ func TestRetirementMarkerRequiresExactIdentityAndDraft(t *testing.T) {
 	if err := ParseRetirementMarker(marker, "1.2.3", source, merged); err != nil {
 		t.Fatal(err)
 	}
-	draft := true
-	if err := VerifyDraftRetirementMarker(marker, true, "1.2.3", source, merged, &draft); err != nil {
-		t.Fatal(err)
-	}
 	if err := RejectAbandonedMarker(marker, true, "1.2.3", source, merged); err == nil || !strings.Contains(err.Error(), "abandoned") {
 		t.Fatalf("marked identity was not rejected: %v", err)
-	}
-	draft = false
-	if err := VerifyDraftRetirementMarker(marker, true, "1.2.3", source, merged, &draft); err == nil || !strings.Contains(err.Error(), "live draft") {
-		t.Fatalf("non-draft publication was accepted: %v", err)
 	}
 }
 

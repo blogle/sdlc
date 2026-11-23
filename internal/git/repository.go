@@ -189,6 +189,35 @@ func (repository Repository) RetirementMarkerAt(commit, version string) ([]byte,
 	return data, err == nil, err
 }
 
+func (repository Repository) PredecessorFacts(version, baseline string) (release.PredecessorFacts, error) {
+	tag := "v" + version
+	mainManifest, err := repository.Bytes("show", baseline+":.sdlc/release.json")
+	if err != nil {
+		return release.PredecessorFacts{}, nil
+	}
+	tagSHA, err := repository.Text("rev-list", "-n1", "refs/tags/"+tag)
+	if err != nil {
+		tagSHA = ""
+	}
+	if tagSHA == "" {
+		return release.PredecessorFacts{}, nil
+	}
+	parent, err := repository.Text("rev-parse", tagSHA+"^")
+	if err != nil {
+		parent = ""
+	}
+	tagged, err := repository.Bytes("show", tagSHA+":.sdlc/release.json")
+	if err != nil {
+		tagged = nil
+	}
+	_, ancestorErr := repository.Text("merge-base", "--is-ancestor", tagSHA, baseline)
+	return release.PredecessorFacts{
+		TagSHA: tagSHA, TagParent: parent, TaggedManifest: tagged,
+		MainManifest:    mainManifest,
+		OnDefaultBranch: ancestorErr == nil,
+	}, nil
+}
+
 func (repository Repository) FetchReleaseBranches(defaultBranch, releaseBranch string) error {
 	_, err := repository.Text("fetch", "--prune", "--tags", "origin", defaultBranch, releaseBranch)
 	return err

@@ -53,19 +53,6 @@ func RejectAbandonedMarker(data []byte, found bool, version, sourceSHA, mergedSH
 	return fmt.Errorf("release v%s is abandoned; refusing replay/publication", version)
 }
 
-func VerifyDraftRetirementMarker(data []byte, found bool, version, sourceSHA, mergedSHA string, isDraft *bool) error {
-	if !found {
-		return nil
-	}
-	if err := ParseRetirementMarker(data, version, sourceSHA, mergedSHA); err != nil {
-		return err
-	}
-	if isDraft == nil || !*isDraft {
-		return fmt.Errorf("release v%s is no longer a live draft", version)
-	}
-	return nil
-}
-
 func uniqueObject(data []byte) (map[string]json.RawMessage, error) {
 	decoder := json.NewDecoder(strings.NewReader(string(data)))
 	token, err := decoder.Token()

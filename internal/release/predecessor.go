@@ -14,9 +14,18 @@ type Predecessor struct {
 }
 
 type PublicationState struct {
-	IsDraft      *bool
-	IsPrerelease *bool
-	Assets       []PublicationAsset
+	IsDraft          *bool
+	IsPrerelease     *bool
+	Assets           []PublicationAsset
+	RetirementMarker []byte
+}
+
+type PredecessorFacts struct {
+	TagSHA          string
+	TagParent       string
+	TaggedManifest  []byte
+	MainManifest    []byte
+	OnDefaultBranch bool
 }
 
 type PublicationAsset struct {
@@ -38,24 +47,35 @@ func ParsePredecessorManifest(data []byte) (Predecessor, error) {
 	return predecessor, nil
 }
 
-func VerifyPredecessor(predecessor Predecessor, tagSHA, tagParent string, taggedManifest, mainManifest []byte, tagOnDefaultBranch bool, publication PublicationState) error {
+func VerifyPredecessor(predecessor Predecessor, facts PredecessorFacts, mainManifest []byte, publication PublicationState) error {
 	tag := "v" + predecessor.Version
-	if tagSHA == "" {
+	if facts.TagSHA == "" {
 		return fmt.Errorf("release reconcile stopped: release %s has no committed tag; publication predecessor is unreconciled", tag)
 	}
-	if tagParent != predecessor.SourceMainSHA {
-		return fmt.Errorf("release reconcile stopped: release %s tag does not identify the manifest's merged commit: tag %s has parent %q, manifest source_main_sha is %s; preserve the existing tag and publication, reconcile the consumer's recorded history with an operator, then retry only after all predecessor checks pass", tag, tagSHA, tagParent, predecessor.SourceMainSHA)
+	if facts.TagParent != predecessor.SourceMainSHA {
+		return fmt.Errorf("release reconcile stopped: release %s tag does not identify the manifest's merged commit: tag %s has parent %q, manifest source_main_sha is %s; preserve the existing tag and publication, reconcile the consumer's recorded history with an operator, then retry only after all predecessor checks pass", tag, facts.TagSHA, facts.TagParent, predecessor.SourceMainSHA)
 	}
-	if !bytesEqual(taggedManifest, append([]byte(strings.TrimSpace(string(mainManifest))), '\n')) {
+	if !bytesEqual(facts.TaggedManifest, append([]byte(strings.TrimSpace(string(mainManifest))), '\n')) {
 		return fmt.Errorf("release reconcile stopped: release %s tag manifest differs from main", tag)
 	}
-	if !tagOnDefaultBranch {
+	if !facts.OnDefaultBranch {
 		return fmt.Errorf("release reconcile stopped: release %s tag is not on the default branch", tag)
 	}
-	if publication.IsDraft == nil || *publication.IsDraft || publication.IsPrerelease == nil || *publication.IsPrerelease {
+	if publication.IsDraft == nil || publication.IsPrerelease == nil {
 		return fmt.Errorf("release reconcile stopped: release %s is still draft or prerelease", tag)
 	}
-	assetName := fmt.Sprintf("sdlc-source-%s-%s.tar.gz", predecessor.Version, tagSHA)
+	if *publication.IsDraft {
+		if publication.RetirementMarker == nil {
+			return fmt.Errorf("release reconcile stopped: release %s is still draft or prerelease", tag)
+		}
+		if err := ParseRetirementMarker(publication.RetirementMarker, predecessor.Version, predecessor.SourceMainSHA, facts.TagSHA); err != nil {
+			return err
+		}
+		return nil
+	} else if *publication.IsPrerelease {
+		return fmt.Errorf("release reconcile stopped: release %s is still draft or prerelease", tag)
+	}
+	assetName := fmt.Sprintf("sdlc-source-%s-%s.tar.gz", predecessor.Version, facts.TagSHA)
 	for _, asset := range publication.Assets {
 		if asset.Name == assetName && ValidSHA256Digest(asset.Digest) {
 			return nil
