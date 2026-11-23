@@ -50,7 +50,7 @@ func (repository Repository) Snapshot(sourceSHA, date string) (*release.Manifest
 		}
 	}
 	if input.PreviousVersion == "" {
-		tags, err := repository.Text("tag", "--list", "v[0-9]*")
+		tags, err := repository.Text("tag", "--merged", sourceSHA, "--list", "v[0-9]*")
 		if err == nil {
 			input.Tags = strings.Fields(tags)
 		}
@@ -175,6 +175,18 @@ func (repository Repository) ReplaySnapshot(sourceSHA string) (*release.Manifest
 		return nil, fmt.Errorf("coordinator snapshot produced no release manifest")
 	}
 	return manifest, nil
+}
+
+func (repository Repository) RetirementMarkerAt(commit, version string) ([]byte, bool, error) {
+	if _, err := repository.Text("cat-file", "-e", commit+"^{commit}"); err != nil {
+		return nil, false, err
+	}
+	path := ".sdlc/abandoned-releases/" + version + ".json"
+	if _, err := repository.Text("cat-file", "-e", commit+":"+path); err != nil {
+		return nil, false, nil
+	}
+	data, err := repository.Bytes("show", commit+":"+path)
+	return data, err == nil, err
 }
 
 func (repository Repository) FetchReleaseBranches(defaultBranch, releaseBranch string) error {

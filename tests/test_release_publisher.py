@@ -404,7 +404,7 @@ shutil.copyfile(os.environ["FAKE_ASSET"], os.path.join(target, asset))
         persist = workflow.split("- name: Persist artifact bytes without overwriting", 1)[1]
         persist = persist.split("- name: Save publication audit ledger", 1)[0]
         self.assertIn('release ledger artifact', persist)
-        self.assertIn("identity = validate_checkout(commit)", (root / "src/release_publisher.py").read_text())
+        self.assertIn("identity = validate_checkout(commit)", (root / "tests/fixtures/legacy/src/release_publisher.py").read_text())
 
     def test_package_push_uses_repository_token_and_preserves_app_api_identity(self):
         root = Path(__file__).parents[1] / ".github/workflows"

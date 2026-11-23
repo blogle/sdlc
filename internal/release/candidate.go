@@ -9,6 +9,7 @@ import (
 type CandidateRepository interface {
 	ParentSHA(commit string) (string, error)
 	ReplaySnapshot(sourceSHA string) (*Manifest, error)
+	RetirementMarkerAt(commit, version string) ([]byte, bool, error)
 	ValidateRelease(commit string) (Identity, error)
 }
 

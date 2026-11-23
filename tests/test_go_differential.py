@@ -83,12 +83,17 @@ class GoDifferentialTests(unittest.TestCase):
                 try:
                     os.chdir(directory)
                     sdlc.ROOT = directory
+                    release_publisher.verify_release_tree.__globals__["ROOT"] = directory
                     self.assertTrue(sdlc.verify_release_tree(source_sha, merged_sha, python_manifest))
                     legacy_identity = release_publisher.validate_checkout(merged_sha)
                     expected = json.dumps(legacy_identity.__dict__, sort_keys=True, default=list)
+                    go_environment = os.environ | {
+                        "SDLC_RELEASE_MAIN_SHA": source_sha,
+                        "DEFAULT_BRANCH": "main",
+                    }
                     actual = subprocess.run(
                         [executable, "release", "publish", merged_sha], cwd=directory,
-                        check=True, capture_output=True, text=True,
+                        check=True, capture_output=True, text=True, env=go_environment,
                     ).stdout.strip()
                     self.assertEqual(actual, expected)
                     identities.append(actual)

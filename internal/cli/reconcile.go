@@ -151,6 +151,18 @@ func verifyPredecessor(repo, defaultBranch, baseline string) error {
 	if err != nil {
 		return fmt.Errorf("release reconcile stopped: release %s has no completed publication ledger", tag)
 	}
+	marker, found, err := repository.RetirementMarkerAt(baseline, manifest.Version)
+	if err != nil {
+		return err
+	}
+	if err := release.VerifyDraftRetirementMarker(marker, found, manifest.Version, manifest.SourceMainSHA, tagSHA, state.IsDraft); err != nil {
+		if found {
+			return err
+		}
+	}
+	if found {
+		return nil
+	}
 	return release.VerifyPredecessor(manifest, tagSHA, parent, tagged, manifestRaw, ancestorErr == nil, state)
 }
 

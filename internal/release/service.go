@@ -106,6 +106,13 @@ func (service Service) historicalGate(request GateRequest, pr PullRequest, appSl
 	if len(merged.Parents) != 1 || merged.Parents[0] != manifest.SourceMainSHA {
 		return fmt.Errorf("historical squash merge does not match manifest source_main_sha")
 	}
+	marker, found, err := service.Repository.RetirementMarkerAt(manifest.SourceMainSHA, manifest.Version)
+	if err != nil {
+		return err
+	}
+	if err := RejectAbandonedMarker(marker, found, manifest.Version, manifest.SourceMainSHA, request.HistoricalMergedSHA); err != nil {
+		return err
+	}
 	protection, err := service.protection(request.Repository, branch)
 	if err != nil {
 		return err
