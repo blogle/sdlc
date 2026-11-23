@@ -20,12 +20,22 @@ The reviewed recovery route is:
 1. Preserve the existing tag, release, and source archive as evidence.
 2. Record the tag commit, its parent, the committed manifest, and the default
    branch tip; confirm the histories and compare result with an operator.
-3. Restore the consumer's intended history through the normal reviewed Git
-   workflow, or retain the historical line and prepare a new patch release.
-4. Re-run reconciliation only after the manifest, tag parent, manifest bytes,
-   default-branch ancestry, publication state, and immutable asset identity
-   all agree. A failed check must continue to produce no candidate and no
-   release-PR mutation.
+3. Reconcile the consumer's recorded history through a normal, reviewed Git
+   workflow only if the operator can establish which history is authoritative.
+   The exact facts to reconcile are the tag commit
+   `17b4640ff5b27d3282cef9ac9e9a384c223ee4e6`, its parent
+   `dbd012db5dbefe2212e6d42534931f31ea0ee8da`, `source_main_sha`
+   `e7800b33fb83a213dafd1b061acb15c4d8a8a7ba`, the tagged and current
+   `.sdlc/release.json` bytes, the default-branch tip, and the compare result.
+   A new patch release is not a bypass: this predecessor must pass before any
+   successor candidate can be made.
+4. For this observed combination of a tag-parent mismatch and disconnected
+   history, SDLC has no supported automatic recovery path. Do not retry until
+   the operator has resolved that ambiguity without changing the existing
+   published identity. Re-run only after the manifest, tag parent, manifest
+   bytes, default-branch ancestry, publication state, and immutable asset
+   identity all agree. A failed check must continue to produce no candidate
+   and no release-PR mutation.
 
 This procedure deliberately contains no production GitHub writes or tag
 recovery automation.
@@ -36,7 +46,8 @@ recovery automation.
    `v<version>`, its peeled commit and parent, the tagged manifest, default
    branch ancestry, and publication state; `internal/release/predecessor.go`
    rejects the exact `tagParent != source_main_sha` condition before snapshot
-   generation. In Anvil, runs
+   generation and reports disconnected history when `merge-base` has no
+   result. In Anvil, runs
    [45008926162](https://github.com/blogle/anvil/actions/runs/45008926162)
    and
    [45051502828](https://github.com/blogle/anvil/actions/runs/45051502828)
@@ -44,7 +55,8 @@ recovery automation.
    `e7800b33fb83a213dafd1b061acb15c4d8a8a7ba`; `v0.1.0` peels to
    `17b4640ff5b27d3282cef9ac9e9a384c223ee4e6`, whose parent is
    `dbd012db5dbefe2212e6d42534931f31ea0ee8da`. The reported compare result
-   is no common ancestor between the tag commit and `main`.
+   is no common ancestor between the tag commit and `main`; this is an
+   observation, not a reason to relax either predecessor check.
 2. **Regression:** `internal/cli/reconcile_command_integration_test.go`,
    `TestReconcileCommandRetiresNoFragmentsAndBlocksUnpublishedPredecessor`
    models a mismatched parent and orphaned history with local Git and the

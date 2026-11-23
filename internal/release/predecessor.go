@@ -38,18 +38,25 @@ func ParsePredecessorManifest(data []byte) (Predecessor, error) {
 	return predecessor, nil
 }
 
-func VerifyPredecessor(predecessor Predecessor, tagSHA, tagParent string, taggedManifest, mainManifest []byte, tagOnDefaultBranch bool, publication PublicationState) error {
+func VerifyPredecessor(predecessor Predecessor, tagSHA, tagParent string, taggedManifest, mainManifest []byte, tagOnDefaultBranch, tagHistoryConnected bool, publication PublicationState) error {
 	tag := "v" + predecessor.Version
 	if tagSHA == "" {
 		return fmt.Errorf("release reconcile stopped: release %s has no committed tag; publication predecessor is unreconciled", tag)
 	}
 	if tagParent != predecessor.SourceMainSHA {
-		return fmt.Errorf("release reconcile stopped: release %s tag does not identify the manifest's merged commit: tag %s has parent %s, manifest source_main_sha is %s; preserve the existing tag and publication, repair the consumer history or create a new patch release, then retry after the predecessor checks pass", tag, tagSHA, tagParent, predecessor.SourceMainSHA)
+		message := fmt.Sprintf("release reconcile stopped: release %s tag does not identify the manifest's merged commit: tag %s has parent %s, manifest source_main_sha is %s", tag, tagSHA, tagParent, predecessor.SourceMainSHA)
+		if !tagHistoryConnected {
+			message += "; the tag commit and default branch have no common ancestor"
+		}
+		return fmt.Errorf("%s; preserve the existing tag and publication, reconcile the consumer's recorded history with an operator, then retry only after all predecessor checks pass", message)
 	}
 	if !bytesEqual(taggedManifest, append([]byte(strings.TrimSpace(string(mainManifest))), '\n')) {
 		return fmt.Errorf("release reconcile stopped: release %s tag manifest differs from main", tag)
 	}
 	if !tagOnDefaultBranch {
+		if !tagHistoryConnected {
+			return fmt.Errorf("release reconcile stopped: release %s tag is not on the default branch and the tag commit has no common ancestor with it; preserve the existing tag and publication, reconcile the consumer's recorded history with an operator, then retry only after all predecessor checks pass", tag)
+		}
 		return fmt.Errorf("release reconcile stopped: release %s tag is not on the default branch", tag)
 	}
 	if publication.IsDraft == nil || *publication.IsDraft || publication.IsPrerelease == nil || *publication.IsPrerelease {

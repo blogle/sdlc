@@ -84,7 +84,8 @@ func TestReconcileCommandRetiresNoFragmentsAndBlocksUnpublishedPredecessor(t *te
 			!strings.Contains(err.Error(), "tag does not identify the manifest's merged commit") ||
 			!strings.Contains(err.Error(), tagSHA) ||
 			!strings.Contains(err.Error(), tagParent) ||
-			!strings.Contains(err.Error(), sourceSHA) {
+			!strings.Contains(err.Error(), sourceSHA) ||
+			!strings.Contains(err.Error(), "no common ancestor") {
 			t.Fatalf("mismatched predecessor was not diagnosed with observed identities: %v", err)
 		}
 		if _, err := os.Stat(mutation); !os.IsNotExist(err) {
