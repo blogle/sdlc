@@ -44,7 +44,7 @@ func VerifyPredecessor(predecessor Predecessor, tagSHA, tagParent string, tagged
 		return fmt.Errorf("release reconcile stopped: release %s has no committed tag; publication predecessor is unreconciled", tag)
 	}
 	if tagParent != predecessor.SourceMainSHA {
-		return fmt.Errorf("release reconcile stopped: release %s tag does not identify the manifest's merged commit", tag)
+		return fmt.Errorf("release reconcile stopped: release %s tag does not identify the manifest's merged commit: tag %s has parent %q, manifest source_main_sha is %s; preserve the existing tag and publication, reconcile the consumer's recorded history with an operator, then retry only after all predecessor checks pass", tag, tagSHA, tagParent, predecessor.SourceMainSHA)
 	}
 	if !bytesEqual(taggedManifest, append([]byte(strings.TrimSpace(string(mainManifest))), '\n')) {
 		return fmt.Errorf("release reconcile stopped: release %s tag manifest differs from main", tag)
