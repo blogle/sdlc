@@ -214,16 +214,16 @@ func (service Service) Merge(request MergeRequest) error {
 }
 
 func (service Service) verifyPredecessor(repository, baseline string) error {
-	predecessor, err := service.API.ManifestAt(repository, baseline)
+	predecessor, found, err := service.Repository.PredecessorManifest(baseline)
 	if err != nil {
 		return err
+	}
+	if !found {
+		return nil
 	}
 	facts, err := service.Repository.PredecessorFacts(predecessor.Version, baseline)
 	if err != nil {
 		return err
-	}
-	if len(facts.MainManifest) == 0 {
-		return nil
 	}
 	if facts.TagSHA == "" {
 		return VerifyPredecessor(Predecessor{

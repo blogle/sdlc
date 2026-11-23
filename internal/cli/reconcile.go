@@ -122,11 +122,14 @@ func reconcileSnapshot(worktree, repo, defaultBranch, branch, baseline string) (
 
 func verifyPredecessor(repo, defaultBranch, baseline string) error {
 	repository := gitrepo.Open(".")
-	manifestRaw, err := repository.Bytes("show", baseline+":.sdlc/release.json")
+	manifest, found, err := repository.PredecessorManifest(baseline)
 	if err != nil {
+		return err
+	}
+	if !found {
 		return nil
 	}
-	manifest, err := release.ParsePredecessorManifest(manifestRaw)
+	manifestRaw, err := repository.Bytes("show", baseline+":.sdlc/release.json")
 	if err != nil {
 		return err
 	}
@@ -136,9 +139,11 @@ func verifyPredecessor(repo, defaultBranch, baseline string) error {
 	}
 	tag := "v" + manifest.Version
 	if facts.TagSHA == "" {
-		return release.VerifyPredecessor(manifest, facts, manifestRaw, release.PublicationState{})
+		return release.VerifyPredecessor(release.Predecessor{
+			Version: manifest.Version, SourceMainSHA: manifest.SourceMainSHA,
+		}, facts, manifestRaw, release.PublicationState{})
 	}
-	state, err := (github.Client{}).PublishedRelease(tag, repo)
+	state, err := (github.Client{}).PublishedRelease(repo, tag)
 	if err != nil {
 		return fmt.Errorf("release reconcile stopped: release %s has no completed publication ledger", tag)
 	}
@@ -149,7 +154,9 @@ func verifyPredecessor(repo, defaultBranch, baseline string) error {
 	if found {
 		state.RetirementMarker = marker
 	}
-	return release.VerifyPredecessor(manifest, facts, manifestRaw, state)
+	return release.VerifyPredecessor(release.Predecessor{
+		Version: manifest.Version, SourceMainSHA: manifest.SourceMainSHA,
+	}, facts, manifestRaw, state)
 }
 
 func retireReleasePR(repo, branch, defaultBranch string) error {

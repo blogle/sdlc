@@ -189,11 +189,29 @@ func (repository Repository) RetirementMarkerAt(commit, version string) ([]byte,
 	return data, err == nil, err
 }
 
+func (repository Repository) PredecessorManifest(commit string) (*release.Manifest, bool, error) {
+	path := commit + ":.sdlc/release.json"
+	if _, err := repository.Text("cat-file", "-e", path); err != nil {
+		return nil, false, nil
+	}
+	data, err := repository.Bytes("show", path)
+	if err != nil {
+		return nil, true, err
+	}
+	predecessor, err := release.ParsePredecessorManifest(data)
+	if err != nil {
+		return nil, true, fmt.Errorf("release reconcile stopped: predecessor manifest is unreadable: %w", err)
+	}
+	return &release.Manifest{
+		Version: predecessor.Version, SourceMainSHA: predecessor.SourceMainSHA,
+	}, true, nil
+}
+
 func (repository Repository) PredecessorFacts(version, baseline string) (release.PredecessorFacts, error) {
 	tag := "v" + version
 	mainManifest, err := repository.Bytes("show", baseline+":.sdlc/release.json")
 	if err != nil {
-		return release.PredecessorFacts{}, nil
+		return release.PredecessorFacts{}, fmt.Errorf("release reconcile stopped: predecessor manifest is unreadable: %w", err)
 	}
 	tagSHA, err := repository.Text("rev-list", "-n1", "refs/tags/"+tag)
 	if err != nil {
