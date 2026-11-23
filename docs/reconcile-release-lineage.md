@@ -46,8 +46,8 @@ recovery automation.
    `v<version>`, its peeled commit and parent, the tagged manifest, default
    branch ancestry, and publication state; `internal/release/predecessor.go`
    rejects the exact `tagParent != source_main_sha` condition before snapshot
-   generation and reports disconnected history when `merge-base` has no
-   result. In Anvil, runs
+   generation. Confirm disconnected history separately using Git or GitHub;
+   an operational Git error is not evidence of divergence. In Anvil, runs
    [45008926162](https://github.com/blogle/anvil/actions/runs/45008926162)
    and
    [45051502828](https://github.com/blogle/anvil/actions/runs/45051502828)

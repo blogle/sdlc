@@ -136,7 +136,7 @@ func verifyPredecessor(repo, defaultBranch, baseline string) error {
 		tagSHA = ""
 	}
 	if tagSHA == "" {
-		return release.VerifyPredecessor(manifest, "", "", nil, manifestRaw, false, false, release.PublicationState{})
+		return release.VerifyPredecessor(manifest, "", "", nil, manifestRaw, false, release.PublicationState{})
 	}
 	parent, parentErr := repository.Text("rev-parse", tagSHA+"^")
 	if parentErr != nil {
@@ -147,12 +147,11 @@ func verifyPredecessor(repo, defaultBranch, baseline string) error {
 		tagged = nil
 	}
 	_, ancestorErr := repository.Text("merge-base", "--is-ancestor", tagSHA, baseline)
-	_, historyErr := repository.Text("merge-base", tagSHA, baseline)
 	state, err := (github.Client{}).PublishedRelease(tag, repo)
 	if err != nil {
 		return fmt.Errorf("release reconcile stopped: release %s has no completed publication ledger", tag)
 	}
-	return release.VerifyPredecessor(manifest, tagSHA, parent, tagged, manifestRaw, ancestorErr == nil, historyErr == nil, state)
+	return release.VerifyPredecessor(manifest, tagSHA, parent, tagged, manifestRaw, ancestorErr == nil, state)
 }
 
 func retireReleasePR(repo, branch, defaultBranch string) error {

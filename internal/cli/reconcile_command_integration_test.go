@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -84,8 +85,7 @@ func TestReconcileCommandRetiresNoFragmentsAndBlocksUnpublishedPredecessor(t *te
 			!strings.Contains(err.Error(), "tag does not identify the manifest's merged commit") ||
 			!strings.Contains(err.Error(), tagSHA) ||
 			!strings.Contains(err.Error(), tagParent) ||
-			!strings.Contains(err.Error(), sourceSHA) ||
-			!strings.Contains(err.Error(), "no common ancestor") {
+			!strings.Contains(err.Error(), sourceSHA) {
 			t.Fatalf("mismatched predecessor was not diagnosed with observed identities: %v", err)
 		}
 		if _, err := os.Stat(mutation); !os.IsNotExist(err) {
@@ -100,8 +100,9 @@ func TestReconcileCommandRetiresNoFragmentsAndBlocksUnpublishedPredecessor(t *te
 		if tagParent == sourceSHA {
 			t.Fatal("fixture did not mismatch the tag parent and manifest source")
 		}
-		if command := exec.Command("git", "-C", root, "merge-base", tagSHA, baseline); command.Run() == nil {
-			t.Fatal("fixture unexpectedly gave the divergent tag and main a common ancestor")
+		var exit *exec.ExitError
+		if err := exec.Command("git", "-C", root, "merge-base", tagSHA, baseline).Run(); !errors.As(err, &exit) || exit.ExitCode() != 1 {
+			t.Fatalf("fixture did not establish disconnected history: %v", err)
 		}
 	})
 }
