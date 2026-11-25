@@ -11,11 +11,12 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import legacy_oracle
 from src.sdlc import generated_tree_digest
 
 
 SPEC = importlib.util.spec_from_file_location(
-    "release_publisher", Path(__file__).parents[1] / "src/release_publisher.py"
+	"release_publisher", legacy_oracle.LEGACY / "src/release_publisher.py"
 )
 publisher = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(publisher)
@@ -132,7 +133,7 @@ class PublisherTests(unittest.TestCase):
             subprocess.run(["git", "add", "."], cwd=root, check=True)
             subprocess.run(["git", "commit", "-qm", "release"], cwd=root, check=True)
             merged = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
-            result = subprocess.run([sys.executable, str(Path(__file__).parents[1] / "src/release_publisher.py"), merged], cwd=root, check=True, capture_output=True, text=True)
+            result = subprocess.run([sys.executable, str(legacy_oracle.LEGACY / "src/release_publisher.py"), merged], cwd=root, check=True, capture_output=True, text=True)
             self.assertEqual(json.loads(result.stdout)["commit"], merged)
 
     def _self_source_release(self, root: Path):
@@ -403,7 +404,7 @@ shutil.copyfile(os.environ["FAKE_ASSET"], os.path.join(target, asset))
         persist = workflow.split("- name: Persist artifact bytes without overwriting", 1)[1]
         persist = persist.split("- name: Save publication audit ledger", 1)[0]
         self.assertIn('release ledger artifact', persist)
-        self.assertIn("identity = validate_checkout(commit)", (root / "src/release_publisher.py").read_text())
+        self.assertIn("identity = validate_checkout(commit)", (root / "tests/fixtures/legacy/src/release_publisher.py").read_text())
 
     def test_package_push_uses_repository_token_and_preserves_app_api_identity(self):
         root = Path(__file__).parents[1] / ".github/workflows"

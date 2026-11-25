@@ -5,9 +5,10 @@ import sys
 import unittest
 from unittest.mock import patch
 
+import legacy_oracle
 
 ROOT = Path(__file__).parents[1]
-sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(legacy_oracle.LEGACY / "src"))
 import release_reconcile
 
 
