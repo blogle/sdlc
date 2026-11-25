@@ -53,16 +53,22 @@ func TestVerifyPredecessorRejectsRetirementMarkerOnCompletedPublication(t *testi
 	facts := PredecessorFacts{TagSHA: tag, TagParent: source, TaggedManifest: manifest, OnDefaultBranch: true}
 	base := Predecessor{Version: "1.2.3", SourceMainSHA: source}
 
+	publication := PublicationState{
+		IsDraft: &completed, IsPrerelease: &prerelease,
+		Assets: []PublicationAsset{{Name: "sdlc-source-1.2.3-" + tag + ".tar.gz", Digest: "sha256:" + strings.Repeat("c", 64)}},
+	}
+	if err := VerifyPredecessor(base, facts, manifest, publication); err != nil {
+		t.Fatalf("unmarked completed publication should pass: %v", err)
+	}
 	for name, marker := range map[string][]byte{
 		"valid":     []byte(`{"schema":1,"version":"1.2.3","source_main_sha":"` + source + `","merged_sha":"` + tag + `","reason":"audited incomplete release"}`),
 		"malformed": []byte(`{"schema":1}`),
 	} {
 		t.Run(name, func(t *testing.T) {
-			err := VerifyPredecessor(base, facts, manifest, PublicationState{
-				IsDraft: &completed, IsPrerelease: &prerelease, RetirementMarker: marker,
-			})
-			if err == nil {
-				t.Fatal("marked completed publication was accepted")
+			marked := publication
+			marked.RetirementMarker = marker
+			if err := VerifyPredecessor(base, facts, manifest, marked); err == nil || !strings.Contains(err.Error(), "has a retirement marker but is not draft") {
+				t.Fatalf("marked completed publication was not rejected for its marker: %v", err)
 			}
 		})
 	}
