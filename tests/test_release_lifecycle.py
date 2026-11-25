@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 
+import legacy_oracle
 from src import release_gate, release_publisher, sdlc
 from src.release_gate import Check, PullRequest
 
