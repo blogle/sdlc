@@ -1,18 +1,22 @@
 {
-  "changelog_sha256": "3d5d696cc224c4fa58974f8e8803901f54b182fb972fe2695013aa0895a77fe9",
+  "changelog_sha256": "42d983477efc40cea7630b1982905c21225c3d9e8803d0d15c72ae44a4bdd0af",
   "fragments": [
     {
-      "blob_sha": "608eb5eae2511640e9e884b11013a4ef1130bdc5",
-      "path": ".changes/rolling-release-packages-permission.json"
+      "blob_sha": "ac8cac66aa6d42d1a79643310127a5480453f5c1",
+      "path": ".changes/go-rewrite.json"
+    },
+    {
+      "blob_sha": "02bbe234b44f7ab22e701b0b471e2a75cb182c6f",
+      "path": ".changes/reconcile-lineage-diagnostic.json"
     }
   ],
-  "generated_tree": "c52ca8ce673a8824ab5565fcd745de4736584a300b7fca188bab6622cde79aea",
-  "prior_released_boundary": "648b0473d9bd50747683a2131dbc505b6b93e6df",
+  "generated_tree": "01bc93fad9a714354e8ce1370e96465491dcc2f040145c51843ad2b053337e4a",
+  "prior_released_boundary": "c2f0f9076d302c509992784874086422a9acc0fc",
   "publication": {
-    "source_main_sha": "c2f0f9076d302c509992784874086422a9acc0fc",
-    "version": "2.1.5"
+    "source_main_sha": "0d1769929658f02125f7f908994d2670fb91a4d6",
+    "version": "2.1.6"
   },
   "schema": 1,
-  "source_main_sha": "c2f0f9076d302c509992784874086422a9acc0fc",
-  "version": "2.1.5"
+  "source_main_sha": "0d1769929658f02125f7f908994d2670fb91a4d6",
+  "version": "2.1.6"
 }

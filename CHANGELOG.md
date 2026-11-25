@@ -1,5 +1,10 @@
 # Changelog
 
+## [2.1.6] - 2026-11-25
+
+- **build**: Rewrite the SDLC CLI in Go while preserving the v2 consumer contract
+- **fix**: make failed release lineage reconciliation actionable without weakening predecessor checks
+
 ## [2.1.5] - 2026-11-13
 
 - **fix**: Grant package write permission to the generated rolling release caller
