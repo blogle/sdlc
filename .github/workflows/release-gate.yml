@@ -64,7 +64,7 @@ jobs:
           RELEASE_BOT_LOGIN: ${{ vars.SDLC_RELEASE_BOT_LOGIN }}
           RELEASE_APP_SLUG: ${{ steps.release-app.outputs.app-slug }}
           SDLC_RULESET_ATTESTATION: ${{ vars.SDLC_RULESET_ATTESTATION }}
-          SDLC_FLAKE: ${{ inputs.sdlc_ref != '' && inputs.sdlc_ref || github.workspace }}
+          SDLC_FLAKE: ${{ inputs.sdlc_ref == '' && github.workspace || startsWith(inputs.sdlc_ref, 'github:') && inputs.sdlc_ref || format('github:blogle/sdlc/{0}', inputs.sdlc_ref) }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
@@ -140,7 +140,7 @@ jobs:
           RELEASE_BOT_LOGIN: ${{ vars.SDLC_RELEASE_BOT_LOGIN }}
           RELEASE_APP_SLUG: ${{ steps.release-app.outputs.app-slug }}
           SDLC_RULESET_ATTESTATION: ${{ vars.SDLC_RULESET_ATTESTATION }}
-          SDLC_FLAKE: ${{ inputs.sdlc_ref != '' && inputs.sdlc_ref || github.workspace }}
+          SDLC_FLAKE: ${{ inputs.sdlc_ref == '' && github.workspace || startsWith(inputs.sdlc_ref, 'github:') && inputs.sdlc_ref || format('github:blogle/sdlc/{0}', inputs.sdlc_ref) }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail

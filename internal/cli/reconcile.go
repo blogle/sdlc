@@ -122,36 +122,41 @@ func reconcileSnapshot(worktree, repo, defaultBranch, branch, baseline string) (
 
 func verifyPredecessor(repo, defaultBranch, baseline string) error {
 	repository := gitrepo.Open(".")
-	manifestRaw, err := repository.Bytes("show", "origin/"+defaultBranch+":.sdlc/release.json")
+	manifest, found, err := repository.PredecessorManifest(baseline)
 	if err != nil {
+		return err
+	}
+	if !found {
 		return nil
 	}
-	manifest, err := release.ParsePredecessorManifest(manifestRaw)
+	manifestRaw, err := repository.Bytes("show", baseline+":.sdlc/release.json")
+	if err != nil {
+		return err
+	}
+	facts, err := repository.PredecessorFacts(manifest.Version, baseline)
 	if err != nil {
 		return err
 	}
 	tag := "v" + manifest.Version
-	tagSHA, err := repository.Text("rev-list", "-n1", "refs/tags/"+tag)
-	if err != nil {
-		tagSHA = ""
+	if facts.TagSHA == "" {
+		return release.VerifyPredecessor(release.Predecessor{
+			Version: manifest.Version, SourceMainSHA: manifest.SourceMainSHA,
+		}, facts, manifestRaw, release.PublicationState{})
 	}
-	if tagSHA == "" {
-		return release.VerifyPredecessor(manifest, "", "", nil, manifestRaw, false, release.PublicationState{})
-	}
-	parent, parentErr := repository.Text("rev-parse", tagSHA+"^")
-	if parentErr != nil {
-		parent = ""
-	}
-	tagged, taggedErr := repository.Bytes("show", tagSHA+":.sdlc/release.json")
-	if taggedErr != nil {
-		tagged = nil
-	}
-	_, ancestorErr := repository.Text("merge-base", "--is-ancestor", tagSHA, baseline)
-	state, err := (github.Client{}).PublishedRelease(tag, repo)
+	state, err := (github.Client{}).PublishedRelease(repo, tag)
 	if err != nil {
 		return fmt.Errorf("release reconcile stopped: release %s has no completed publication ledger", tag)
 	}
-	return release.VerifyPredecessor(manifest, tagSHA, parent, tagged, manifestRaw, ancestorErr == nil, state)
+	marker, found, err := repository.RetirementMarkerAt(baseline, manifest.Version)
+	if err != nil {
+		return err
+	}
+	if found {
+		state.RetirementMarker = marker
+	}
+	return release.VerifyPredecessor(release.Predecessor{
+		Version: manifest.Version, SourceMainSHA: manifest.SourceMainSHA,
+	}, facts, manifestRaw, state)
 }
 
 func retireReleasePR(repo, branch, defaultBranch string) error {

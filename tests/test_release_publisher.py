@@ -392,6 +392,61 @@ shutil.copyfile(os.environ["FAKE_ASSET"], os.path.join(target, asset))
         workflow = (Path(__file__).parents[1] / ".github/workflows/release-publish.yml").read_text()
         self.assertIn('nix run "$SDLC_FLAKE"#sdlc -- ruleset check', workflow)
 
+    def test_default_branch_identity_reaches_downstream_checkout_validation(self):
+        root = Path(__file__).parents[1]
+        workflow = (root / ".github/workflows/release-publish.yml").read_text()
+        verify = workflow.split("- name: Verify canonical protection and actual merged identity", 1)[1]
+        verify = verify.split("- name: Prepare one immutable source artifact", 1)[0]
+        self.assertIn("DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}", verify)
+        self.assertIn('printf \'SDLC_RELEASE_MAIN_SHA=%s\\n\' "$SDLC_RELEASE_MAIN_SHA" >> "$GITHUB_ENV"', verify)
+        self.assertIn('printf \'DEFAULT_BRANCH=%s\\n\' "$DEFAULT_BRANCH" >> "$GITHUB_ENV"', verify)
+
+        persist = workflow.split("- name: Persist artifact bytes without overwriting", 1)[1]
+        persist = persist.split("- name: Save publication audit ledger", 1)[0]
+        self.assertIn('release ledger artifact', persist)
+        self.assertIn("identity = validate_checkout(commit)", (root / "tests/fixtures/legacy/src/release_publisher.py").read_text())
+
+    def test_package_push_uses_repository_token_and_preserves_app_api_identity(self):
+        root = Path(__file__).parents[1] / ".github/workflows"
+        merge = (root / "release-merge.yml").read_text()
+        release = (root / "release.yml").read_text()
+        publish = (root / "release-publish.yml").read_text()
+
+        self.assertIn("packages: write", merge.split("jobs:", 1)[0])
+        publish_caller = merge.split("  publish:\n", 1)[1]
+        self.assertIn("packages: write", publish_caller.split("    uses:", 1)[0])
+        self.assertNotIn("packages: write", merge.split("  merge:\n", 1)[1].split("  publish:\n", 1)[0])
+
+        self.assertIn("packages: write", release.split("permissions:\n", 1)[1].split("jobs:", 1)[0])
+        reconcile = release.split("  reconcile:\n", 1)[1].split("  publish:\n", 1)[0]
+        self.assertNotIn("packages: write", reconcile)
+        release_publisher = release.split("  publish:\n", 1)[1]
+        self.assertIn("packages: write", release_publisher.split("    uses:", 1)[0])
+
+        self.assertIn("packages: write", publish.split("permissions:\n", 1)[1].split("concurrency:", 1)[0])
+        self.assertIn("GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}", publish)
+        self.assertNotIn("permission-packages: write", publish)
+        self.assertIn('docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin', publish)
+        docker_step = publish.split("- name: Publish exact tag and durable asset through consumer contract", 1)[1]
+        docker_step = docker_step.split("- name: Record completed publication", 1)[0]
+        self.assertIn('GH_TOKEN: ${{ steps.release-app.outputs.token }}', docker_step)
+        self.assertIn('printf \'%s\' "$GITHUB_TOKEN" | docker login', docker_step)
+
+    def test_release_workflows_normalize_pinned_sdlc_refs(self):
+        root = Path(__file__).parents[1] / ".github/workflows"
+        normalization = "inputs.sdlc_ref == '' && github.workspace || startsWith(inputs.sdlc_ref, 'github:') && inputs.sdlc_ref || format('github:blogle/sdlc/{0}', inputs.sdlc_ref)"
+        expected = {
+            "release-reconcile.yml": 1,
+            "release-gate.yml": 2,
+            "release-merge.yml": 1,
+            "release-publish.yml": 5,
+        }
+        for filename, count in expected.items():
+            with self.subTest(workflow=filename):
+                workflow = (root / filename).read_text()
+                self.assertEqual(workflow.count(normalization), count)
+                self.assertIn('nix run "$SDLC_FLAKE"#sdlc', workflow)
+
 
 if __name__ == "__main__":
     unittest.main()

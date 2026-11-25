@@ -28,6 +28,7 @@ on:
 
 permissions:
   contents: read
+  packages: write
 
 concurrency:
   group: sdlc-release-publish-${{ github.repository }}
@@ -39,6 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      packages: write
     steps:
       - uses: actions/create-github-app-token@v1
         id: release-app
@@ -47,7 +49,6 @@ jobs:
           private-key: ${{ secrets.SDLC_RELEASE_APP_PRIVATE_KEY }}
           permission-administration: read
           permission-contents: write
-          permission-packages: write
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.merged_sha }}
@@ -61,7 +62,7 @@ jobs:
           SDLC_RULESET_ATTESTATION: ${{ vars.SDLC_RULESET_ATTESTATION }}
           REPOSITORY: ${{ github.repository }}
           MERGED_SHA: ${{ inputs.merged_sha }}
-          SDLC_FLAKE: ${{ inputs.sdlc_ref != '' && inputs.sdlc_ref || github.workspace }}
+          SDLC_FLAKE: ${{ inputs.sdlc_ref == '' && github.workspace || startsWith(inputs.sdlc_ref, 'github:') && inputs.sdlc_ref || format('github:blogle/sdlc/{0}', inputs.sdlc_ref) }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
@@ -69,12 +70,16 @@ jobs:
           git fetch origin "$DEFAULT_BRANCH" --tags
           test "$(git rev-parse HEAD)" = "$MERGED_SHA"
           git merge-base --is-ancestor "$MERGED_SHA" FETCH_HEAD
+          SDLC_RELEASE_MAIN_SHA="$(git rev-parse FETCH_HEAD)"
+          export SDLC_RELEASE_MAIN_SHA
+          printf 'SDLC_RELEASE_MAIN_SHA=%s\n' "$SDLC_RELEASE_MAIN_SHA" >> "$GITHUB_ENV"
+          printf 'DEFAULT_BRANCH=%s\n' "$DEFAULT_BRANCH" >> "$GITHUB_ENV"
           nix run "$SDLC_FLAKE"#sdlc -- release publish "$MERGED_SHA" > identity.json
       - name: Prepare one immutable source artifact
         env:
           GH_TOKEN: ${{ steps.release-app.outputs.token }}
           MERGED_SHA: ${{ inputs.merged_sha }}
-          SDLC_FLAKE: ${{ inputs.sdlc_ref != '' && inputs.sdlc_ref || github.workspace }}
+          SDLC_FLAKE: ${{ inputs.sdlc_ref == '' && github.workspace || startsWith(inputs.sdlc_ref, 'github:') && inputs.sdlc_ref || format('github:blogle/sdlc/{0}', inputs.sdlc_ref) }}
         run: |
           set -euo pipefail
           mkdir -p .sdlc
@@ -124,7 +129,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.release-app.outputs.token }}
           MERGED_SHA: ${{ inputs.merged_sha }}
-          SDLC_FLAKE: ${{ inputs.sdlc_ref != '' && inputs.sdlc_ref || github.workspace }}
+          SDLC_FLAKE: ${{ inputs.sdlc_ref == '' && github.workspace || startsWith(inputs.sdlc_ref, 'github:') && inputs.sdlc_ref || format('github:blogle/sdlc/{0}', inputs.sdlc_ref) }}
         run: |
           set -euo pipefail
           source .sdlc/artifact.env
@@ -154,8 +159,9 @@ jobs:
       - name: Publish exact tag and durable asset through consumer contract
         env:
           GH_TOKEN: ${{ steps.release-app.outputs.token }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SDLC_RELEASE_LEDGER: .sdlc/release-ledger.json
-          SDLC_FLAKE: ${{ inputs.sdlc_ref != '' && inputs.sdlc_ref || github.workspace }}
+          SDLC_FLAKE: ${{ inputs.sdlc_ref == '' && github.workspace || startsWith(inputs.sdlc_ref, 'github:') && inputs.sdlc_ref || format('github:blogle/sdlc/{0}', inputs.sdlc_ref) }}
           MERGED_SHA: ${{ inputs.merged_sha }}
           RELEASE_BOT_LOGIN: ${{ vars.SDLC_RELEASE_BOT_LOGIN }}
         run: |
@@ -166,7 +172,7 @@ jobs:
           export SDLC_RELEASE_MERGED_SHA="$MERGED_SHA"
           export SDLC_RELEASE_SOURCE_SHA="$source_sha"
           export SDLC_RELEASE_RECEIPTS=.sdlc/publication-receipts.json
-          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$RELEASE_BOT_LOGIN" --password-stdin
+          printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           nix run "$SDLC_FLAKE"#sdlc -- release invoke \
             --consumer-flake "$GITHUB_WORKSPACE" \
             --system x86_64-linux
@@ -181,7 +187,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.release-app.outputs.token }}
           MERGED_SHA: ${{ inputs.merged_sha }}
-          SDLC_FLAKE: ${{ inputs.sdlc_ref != '' && inputs.sdlc_ref || github.workspace }}
+          SDLC_FLAKE: ${{ inputs.sdlc_ref == '' && github.workspace || startsWith(inputs.sdlc_ref, 'github:') && inputs.sdlc_ref || format('github:blogle/sdlc/{0}', inputs.sdlc_ref) }}
         run: |
           set -euo pipefail
           version="$(jq -r .version .sdlc/release.json)"

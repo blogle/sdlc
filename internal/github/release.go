@@ -217,7 +217,7 @@ func (Client) CreateReleasePR(repository, defaultBranch, releaseBranch, title, b
 	return run("gh", "pr", "create", "--repo", repository, "--base", defaultBranch, "--head", releaseBranch, "--title", title, "--body", body, "--label", "release")
 }
 
-func (Client) PublishedRelease(tag, repository string) (release.PublicationState, error) {
+func (Client) PublishedRelease(repository, tag string) (release.PublicationState, error) {
 	data, err := commandOutput("gh", "release", "view", tag, "--repo", repository, "--json", "isDraft,isPrerelease,assets")
 	if err != nil {
 		return release.PublicationState{}, err

@@ -31,6 +31,20 @@ func releaseCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			mainSHA := os.Getenv("SDLC_RELEASE_MAIN_SHA")
+			if !release.ValidSHA(mainSHA) {
+				return fmt.Errorf("SDLC_RELEASE_MAIN_SHA must be a 40-character lowercase SHA")
+			}
+			if os.Getenv("DEFAULT_BRANCH") == "" {
+				return fmt.Errorf("DEFAULT_BRANCH is required")
+			}
+			marker, found, err := gitrepo.Open(".").RetirementMarkerAt(mainSHA, identity.Version)
+			if err != nil {
+				return err
+			}
+			if err := release.RejectAbandonedMarker(marker, found, identity.Version, identity.SourceMain, identity.Commit); err != nil {
+				return err
+			}
 			return writeCompactJSON(cmd.OutOrStdout(), identity)
 		},
 	}

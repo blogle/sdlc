@@ -14,6 +14,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sdlc import generated_tree_digest, verify_release_tree
+import abandoned_release as retirement
 
 
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -303,6 +304,28 @@ def validate_checkout(commit: str) -> ReleaseIdentity:
     changed_paths = set(git("diff", "--name-only", parent, commit).splitlines())
     tree = git("rev-parse", f"{commit}^{{tree}}")
     manifest = json.loads(subprocess.run(["git", "show", f"{commit}:.sdlc/release.json"], check=True, capture_output=True, text=True).stdout)
+    main_sha = os.environ.get("SDLC_RELEASE_MAIN_SHA")
+    default_branch = os.environ.get("DEFAULT_BRANCH")
+    if not main_sha:
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            raise IdentityError("publisher requires the expected current default-branch SHA and name")
+        # Preserve local CLI use outside Actions; trusted publication always supplies
+        # the expected tip, which is independently checked against a fresh fetch.
+        main_sha = git("rev-parse", "HEAD")
+    else:
+        if not default_branch:
+            raise IdentityError("publisher requires the expected current default-branch SHA and name")
+        try:
+            git("fetch", "--no-tags", "origin", f"refs/heads/{default_branch}")
+            fetched_main_sha = git("rev-parse", "FETCH_HEAD")
+        except subprocess.CalledProcessError as exc:
+            raise IdentityError("publisher could not freshly fetch the default branch") from exc
+        if fetched_main_sha != main_sha:
+            raise IdentityError("SDLC_RELEASE_MAIN_SHA does not match the freshly fetched default-branch tip")
+    try:
+        retirement.reject_abandoned(main_sha, manifest.get("version"), manifest.get("source_main_sha"), commit)
+    except retirement.RetirementError as exc:
+        raise IdentityError(str(exc)) from exc
     changelog = subprocess.run(["git", "show", f"{commit}:CHANGELOG.md"], check=True, capture_output=True).stdout
     try:
         verify_release_tree(parent, commit, manifest)

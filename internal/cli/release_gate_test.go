@@ -44,6 +44,28 @@ func TestAuthenticatedAppRequiresMatchingBotAndInstallationRepository(t *testing
 	}
 }
 
+func TestPublishedReleaseAdapterPreservesRepositoryAndTagOrder(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "gh")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nprintf '%s' '{\"isDraft\":false,\"isPrerelease\":false,\"assets\":[]}'\nprintf '%s\\n' \"$*\" > \"$GH_ARGS\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	args := filepath.Join(t.TempDir(), "args")
+	t.Setenv("GH_ARGS", args)
+	t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if _, err := (github.Client{}).PublishedRelease("owner/repo", "v1.2.3"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "release view v1.2.3 --repo owner/repo --json isDraft,isPrerelease,assets\n"
+	if string(got) != want {
+		t.Fatalf("adapter arguments differ: %q", got)
+	}
+}
+
 func fakeGH(t *testing.T, response string) string {
 	t.Helper()
 	directory := t.TempDir()

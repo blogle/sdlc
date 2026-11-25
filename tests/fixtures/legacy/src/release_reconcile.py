@@ -2,14 +2,17 @@
 from __future__ import annotations
 
 import json
-import hashlib
 import os
 from pathlib import Path
 import re
 import subprocess
 import tempfile
 
-import sdlc
+if __package__:
+    from . import sdlc, abandoned_release as retirement
+else:
+    import sdlc
+    import abandoned_release as retirement
 
 
 def _run(*args: str, cwd: str | Path | None = None, raw: bool = False) -> str | bytes:
@@ -33,10 +36,10 @@ def _retire(repo: str, branch: str, default_branch: str) -> None:
 
 def _verify_predecessor(repo: str, default_branch: str, baseline: str) -> None:
     try:
-        _run("git", "cat-file", "-e", f"origin/{default_branch}:.sdlc/release.json")
+        _run("git", "cat-file", "-e", f"{baseline}:.sdlc/release.json")
     except subprocess.CalledProcessError:
         return
-    predecessor = _run("git", "show", f"origin/{default_branch}:.sdlc/release.json")
+    predecessor = _run("git", "show", f"{baseline}:.sdlc/release.json", raw=True)
     manifest = json.loads(predecessor)
     version = manifest.get("version", "")
     source = manifest.get("source_main_sha", "")
@@ -50,10 +53,14 @@ def _verify_predecessor(repo: str, default_branch: str, baseline: str) -> None:
         tag_sha = ""
     if not tag_sha:
         _fail(f"release v{version} has no committed tag; publication predecessor is unreconciled")
-    if _run("git", "rev-parse", f"{tag_sha}^") != source:
+    try:
+        parent = _run("git", "rev-parse", f"{tag_sha}^")
+    except subprocess.CalledProcessError:
+        parent = ""
+    if parent != source:
         _fail(f"release v{version} tag does not identify the manifest's merged commit")
     tagged_manifest = _run("git", "show", f"{tag_sha}:.sdlc/release.json", raw=True)
-    if hashlib.sha256(tagged_manifest).hexdigest() != hashlib.sha256((predecessor + "\n").encode()).hexdigest():
+    if tagged_manifest != predecessor:
         _fail(f"release v{version} tag manifest differs from main")
     try:
         _run("git", "merge-base", "--is-ancestor", tag_sha, baseline)
@@ -61,6 +68,11 @@ def _verify_predecessor(repo: str, default_branch: str, baseline: str) -> None:
         _fail(f"release v{version} tag is not on {default_branch}")
     state_raw = _gh("release", "view", f"v{version}", "--repo", repo, "--json", "isDraft,isPrerelease,assets")
     state = json.loads(state_raw)
+    try:
+        if retirement.verify_draft_marker(baseline, version, source, tag_sha, state):
+            return
+    except retirement.RetirementError as exc:
+        _fail(str(exc))
     if not state:
         _fail(f"release v{version} has no completed publication ledger")
     if state.get("isDraft") is not False:

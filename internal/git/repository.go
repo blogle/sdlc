@@ -50,7 +50,7 @@ func (repository Repository) Snapshot(sourceSHA, date string) (*release.Manifest
 		}
 	}
 	if input.PreviousVersion == "" {
-		tags, err := repository.Text("tag", "--list", "v[0-9]*")
+		tags, err := repository.Text("tag", "--merged", sourceSHA, "--list", "v[0-9]*")
 		if err == nil {
 			input.Tags = strings.Fields(tags)
 		}
@@ -175,6 +175,65 @@ func (repository Repository) ReplaySnapshot(sourceSHA string) (*release.Manifest
 		return nil, fmt.Errorf("coordinator snapshot produced no release manifest")
 	}
 	return manifest, nil
+}
+
+func (repository Repository) RetirementMarkerAt(commit, version string) ([]byte, bool, error) {
+	if _, err := repository.Text("cat-file", "-e", commit+"^{commit}"); err != nil {
+		return nil, false, err
+	}
+	path := ".sdlc/abandoned-releases/" + version + ".json"
+	if _, err := repository.Text("cat-file", "-e", commit+":"+path); err != nil {
+		return nil, false, nil
+	}
+	data, err := repository.Bytes("show", commit+":"+path)
+	return data, err == nil, err
+}
+
+func (repository Repository) PredecessorManifest(commit string) (*release.Manifest, bool, error) {
+	path := commit + ":.sdlc/release.json"
+	if _, err := repository.Text("cat-file", "-e", path); err != nil {
+		return nil, false, nil
+	}
+	data, err := repository.Bytes("show", path)
+	if err != nil {
+		return nil, true, err
+	}
+	predecessor, err := release.ParsePredecessorManifest(data)
+	if err != nil {
+		return nil, true, fmt.Errorf("release reconcile stopped: predecessor manifest is unreadable: %w", err)
+	}
+	return &release.Manifest{
+		Version: predecessor.Version, SourceMainSHA: predecessor.SourceMainSHA,
+	}, true, nil
+}
+
+func (repository Repository) PredecessorFacts(version, baseline string) (release.PredecessorFacts, error) {
+	tag := "v" + version
+	mainManifest, err := repository.Bytes("show", baseline+":.sdlc/release.json")
+	if err != nil {
+		return release.PredecessorFacts{}, fmt.Errorf("release reconcile stopped: predecessor manifest is unreadable: %w", err)
+	}
+	tagSHA, err := repository.Text("rev-list", "-n1", "refs/tags/"+tag)
+	if err != nil {
+		tagSHA = ""
+	}
+	if tagSHA == "" {
+		return release.PredecessorFacts{}, nil
+	}
+	parent, err := repository.Text("rev-parse", tagSHA+"^")
+	if err != nil {
+		parent = ""
+	}
+	tagged, err := repository.Bytes("show", tagSHA+":.sdlc/release.json")
+	if err != nil {
+		tagged = nil
+	}
+	_, ancestorErr := repository.Text("merge-base", "--is-ancestor", tagSHA, baseline)
+	return release.PredecessorFacts{
+		TagSHA: tagSHA, TagParent: parent, TaggedManifest: tagged,
+		MainManifest:    mainManifest,
+		OnDefaultBranch: ancestorErr == nil,
+	}, nil
 }
 
 func (repository Repository) FetchReleaseBranches(defaultBranch, releaseBranch string) error {

@@ -1,6 +1,8 @@
 package release
 
-import "fmt"
+import (
+	"fmt"
+)
 
 type ReleaseAPI interface {
 	PullRequest(repository string, number int) (PullRequest, error)
@@ -10,6 +12,7 @@ type ReleaseAPI interface {
 	ManifestAt(repository, sha string) (*Manifest, error)
 	Protection(repository, branch, attestation, token string) (Protection, error)
 	ChecksFor(repository, sha string) ([]Check, error)
+	PublishedRelease(repository, tag string) (PublicationState, error)
 	MergeReleasePR(repository string, number int, sha string) error
 }
 
@@ -84,10 +87,17 @@ func (service Service) Gate(request GateRequest) error {
 	if err := VerifyReleaseGate(pr, login, request.ReleaseBotLogin, request.Repository, main.SHA, parent, checks, manifest, protection, service.CanonicalPolicy, service.AutomatedPolicy); err != nil {
 		return err
 	}
+	if err := service.verifyPredecessor(request.Repository, main.SHA); err != nil {
+		return err
+	}
 	return VerifyCandidate(service.Repository, main.SHA, pr.HeadSHA, manifest)
 }
 
 func (service Service) historicalGate(request GateRequest, pr PullRequest, appSlug, branch string) error {
+	main, err := service.API.Commit(request.Repository, branch)
+	if err != nil {
+		return err
+	}
 	manifest, err := service.API.ManifestAt(request.Repository, pr.HeadSHA)
 	if err != nil {
 		return err
@@ -105,6 +115,13 @@ func (service Service) historicalGate(request GateRequest, pr PullRequest, appSl
 	}
 	if len(merged.Parents) != 1 || merged.Parents[0] != manifest.SourceMainSHA {
 		return fmt.Errorf("historical squash merge does not match manifest source_main_sha")
+	}
+	marker, found, err := service.Repository.RetirementMarkerAt(main.SHA, manifest.Version)
+	if err != nil {
+		return err
+	}
+	if err := RejectAbandonedMarker(marker, found, manifest.Version, manifest.SourceMainSHA, request.HistoricalMergedSHA); err != nil {
+		return err
 	}
 	protection, err := service.protection(request.Repository, branch)
 	if err != nil {
@@ -156,6 +173,9 @@ func (service Service) Merge(request MergeRequest) error {
 	if err != nil {
 		return err
 	}
+	if err := service.verifyPredecessor(request.Repository, main.SHA); err != nil {
+		return err
+	}
 	if err := VerifyCandidate(service.Repository, main.SHA, expected, manifest); err != nil {
 		return err
 	}
@@ -191,6 +211,39 @@ func (service Service) Merge(request MergeRequest) error {
 		return err
 	}
 	return service.API.MergeReleasePR(request.Repository, request.PRNumber, expected)
+}
+
+func (service Service) verifyPredecessor(repository, baseline string) error {
+	predecessor, found, err := service.Repository.PredecessorManifest(baseline)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return nil
+	}
+	facts, err := service.Repository.PredecessorFacts(predecessor.Version, baseline)
+	if err != nil {
+		return err
+	}
+	if facts.TagSHA == "" {
+		return VerifyPredecessor(Predecessor{
+			Version: predecessor.Version, SourceMainSHA: predecessor.SourceMainSHA,
+		}, facts, facts.MainManifest, PublicationState{})
+	}
+	state, err := service.API.PublishedRelease(repository, "v"+predecessor.Version)
+	if err != nil {
+		return fmt.Errorf("release reconcile stopped: release v%s has no completed publication ledger", predecessor.Version)
+	}
+	marker, found, err := service.Repository.RetirementMarkerAt(baseline, predecessor.Version)
+	if err != nil {
+		return err
+	}
+	if found {
+		state.RetirementMarker = marker
+	}
+	return VerifyPredecessor(Predecessor{
+		Version: predecessor.Version, SourceMainSHA: predecessor.SourceMainSHA,
+	}, facts, facts.MainManifest, state)
 }
 
 func (service Service) protection(repository, branch string) (Protection, error) {
